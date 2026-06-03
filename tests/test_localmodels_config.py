@@ -25,3 +25,14 @@ def test_default_when_unset(monkeypatch):
     with patch.object(config, "load_settings", return_value={"local_model_dirs": []}):
         dirs = config.get_local_model_dirs()
     assert dirs == config.DEFAULT_DIRS
+
+
+def test_set_cleans_and_persists():
+    from services.localmodels import config
+    saved = {}
+    settings = {"local_model_dirs": []}
+    with patch.object(config, "load_settings", return_value=settings), \
+         patch.object(config, "save_settings", side_effect=lambda s: saved.update(s)):
+        result = config.set_local_model_dirs(["  /a  ", "", "  ", "/b"])
+    assert result == ["/a", "/b"]
+    assert saved["local_model_dirs"] == ["/a", "/b"]

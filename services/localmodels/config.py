@@ -35,8 +35,5 @@ def set_local_model_dirs(dirs: list[str]) -> list[str]:
     cleaned = [d.strip() for d in (dirs or []) if d and d.strip()]
     settings = load_settings()
     settings["local_model_dirs"] = cleaned
-    save_settings(settings)
-    # Invalidate the settings cache so the next read sees the new value.
-    import src.settings as _s
-    _s._settings_cache = None
+    save_settings(settings)  # save_settings() invalidates the settings cache
     return cleaned
