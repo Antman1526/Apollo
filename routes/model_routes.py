@@ -441,10 +441,17 @@ _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
 _TAILSCALE_RE = re.compile(r"^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.")
 
 
+def _is_local_managed(base_url) -> bool:
+    """Return True for local:// managed endpoints (never HTTP-probeable)."""
+    return bool(base_url) and str(base_url).startswith("local://")
+
+
 def _classify_endpoint(base_url: str) -> str:
     """Return 'local' if the endpoint URL points to a private/local address, else 'api'.
     Includes the Tailscale CGNAT range (100.64.0.0/10) so tailnet-hosted
     servers (e.g. Cookbook serve endpoints) get reachability-probed too."""
+    if (base_url or "").startswith("local://"):
+        return "local"
     try:
         host = urlparse(base_url).hostname or ""
         if host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES):
@@ -686,6 +693,8 @@ def setup_model_routes(model_discovery):
                     now = _time.time()
                     to_probe = []
                     for ep in endpoints:
+                        if _is_local_managed(ep.base_url):
+                            continue  # local:// managed endpoint — never HTTP-probe
                         ts, fails = _probe_failures.get(ep.id, (0, 0))
                         if fails >= 3 and (now - ts) < 300:
                             continue
@@ -873,6 +882,7 @@ def setup_model_routes(model_discovery):
                 (ep.id, _normalize_base(ep.base_url), ep.api_key)
                 for ep in endpoints
                 if _classify_endpoint(_normalize_base(ep.base_url)) == "local"
+                and not _is_local_managed(ep.base_url)  # local:// has no HTTP server
             ]
         finally:
             db.close()
@@ -916,6 +926,18 @@ def setup_model_routes(model_discovery):
 
         results = []
         for ep in endpoints:
+            if _is_local_managed(ep.base_url):
+                results.append({
+                    "id": ep.id,
+                    "name": ep.name,
+                    "base_url": ep.base_url,
+                    "provider": "local",
+                    "category": "local",
+                    "status": "local",
+                    "latency_ms": None,
+                    "model_count": len(json.loads(ep.cached_models or "[]")),
+                })
+                continue
             base = _normalize_base(ep.base_url)
             provider = _detect_provider(base)
             entry = {
@@ -1042,6 +1064,8 @@ def setup_model_routes(model_discovery):
             total = 0
             ok_count = 0
             for ep in ep_data:
+                if _is_local_managed(ep["base_url"]):
+                    continue  # local:// managed endpoint — model list owned by scanner
                 base = _normalize_base(ep["base_url"])
                 all_models = _probe_endpoint(base, ep.get("api_key"))
                 # Update cached_models in DB
@@ -1309,6 +1333,24 @@ def setup_model_routes(model_discovery):
         finally:
             db.close()
 
+        if _is_local_managed(ep_data["base_url"]):
+            # local:// endpoints are owned by the filesystem scanner — never HTTP-probe.
+            # Return cached models in the same SSE shape so the UI renders correctly.
+            db3 = SessionLocal()
+            try:
+                ep_obj = db3.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+                cached = json.loads(ep_obj.cached_models or "[]") if ep_obj else []
+            finally:
+                db3.close()
+
+            def _local_stream():
+                yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(cached), 'skipped': 0})}\n\n"
+                for mid in cached:
+                    yield f"data: {json.dumps({'type': 'probe_result', 'endpoint': ep_data['name'], 'model': mid, 'status': 'ok'})}\n\n"
+                yield f"data: {json.dumps({'type': 'probe_done', 'total': len(cached), 'ok': len(cached), 'hidden': 0})}\n\n"
+
+            return StreamingResponse(_local_stream(), media_type="text/event-stream")
+
         base = _normalize_base(ep_data["base_url"])
         all_models = _probe_endpoint(base, ep_data["api_key"])
         chat_models = [m for m in all_models if _is_chat_model(m)]
@@ -1360,16 +1402,25 @@ def setup_model_routes(model_discovery):
                     hidden = set(json.loads(ep.hidden_models))
                 except Exception:
                     pass
-            # Try live probe, fall back to cached
-            all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
-            if all_models:
-                ep.cached_models = json.dumps(all_models)
-                db.commit()
-            elif ep.cached_models:
-                try:
-                    all_models = json.loads(ep.cached_models)
-                except Exception:
-                    pass
+            if _is_local_managed(ep.base_url):
+                # local:// model list is owned by the filesystem scanner — never probe
+                all_models = []
+                if ep.cached_models:
+                    try:
+                        all_models = json.loads(ep.cached_models)
+                    except Exception:
+                        pass
+            else:
+                # Try live probe, fall back to cached
+                all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
+                if all_models:
+                    ep.cached_models = json.dumps(all_models)
+                    db.commit()
+                elif ep.cached_models:
+                    try:
+                        all_models = json.loads(ep.cached_models)
+                    except Exception:
+                        pass
             return [
                 {"id": m, "display": m.split("/")[-1], "is_hidden": m in hidden}
                 for m in all_models
