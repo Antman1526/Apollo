@@ -20,7 +20,7 @@ def _load(monkeypatch):
     db.SessionLocal = MagicMock()
     db.McpServer = MagicMock()
     monkeypatch.setitem(sys.modules, "core.database", db)
-    loader = importlib.machinery.SourceFileLoader("odysseus_mcp_cli", str(ROOT / "scripts" / "odysseus-mcp"))
+    loader = importlib.machinery.SourceFileLoader("apollo_mcp_cli", str(ROOT / "scripts" / "apollo-mcp"))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     m = importlib.util.module_from_spec(spec)
     loader.exec_module(m)

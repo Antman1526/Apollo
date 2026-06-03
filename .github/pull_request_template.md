@@ -20,7 +20,7 @@ Fixes #
 
 ## Checklist
 
-- [ ] I searched [open issues](https://github.com/pewdiepie-archdaemon/odysseus/issues) and [open PRs](https://github.com/pewdiepie-archdaemon/odysseus/pulls) — this is not a duplicate.
+- [ ] I searched [open issues](https://github.com/Antman1526/Apollo/issues) and [open PRs](https://github.com/Antman1526/Apollo/pulls) — this is not a duplicate.
 - [ ] This PR targets `main`
 - [ ] My changes are limited to the scope described above — no unrelated refactors or whitespace changes mixed in.
 

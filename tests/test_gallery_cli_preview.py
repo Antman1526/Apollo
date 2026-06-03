@@ -20,8 +20,8 @@ def _load_cli(monkeypatch):
     db.GalleryImage = MagicMock()
     db.GalleryAlbum = MagicMock()
     monkeypatch.setitem(sys.modules, "core.database", db)
-    path = ROOT / "scripts" / "odysseus-gallery"
-    loader = importlib.machinery.SourceFileLoader("odysseus_gallery_cli", str(path))
+    path = ROOT / "scripts" / "apollo-gallery"
+    loader = importlib.machinery.SourceFileLoader("apollo_gallery_cli", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

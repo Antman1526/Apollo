@@ -70,7 +70,7 @@ class RenameUserRequest(BaseModel):
 class SetOpenRegistrationRequest(BaseModel):
     enabled: bool
 
-SESSION_COOKIE = "odysseus_session"
+SESSION_COOKIE = "apollo_session"
 
 
 def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
@@ -501,9 +501,9 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             import httpx
             from urllib.parse import urlparse
             # Strip any path/query the user accidentally pasted in the
-            # base URL (e.g. `http://host:8091/odysseus`) — otherwise
+            # base URL (e.g. `http://host:8091/apollo`) — otherwise
             # the topic gets appended after the path and we publish to
-            # `/odysseus/odysseus` (which ntfy 404s on). ntfy itself
+            # `/apollo/apollo` (which ntfy 404s on). ntfy itself
             # only ever serves from the root.
             raw_base = (integ.get("base_url") or "").strip()
             parsed = urlparse(raw_base)
@@ -514,7 +514,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             api_key = integ.get("api_key", "")
             auth_type = (integ.get("auth_type") or "none").lower()
             headers = {
-                "Title": "Odysseus connectivity test",
+                "Title": "Apollo connectivity test",
                 "Tags": "white_check_mark",
                 "Priority": "default",
             }
@@ -527,7 +527,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                 async with httpx.AsyncClient(timeout=8.0) as client:
                     r = await client.post(
                         full_url,
-                        content="Connectivity test from Odysseus. If you see this on your phone, ntfy is wired up correctly.",
+                        content="Connectivity test from Apollo. If you see this on your phone, ntfy is wired up correctly.",
                         headers=headers,
                     )
                 if r.is_success:

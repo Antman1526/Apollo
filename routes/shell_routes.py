@@ -98,7 +98,7 @@ PTY_SUPPORTED = pty is not None and fcntl is not None and hasattr(os, "setsid")
 
 
 DOCKER_IN_CONTAINER_HINT = (
-    "Not available inside the Odysseus container by design. The image ships no "
+    "Not available inside the Apollo container by design. The image ships no "
     "docker CLI and no host socket is mounted. Run Docker-backed launches on a "
     "remote server, where docker is checked over SSH. Mounting /var/run/docker.sock "
     "into the container would grant it host-root access, so only do that if you "
@@ -214,7 +214,7 @@ def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageU
     may be on PATH without matching Python package metadata.
     """
     if pkg.get("kind") == "system" or not pkg.get("pip"):
-        return PackageUpdateStatus(False, "Update this system dependency outside Odysseus.")
+        return PackageUpdateStatus(False, "Update this system dependency outside Apollo.")
 
     name = pkg.get("name")
     binaries = probe.get("binaries") if isinstance(probe, dict) and isinstance(probe.get("binaries"), dict) else {}
@@ -228,7 +228,7 @@ def _package_pip_update_status(pkg: dict, probe: dict | None = None) -> PackageU
     if name == "vllm" and binaries.get("vllm") and not dists.get("vllm"):
         return PackageUpdateStatus(
             False,
-            "Using a vLLM CLI on PATH without Python package metadata; update it outside Odysseus.",
+            "Using a vLLM CLI on PATH without Python package metadata; update it outside Apollo.",
         )
 
     return PackageUpdateStatus(True, "Update uses pip in the selected Python environment.")
@@ -351,7 +351,7 @@ def _find_line_break(buf):
 EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
 STREAM_TIMEOUT = 120  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
-TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "odysseus-tmux"
+TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "apollo-tmux"
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"
 
 
@@ -557,10 +557,10 @@ async def _generate_tmux(cmd: str, request: Request):
     script_path = TMUX_LOG_DIR / f"{session_id}.sh"
     script_path.write_text(
         f"#!/bin/bash\n"
-        f"ODYSSEUS_USER_SHELL=\"${{SHELL:-}}\"\n"
-        f"if [ -n \"$ODYSSEUS_USER_SHELL\" ] && [ -x \"$ODYSSEUS_USER_SHELL\" ]; then\n"
-        f"  ODYSSEUS_USER_PATH=\"$(\"$ODYSSEUS_USER_SHELL\" -ic 'printf \"__ODYSSEUS_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__ODYSSEUS_PATH__//p' | tail -n 1 || true)\"\n"
-        f"  if [ -n \"$ODYSSEUS_USER_PATH\" ]; then export PATH=\"$ODYSSEUS_USER_PATH:$PATH\"; fi\n"
+        f"APOLLO_USER_SHELL=\"${{SHELL:-}}\"\n"
+        f"if [ -n \"$APOLLO_USER_SHELL\" ] && [ -x \"$APOLLO_USER_SHELL\" ]; then\n"
+        f"  APOLLO_USER_PATH=\"$(\"$APOLLO_USER_SHELL\" -ic 'printf \"__APOLLO_PATH__%s\\n\" \"$PATH\"' 2>/dev/null | sed -n 's/^__APOLLO_PATH__//p' | tail -n 1 || true)\"\n"
+        f"  if [ -n \"$APOLLO_USER_PATH\" ]; then export PATH=\"$APOLLO_USER_PATH:$PATH\"; fi\n"
         f"fi\n"
         f"{cmd} 2>&1 | tee '{log_path}'\n"
         f"EC=${{PIPESTATUS[0]}}\n"

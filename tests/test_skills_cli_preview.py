@@ -18,8 +18,8 @@ def _load_cli(monkeypatch):
     mod = types.ModuleType("services.memory.skills")
     mod.SkillsManager = MagicMock()
     monkeypatch.setitem(sys.modules, "services.memory.skills", mod)
-    path = ROOT / "scripts" / "odysseus-skills"
-    loader = importlib.machinery.SourceFileLoader("odysseus_skills_cli", str(path))
+    path = ROOT / "scripts" / "apollo-skills"
+    loader = importlib.machinery.SourceFileLoader("apollo_skills_cli", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

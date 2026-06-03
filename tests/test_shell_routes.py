@@ -118,7 +118,7 @@ class TestFindLineBreak:
 
 
 class TestRunningInContainer:
-    """Detect whether the Odysseus process itself runs inside a container."""
+    """Detect whether the Apollo process itself runs inside a container."""
 
     def test_dockerenv_marker_present(self, tmp_path):
         marker = tmp_path / ".dockerenv"
@@ -239,7 +239,7 @@ class TestPackageProbeStatus:
 
         assert _package_installed_from_probe("vllm", probe) is True
         assert status.available is False
-        assert "outside Odysseus" in status.note
+        assert "outside Apollo" in status.note
 
     def test_llama_cpp_is_installed_when_native_llama_server_exists(self):
         probe = {

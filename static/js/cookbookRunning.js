@@ -172,7 +172,7 @@ function _buildCrashReport(task, outputText) {
   const diag = _diagnose(capturedOutput);
   const started = task?.ts ? new Date(task.ts).toISOString() : '';
   const report = [
-    '## Odysseus Cookbook crash report',
+    '## Apollo Cookbook crash report',
     '',
     'Please review this report for secrets before posting it publicly.',
     '',
@@ -706,7 +706,7 @@ export function _tmuxCmd(task, tmuxArgs) {
 }
 
 function _winSessionCmd(task, tmuxArgs) {
-  const sd = '$env:TEMP\\odysseus-sessions';
+  const sd = '$env:TEMP\\apollo-sessions';
   const sid = task.sessionId;
   const pf = _sshPrefix(_getPort(task));
   const host = task.remoteHost;
@@ -732,7 +732,7 @@ function _winSessionCmd(task, tmuxArgs) {
 
 function _tmuxGracefulKill(task) {
   if (_isWindows(task)) {
-    const sd = '$env:TEMP\\odysseus-sessions';
+    const sd = '$env:TEMP\\apollo-sessions';
     const sid = task.sessionId;
     const pf = _sshPrefix(_getPort(task));
     const ps = `$p = Get-Content '${sd}\\${sid}.pid' -ErrorAction SilentlyContinue; if ($p) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }; Remove-Item '${sd}\\${sid}.*' -Force -ErrorAction SilentlyContinue`;
@@ -1056,7 +1056,7 @@ async function _retryTask(el, task) {
       uiModule.showToast('Retrying download — progress may look reset while HuggingFace checks cached files, then it should resume.', 7000);
       _updateTask(task.sessionId, {
         status: 'running',
-        output: `${task.output || ''}\n\n[odysseus] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
+        output: `${task.output || ''}\n\n[apollo] Retrying download. Progress may briefly look like a fresh download while HuggingFace checks cached/incomplete files; cached partial files will be reused when available.`.trim(),
         _retrying: true,
       });
       _retryDownload(task.name, task.payload, task.sessionId);
@@ -2027,7 +2027,7 @@ export function _renderRunningTab() {
           }});
         }
         if (_isWindows(task)) {
-          const sd = '$env:TEMP\\odysseus-sessions';
+          const sd = '$env:TEMP\\apollo-sessions';
           const logCmd = `ssh ${_sshPrefix(_getPort(task))}${task.remoteHost} "powershell -Command \\"Get-Content '${sd}\\${task.sessionId}.log' -Wait\\""`;
           items.push({ label: 'Copy log cmd', action: 'copy-tmux', custom: () => {
             _copyText(logCmd);

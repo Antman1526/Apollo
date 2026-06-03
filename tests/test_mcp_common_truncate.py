@@ -7,7 +7,7 @@ _PATH = Path(__file__).resolve().parents[1] / "mcp_servers" / "_common.py"
 
 
 def _load():
-    loader = importlib.machinery.SourceFileLoader("odysseus_mcp_common", str(_PATH))
+    loader = importlib.machinery.SourceFileLoader("apollo_mcp_common", str(_PATH))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

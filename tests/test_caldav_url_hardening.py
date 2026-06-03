@@ -34,11 +34,11 @@ def test_validate_caldav_url_rejects_unsafe_urls(url, message):
 
 
 def test_validate_caldav_url_blocks_private_ips_unless_explicitly_allowed(monkeypatch):
-    monkeypatch.delenv("ODYSSEUS_ALLOW_PRIVATE_CALDAV", raising=False)
+    monkeypatch.delenv("APOLLO_ALLOW_PRIVATE_CALDAV", raising=False)
     with pytest.raises(ValueError, match="Private CalDAV IPs require"):
         caldav_sync.validate_caldav_url("http://10.0.0.5:5232/dav")
 
-    monkeypatch.setenv("ODYSSEUS_ALLOW_PRIVATE_CALDAV", "1")
+    monkeypatch.setenv("APOLLO_ALLOW_PRIVATE_CALDAV", "1")
     assert caldav_sync.validate_caldav_url("http://10.0.0.5:5232/dav") == "http://10.0.0.5:5232/dav"
 
 
