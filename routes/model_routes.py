@@ -25,6 +25,7 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, owner_filter
+from services.localmodels.registry import is_local_endpoint as _is_local_endpoint
 
 logger = logging.getLogger(__name__)
 
@@ -441,16 +442,19 @@ _PRIVATE_PREFIXES = ("10.", "172.16.", "172.17.", "172.18.", "172.19.",
 _TAILSCALE_RE = re.compile(r"^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.")
 
 
-def _is_local_managed(base_url) -> bool:
-    """Return True for local:// managed endpoints (never HTTP-probeable)."""
-    return bool(base_url) and str(base_url).startswith("local://")
+def _is_local_managed(base_url: str | None) -> bool:
+    """Return True for local:// managed endpoints (never HTTP-probeable).
+
+    Delegates to registry.is_local_endpoint so the scheme is defined once.
+    """
+    return _is_local_endpoint(base_url)
 
 
 def _classify_endpoint(base_url: str) -> str:
     """Return 'local' if the endpoint URL points to a private/local address, else 'api'.
     Includes the Tailscale CGNAT range (100.64.0.0/10) so tailnet-hosted
     servers (e.g. Cookbook serve endpoints) get reachability-probed too."""
-    if (base_url or "").startswith("local://"):
+    if _is_local_managed(base_url):
         return "local"
     try:
         host = urlparse(base_url).hostname or ""
@@ -1337,19 +1341,15 @@ def setup_model_routes(model_discovery):
             ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
             if not ep:
                 raise HTTPException(404, "Endpoint not found")
-            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url, "api_key": ep.api_key}
+            ep_data = {"id": ep.id, "name": ep.name, "base_url": ep.base_url,
+                       "api_key": ep.api_key, "cached_models": ep.cached_models}
         finally:
             db.close()
 
         if _is_local_managed(ep_data["base_url"]):
             # local:// endpoints are owned by the filesystem scanner — never HTTP-probe.
             # Return cached models in the same SSE shape so the UI renders correctly.
-            db3 = SessionLocal()
-            try:
-                ep_obj = db3.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
-                cached = json.loads(ep_obj.cached_models or "[]") if ep_obj else []
-            finally:
-                db3.close()
+            cached = json.loads(ep_data["cached_models"] or "[]")
 
             def _local_stream():
                 yield f"data: {json.dumps({'type': 'probe_start', 'endpoint': ep_data['name'], 'model_count': len(cached), 'skipped': 0})}\n\n"
