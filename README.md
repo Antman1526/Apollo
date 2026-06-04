@@ -14,6 +14,7 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
 
 ## Features
   - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
+  - **Local Models** -- point Apollo at folders of GGUF models; they're discovered automatically, appear in the model picker, and a llama.cpp server is launched on the fly when you pick one.<br>　<sub>folder auto-scan · auto-serve on select · single warm chat model · configurable dirs (Settings → AI)</sub>
   - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
   - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
@@ -62,7 +63,7 @@ pull request guidelines.
 ### Docker (recommended)
 ```bash
 git clone https://github.com/Antman1526/Apollo.git
-cd apollo
+cd Apollo
 cp .env.example .env       # optional, but recommended for explicit defaults
 docker compose up -d --build
 ```
@@ -74,7 +75,7 @@ only when you intentionally want LAN/reverse-proxy access.
 ### Native Linux / macOS
 ```bash
 git clone https://github.com/Antman1526/Apollo.git
-cd apollo
+cd Apollo
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -93,7 +94,7 @@ M-series Mac, run Apollo natively:
 
 ```bash
 git clone https://github.com/Antman1526/Apollo.git
-cd apollo
+cd Apollo
 ./start-macos.sh
 ```
 
@@ -108,11 +109,21 @@ The script also reads `.env` at startup, so `APP_BIND=0.0.0.0` and `APP_PORT`
 set there are picked up automatically without a command-line override each run.
 
 Keep `AUTH_ENABLED=true` (the default) before binding outside loopback. Do not
-expose this port directly to the public internet. To build a clickable app wrapper:
+expose this port directly to the public internet.
+
+**Clickable app + `.dmg`.** After `start-macos.sh` has set up the environment,
+build a double-clickable macOS app and a drag-to-Applications disk image:
 
 ```bash
 ./build-macos-app.sh
+# produces:
+#   dist/Apollo.app   — double-click to start the server and open the UI
+#   dist/Apollo.dmg   — open it, then drag Apollo to /Applications
 ```
+
+This is a native launcher: it drives the repo's `venv/` (Python isn't bundled),
+so Cookbook keeps direct Metal-GPU access. Rebuild after moving the repo, since
+the install path is baked into the app.
 
 <details>
 <summary>Cookbook, GPU, Ollama, and troubleshooting notes</summary>
@@ -253,7 +264,7 @@ server; safe to re-run):
 
 ```powershell
 git clone https://github.com/Antman1526/Apollo.git
-cd apollo
+cd Apollo
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
 
@@ -261,7 +272,7 @@ Or do it by hand:
 
 ```powershell
 git clone https://github.com/Antman1526/Apollo.git
-cd apollo
+cd Apollo
 py -3.11 -m venv venv
 venv\Scripts\Activate.ps1
 pip install -r requirements.txt
@@ -365,7 +376,7 @@ app.py                   # FastAPI entry point
 core/      auth, database, middleware, constants
 src/       llm_core, agent_loop, agent_tools, chat_processor, search/
 routes/    chat, session, document, memory, model … endpoints
-services/  docs, memory, search, hwfit (Cookbook) …
+services/  docs, memory, search, hwfit (Cookbook), localmodels (GGUF scan + serve) …
 static/    index.html + app.js + style.css + js/ (modular front-end)
 docs/      landing page (index.html) + preview clips
 ```
