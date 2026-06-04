@@ -637,6 +637,10 @@ app.include_router(setup_cookbook_routes())
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())
 
+# Local GGUF models (scan, serve, manage)
+from routes.localmodels_routes import setup_localmodels_routes
+app.include_router(setup_localmodels_routes())
+
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
@@ -697,6 +701,12 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+
+# Kick off a non-blocking local model directory scan so the catalog is warm
+# on first request without delaying app startup.
+import threading
+from services.localmodels.lifecycle import startup_scan
+threading.Thread(target=startup_scan, name="local-models-scan", daemon=True).start()
 
 # ========= ROUTES (kept in app.py) =========
 
