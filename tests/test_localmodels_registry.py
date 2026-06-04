@@ -19,6 +19,10 @@ from services.localmodels import registry
 
 
 class _FakeEP:
+    # Class-level attr so `ModelEndpoint.base_url == X` (evaluated before the
+    # fake .filter() ignores it) yields a bool instead of raising AttributeError.
+    base_url = None
+
     def __init__(self, **kw):
         for k, v in kw.items():
             setattr(self, k, v)

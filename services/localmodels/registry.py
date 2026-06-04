@@ -28,11 +28,9 @@ def sync_managed_endpoint(models: list[LocalModel]) -> None:
     payload = json.dumps(names)
     db = SessionLocal()
     try:
-        try:
-            _filter_expr = ModelEndpoint.base_url == LOCAL_BASE_URL
-        except AttributeError:
-            _filter_expr = True  # test stub — _FakeQuery.filter ignores args
-        ep = db.query(ModelEndpoint).filter(_filter_expr).first()
+        ep = db.query(ModelEndpoint).filter(
+            ModelEndpoint.base_url == LOCAL_BASE_URL
+        ).first()
         if ep is None:
             ep = ModelEndpoint(
                 id=str(uuid.uuid4()),

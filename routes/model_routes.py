@@ -1022,6 +1022,12 @@ def setup_model_routes(model_discovery):
                         results.append({"model": model_id, "status": "fail", "error": "Endpoint not found"})
                         continue
 
+                if _is_local_managed(ep_data["base_url"]):
+                    # Local GGUFs are filesystem-backed and served on demand;
+                    # never HTTP-probe a local:// URL.
+                    results.append({"model": model_id, "endpoint_id": ep_id, "status": "ok"})
+                    continue
+
                 base = _normalize_base(ep_data["base_url"])
                 _with_tools = item.get("with_tools", False)
                 result = _probe_single_model(base, ep_data.get("api_key"), model_id, timeout=8, with_tools=_with_tools)
@@ -1150,7 +1156,9 @@ def setup_model_routes(model_discovery):
                 visible = [m for m in all_models if m not in hidden]
                 status = "online" if all_models else "offline"
                 ping = None
-                if not all_models and r.is_enabled:
+                if not all_models and r.is_enabled and not _is_local_managed(r.base_url):
+                    # Never HTTP-ping a local:// URL — its model list is
+                    # filesystem-scanned, not reachability-probed.
                     ping = _ping_endpoint(r.base_url, r.api_key, timeout=1.0)
                     if ping.get("reachable"):
                         status = "empty"
