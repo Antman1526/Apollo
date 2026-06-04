@@ -400,6 +400,14 @@ function _putLocalModelDirs(dirs) {
 }
 
 export function refreshLocalModels() {
+  // The local-models routes require admin (they launch processes / change a
+  // global scan dir), and this section lives in the non-admin AI tab — so hide
+  // it for non-admins instead of firing requests that 403.
+  var listEl = el('set-localModelsList');
+  var section = listEl ? listEl.closest('.admin-card') : null;
+  var isAdmin = typeof window !== 'undefined' && window._isAdmin;
+  if (section) section.style.display = isAdmin ? '' : 'none';
+  if (!isAdmin) return;
   var errEl = el('set-localModelsErr');
   if (errEl) errEl.textContent = '';
   fetch('/api/local-models', { credentials: 'same-origin' })

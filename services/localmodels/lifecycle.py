@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 def rescan() -> list[LocalModel]:
     """Scan configured dirs, refresh the server catalog, and sync the picker."""
     models = scan_dirs(get_local_model_dirs())
-    get_server()._catalog = {m.id: m for m in models}  # keep server in sync
+    get_server().set_catalog(models)  # keep server catalog in sync
     sync_managed_endpoint(models)
     return models
 

@@ -304,7 +304,9 @@ def materialize_local_url(url: str, model: str) -> str:
     warm chat model), then returns its OpenAI-compatible chat endpoint. Normal
     URLs pass through unchanged.
     """
-    if not isinstance(url, str) or not url.startswith("local://"):
+    # Scoped to the llama.cpp managed endpoint specifically, so unrelated
+    # sentinels (e.g. the embeddings `local://fastembed`) pass through untouched.
+    if not isinstance(url, str) or not url.startswith("local://llama.cpp"):
         return url
     from services.localmodels.server_manager import get_server
     base = get_server().ensure_running(model)
@@ -804,6 +806,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
+    url = materialize_local_url(url, model)
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
@@ -934,7 +937,9 @@ async def llm_call_async(
     prompt_type: Optional[str] = None
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
-    url = materialize_local_url(url, model)
+    # Offload to a thread: for a local:// model this can block up to ~3 min on
+    # first load (launch + health), and we must not stall the event loop.
+    url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -1044,7 +1049,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
-    url = materialize_local_url(url, model)
+    # Offload to a thread: launching a local:// model can block up to ~3 min
+    # on first load; never stall the event loop on it.
+    url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 

@@ -47,24 +47,14 @@ def client(monkeypatch):
             state["running"].add(ref)
             return "http://127.0.0.1:9001"
 
-        # mimic _chat/_embed slot lookup used by the stop route
-        class _Slot:
-            def __init__(self, mid):
-                self.model_id = mid
+        def stop(self, model_id):
+            if model_id in state["running"]:
+                state["stopped"].append(model_id)
+                state["running"].discard(model_id)
+                return True
+            return False
 
-        @property
-        def _chat(self):
-            mid = next((m for m in state["running"]), None)
-            return self._Slot(mid) if mid else None
-
-        @property
-        def _embed(self):
-            return None
-
-        def _stop_proc(self, slot):
-            state["stopped"].append(slot.model_id)
-            state["running"].discard(slot.model_id)
-
+    monkeypatch.setattr(routes_mod, "require_admin", lambda request: None)
     monkeypatch.setattr(routes_mod, "scan_dirs", lambda dirs: catalog)
     monkeypatch.setattr(routes_mod, "get_local_model_dirs", lambda: state["dirs"])
     monkeypatch.setattr(routes_mod, "set_local_model_dirs",

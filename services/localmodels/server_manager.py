@@ -86,6 +86,23 @@ class LocalModelServer:
         with self._lock:
             return list(self._catalog.values())
 
+    def set_catalog(self, models: list[LocalModel]) -> None:
+        """Replace the in-memory catalog (lock-held) — used after a rescan."""
+        with self._lock:
+            self._catalog = {m.id: m for m in models}
+
+    def stop(self, model_id: str) -> bool:
+        """Stop a running model by id. Returns True if it was running.
+
+        Lock-held so it can't race ensure_running's slot bookkeeping.
+        """
+        with self._lock:
+            for slot in (self._chat, self._embed):
+                if slot and slot.model_id == model_id:
+                    self._stop_proc(slot)
+                    return True
+        return False
+
     def _resolve(self, ref: str) -> Optional[LocalModel]:
         with self._lock:
             if ref in self._catalog:
@@ -104,6 +121,10 @@ class LocalModelServer:
         if m is None:
             raise LookupError(f"Unknown local model: {ref!r}")
         with self._lock:
+            # Embedding GGUFs get an independent slot (served with --embedding)
+            # so they can run alongside a chat model. Today this is reachable
+            # only via an explicit start/select; RAG still defaults to
+            # fastembed, so the embedding slot has no implicit caller yet.
             slot = self._embed if m.kind == "embedding" else self._chat
             if slot and slot.model_id == m.id and slot.proc.poll() is None:
                 return slot.base_url

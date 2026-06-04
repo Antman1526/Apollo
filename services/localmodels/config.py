@@ -31,8 +31,18 @@ def get_local_model_dirs() -> list[str]:
 
 
 def set_local_model_dirs(dirs: list[str]) -> list[str]:
-    """Persist the directory list and return the cleaned value."""
-    cleaned = [d.strip() for d in (dirs or []) if d and d.strip()]
+    """Persist the directory list and return the cleaned value.
+
+    Entries are expanded (`~`) and must be absolute paths; relative or empty
+    entries are dropped so a caller can't seed a surprise relative scan root.
+    """
+    cleaned = []
+    for d in dirs or []:
+        if not d or not d.strip():
+            continue
+        p = os.path.expanduser(d.strip())
+        if os.path.isabs(p):
+            cleaned.append(p)
     settings = load_settings()
     settings["local_model_dirs"] = cleaned
     save_settings(settings)  # save_settings() invalidates the settings cache

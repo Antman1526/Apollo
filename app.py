@@ -1064,4 +1064,10 @@ async def shutdown_event():
         await mcp_manager.disconnect_all()
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
+    # Stop any local llama-server processes so they don't outlive the app
+    try:
+        from services.localmodels.server_manager import get_server
+        get_server().stop_all()
+    except Exception as e:
+        logger.warning(f"Local model server shutdown error: {e}")
     logger.info("Application shutdown complete")
