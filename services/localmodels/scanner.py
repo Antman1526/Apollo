@@ -13,6 +13,11 @@ _QUANT_RE = re.compile(
 _EMBED_HINT = re.compile(r"(?i)(embed|nomic|bge|gte|e5|minilm)")
 _SPLIT_RE = re.compile(r"(?i)^(.+)-(\d+)-of-(\d+)\.gguf$")
 
+# Subdirectories that hold cache/blob stores rather than user-facing models.
+# Pruning them keeps HF cache blobs, ollama stores, and duplicate copies from
+# showing up as selectable models.
+_SKIP_DIRS = {"cache", ".cache", "llama-cache", "ollama", ".ollama", "blobs", "tmp", ".git"}
+
 
 @dataclass
 class LocalModel:
@@ -51,6 +56,8 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
         if not os.path.isdir(base):
             continue
         for root, subdirs, files in os.walk(base, followlinks=False):
+            # Prune cache/blob dirs in place so os.walk never descends into them.
+            subdirs[:] = [d for d in subdirs if d.lower() not in _SKIP_DIRS]
             for fn in sorted(files):
                 if not fn.lower().endswith(".gguf"):
                     continue

@@ -33,3 +33,17 @@ def test_scan_skips_sidecars_projectors_and_extra_split_parts(tmp_path):
 def test_scan_tolerates_missing_dir():
     from services.localmodels.scanner import scan_dirs
     assert scan_dirs(["/nonexistent/path/xyz"]) == []
+
+
+def test_scan_skips_cache_and_blob_dirs(tmp_path):
+    from services.localmodels.scanner import scan_dirs
+    # real model in a normal subdir is kept...
+    _touch(str(tmp_path / "GGUF" / "Real-Model-Q4_K_M.gguf"))
+    # ...but GGUFs inside cache/blob/ollama dirs are pruned (avoids HF cache
+    # blobs, ollama stores, and duplicate copies surfacing as models).
+    _touch(str(tmp_path / "cache" / "Junk-Q4_K_M.gguf"))
+    _touch(str(tmp_path / "llama-cache" / "Junk2-Q4_K_M.gguf"))
+    _touch(str(tmp_path / "ollama" / "blobs" / "Junk3-Q4_K_M.gguf"))
+    _touch(str(tmp_path / ".cache" / "Junk4-Q4_K_M.gguf"))
+    names = {m.name for m in scan_dirs([str(tmp_path)])}
+    assert names == {"Real-Model-Q4_K_M"}
