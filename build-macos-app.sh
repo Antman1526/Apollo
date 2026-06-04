@@ -24,6 +24,40 @@ echo "Building $APP_NAME.app"
 echo "  install dir: $INSTALL_DIR"
 echo "  port:        $PORT"
 
+# ── Bootstrap the venv if missing, so this is a one-command build from a fresh
+#    clone. The clickable app drives this same venv at runtime. Skip with
+#    APOLLO_SKIP_VENV=1 if you manage the environment yourself.
+if [ -z "$APOLLO_SKIP_VENV" ] && [ ! -x "$INSTALL_DIR/venv/bin/uvicorn" ]; then
+  echo "  venv:        not found — setting it up (first build only)…"
+  # Prefer an arm64 Homebrew Python on Apple Silicon (matches start-macos.sh);
+  # fall back to whatever python3.11+ is on PATH elsewhere.
+  PY=""
+  if [ "$(uname -m)" = "arm64" ]; then
+    cands="/opt/homebrew/bin/python3.13 /opt/homebrew/bin/python3.12 /opt/homebrew/bin/python3.11"
+  else
+    cands="python3.13 python3.12 python3.11 python3"
+  fi
+  for cand in $cands; do
+    p="$(command -v "$cand" 2>/dev/null)" || continue
+    if "$p" -c 'import sys; raise SystemExit(0 if sys.version_info[:2] >= (3, 11) else 1)' 2>/dev/null; then
+      PY="$p"; break
+    fi
+  done
+  if [ -z "$PY" ]; then
+    echo "  ✗ Need Python 3.11+ to build the venv. Install it (e.g. brew install python@3.11)"
+    echo "    or run ./start-macos.sh first, then re-run this script."
+    exit 1
+  fi
+  echo "  python:      $("$PY" --version 2>&1) ($PY)"
+  "$PY" -m venv "$INSTALL_DIR/venv"
+  "$INSTALL_DIR/venv/bin/python" -m pip install --quiet --upgrade pip
+  "$INSTALL_DIR/venv/bin/python" -m pip install -r "$INSTALL_DIR/requirements.txt"
+  APOLLO_SKIP_RUN_HINT=1 "$INSTALL_DIR/venv/bin/python" "$INSTALL_DIR/setup.py" || true
+  echo "  venv:        ready"
+else
+  echo "  venv:        $( [ -x "$INSTALL_DIR/venv/bin/uvicorn" ] && echo reusing existing || echo skipped )"
+fi
+
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
