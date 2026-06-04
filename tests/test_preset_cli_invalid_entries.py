@@ -4,8 +4,8 @@ from pathlib import Path
 
 
 def _load_preset_cli():
-    path = Path(__file__).resolve().parent.parent / "scripts" / "odysseus-preset"
-    loader = importlib.machinery.SourceFileLoader("odysseus_preset_invalid_entries", str(path))
+    path = Path(__file__).resolve().parent.parent / "scripts" / "apollo-preset"
+    loader = importlib.machinery.SourceFileLoader("apollo_preset_invalid_entries", str(path))
     spec = importlib.util.spec_from_loader(loader.name, loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)

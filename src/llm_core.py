@@ -196,9 +196,9 @@ def _normalize_ollama_url(url: str) -> str:
 
 
 def _ollama_normalize_tool_messages(messages: List[Dict]) -> List[Dict]:
-    """Adapt Odysseus' canonical OpenAI-style messages to native Ollama /api/chat.
+    """Adapt Apollo' canonical OpenAI-style messages to native Ollama /api/chat.
 
-    Odysseus carries assistant tool calls in the OpenAI shape, where
+    Apollo carries assistant tool calls in the OpenAI shape, where
     `function.arguments` is a JSON *string*. Native Ollama expects it to be a
     JSON *object*; given the string it fails the whole request with HTTP 400
     "Value looks like object, but can't find closing '}' symbol", which aborts
@@ -297,6 +297,22 @@ def _host_match(url: str, *domains: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+def materialize_local_url(url: str, model: str) -> str:
+    """Turn a `local://llama.cpp...` sentinel into a live llama-server URL.
+
+    Idempotent: starts the model's server if needed (evicting the previous
+    warm chat model), then returns its OpenAI-compatible chat endpoint. Normal
+    URLs pass through unchanged.
+    """
+    # Scoped to the llama.cpp managed endpoint specifically, so unrelated
+    # sentinels (e.g. the embeddings `local://fastembed`) pass through untouched.
+    if not isinstance(url, str) or not url.startswith("local://llama.cpp"):
+        return url
+    from services.localmodels.server_manager import get_server
+    base = get_server().ensure_running(model)
+    return base.rstrip("/") + "/v1/chat/completions"
+
+
 def _detect_provider(url: str) -> str:
     """Detect the API provider from a configured endpoint URL.
 
@@ -322,8 +338,8 @@ def _provider_headers(provider: str, headers: Optional[Dict] = None) -> Dict[str
     if isinstance(headers, dict):
         h.update(headers)
     if provider == "openrouter":
-        h.setdefault("HTTP-Referer", "https://github.com/pewdiepie-archdaemon/odysseus")
-        h.setdefault("X-OpenRouter-Title", "Odysseus")
+        h.setdefault("HTTP-Referer", "https://github.com/Antman1526/Apollo")
+        h.setdefault("X-OpenRouter-Title", "Apollo")
     return h
 
 
@@ -591,7 +607,7 @@ def _as_content_blocks(content) -> List[Dict]:
 
 
 def _sanitize_llm_messages(messages: List[Dict]) -> List[Dict]:
-    """Strip Odysseus-only metadata before sending messages to providers.
+    """Strip Apollo-only metadata before sending messages to providers.
 
     Per the OpenAI chat format: user/system messages must have content; a tool
     message needs content + tool_call_id; an assistant message may carry content,
@@ -790,6 +806,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
+    url = materialize_local_url(url, model)
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
@@ -920,6 +937,9 @@ async def llm_call_async(
     prompt_type: Optional[str] = None
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    # Offload to a thread: for a local:// model this can block up to ~3 min on
+    # first load (launch + health), and we must not stall the event loop.
+    url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -1029,6 +1049,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
+    # Offload to a thread: launching a local:// model can block up to ~3 min
+    # on first load; never stall the event loop on it.
+    url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 

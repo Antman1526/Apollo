@@ -112,6 +112,9 @@ DEFAULT_SETTINGS = {
     "tool_path_extra_roots": [],
     "task_endpoint_id": "",
     "task_model": "",
+    # Local model directories scanned for on-disk GGUF chat/embedding models.
+    # Empty = fall back to APOLLO_MODELS_DIRS env, then built-in defaults.
+    "local_model_dirs": [],
     "default_endpoint_id": "",
     "default_model": "",
     # Ordered fallback chain for the default chat model. Each entry is

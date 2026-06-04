@@ -33,7 +33,7 @@ function initTabs() {
       // they flip toggles instead of having to close + reopen the modal.
       document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
       syncAppearanceOpacity(tab === 'appearance');
-      if (tab === 'ai') refreshAiModelEndpoints();
+      if (tab === 'ai') { refreshAiModelEndpoints(); refreshLocalModels(); }
     });
   });
 }
@@ -248,6 +248,227 @@ export async function refreshAiModelEndpoints() {
     }
   })();
   return _aiEndpointRefreshInFlight;
+}
+
+/* ── Local Models panel ──────────────────────────────────────────────────── */
+function _fmtBytes(bytes) {
+  if (!bytes || bytes < 0) return '';
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(0) + ' MB';
+  return (bytes / 1e3).toFixed(0) + ' KB';
+}
+
+function _renderLocalModelDirs(dirs) {
+  var container = el('set-localModelDirs');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!dirs || dirs.length === 0) {
+    var empty = document.createElement('div');
+    empty.style.cssText = 'font-size:11px;opacity:0.45;';
+    empty.textContent = 'No directories configured.';
+    container.appendChild(empty);
+    return;
+  }
+  dirs.forEach(function(dir) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    var span = document.createElement('span');
+    span.style.cssText = 'flex:1;font-size:12px;font-family:monospace;word-break:break-all;opacity:0.85;';
+    span.textContent = dir;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'admin-btn-sm';
+    btn.textContent = 'Remove';
+    btn.style.cssText = 'flex-shrink:0;';
+    btn.addEventListener('click', function() {
+      var newDirs = dirs.filter(function(d) { return d !== dir; });
+      _putLocalModelDirs(newDirs);
+    });
+    row.appendChild(span);
+    row.appendChild(btn);
+    container.appendChild(row);
+  });
+}
+
+function _renderLocalModelsList(models) {
+  var container = el('set-localModelsList');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!models || models.length === 0) {
+    var empty = document.createElement('div');
+    empty.style.cssText = 'font-size:11px;opacity:0.45;';
+    empty.textContent = 'No models found. Add a directory and click Rescan.';
+    container.appendChild(empty);
+    return;
+  }
+  models.forEach(function(m) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid color-mix(in srgb,var(--fg) 8%,transparent);flex-wrap:wrap;';
+
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+
+    var nameSpan = document.createElement('span');
+    nameSpan.style.cssText = 'font-size:12px;font-weight:600;word-break:break-all;';
+    nameSpan.textContent = esc(m.name || m.id);
+
+    var meta = document.createElement('span');
+    meta.style.cssText = 'font-size:11px;opacity:0.55;margin-left:6px;';
+    var parts = [];
+    if (m.quant) parts.push(esc(m.quant));
+    if (m.kind) parts.push(esc(m.kind));
+    if (m.size_bytes) parts.push(_fmtBytes(m.size_bytes));
+    meta.textContent = parts.join(' · ');
+
+    info.appendChild(nameSpan);
+    info.appendChild(meta);
+
+    if (m.running) {
+      var badge = document.createElement('span');
+      badge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:10px;background:color-mix(in srgb,#27ae60 20%,transparent);color:#27ae60;font-weight:700;flex-shrink:0;';
+      badge.textContent = 'Running';
+      row.appendChild(info);
+      row.appendChild(badge);
+    } else {
+      row.appendChild(info);
+    }
+
+    var actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'admin-btn-sm';
+    actionBtn.style.cssText = 'flex-shrink:0;';
+    if (m.running) {
+      actionBtn.textContent = 'Stop';
+      actionBtn.addEventListener('click', function() {
+        actionBtn.disabled = true;
+        actionBtn.textContent = 'Stopping…';
+        fetch('/api/local-models/' + encodeURIComponent(m.id) + '/stop', {
+          method: 'POST',
+          credentials: 'same-origin'
+        }).then(function(r) { return r.json(); }).then(function() {
+          refreshLocalModels();
+        }).catch(function(e) {
+          var errEl = el('set-localModelsErr');
+          if (errEl) errEl.textContent = 'Stop failed: ' + e.message;
+          actionBtn.disabled = false;
+          actionBtn.textContent = 'Stop';
+        });
+      });
+    } else {
+      actionBtn.textContent = 'Start';
+      actionBtn.addEventListener('click', function() {
+        actionBtn.disabled = true;
+        actionBtn.textContent = 'Starting…';
+        fetch('/api/local-models/' + encodeURIComponent(m.id) + '/start', {
+          method: 'POST',
+          credentials: 'same-origin'
+        }).then(function(r) { return r.json(); }).then(function(data) {
+          if (data && data.ok === false) {
+            var errEl = el('set-localModelsErr');
+            if (errEl) errEl.textContent = 'Start failed: ' + (data.error || 'unknown error');
+            actionBtn.disabled = false;
+            actionBtn.textContent = 'Start';
+          } else {
+            refreshLocalModels();
+          }
+        }).catch(function(e) {
+          var errEl = el('set-localModelsErr');
+          if (errEl) errEl.textContent = 'Start failed: ' + e.message;
+          actionBtn.disabled = false;
+          actionBtn.textContent = 'Start';
+        });
+      });
+    }
+    row.appendChild(actionBtn);
+    container.appendChild(row);
+  });
+}
+
+function _putLocalModelDirs(dirs) {
+  var errEl = el('set-localModelsErr');
+  if (errEl) errEl.textContent = '';
+  fetch('/api/local-models/dirs', {
+    method: 'PUT',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dirs: dirs })
+  }).then(function(r) { return r.json(); }).then(function(data) {
+    _renderLocalModelDirs(data.dirs || dirs);
+  }).catch(function(e) {
+    if (errEl) errEl.textContent = 'Failed to update directories: ' + e.message;
+  });
+}
+
+export function refreshLocalModels() {
+  // The local-models routes require admin (they launch processes / change a
+  // global scan dir), and this section lives in the non-admin AI tab — so hide
+  // it for non-admins instead of firing requests that 403.
+  var listEl = el('set-localModelsList');
+  var section = listEl ? listEl.closest('.admin-card') : null;
+  var isAdmin = typeof window !== 'undefined' && window._isAdmin;
+  if (section) section.style.display = isAdmin ? '' : 'none';
+  if (!isAdmin) return;
+  var errEl = el('set-localModelsErr');
+  if (errEl) errEl.textContent = '';
+  fetch('/api/local-models', { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      _renderLocalModelDirs(data.dirs || []);
+      _renderLocalModelsList(data.models || []);
+    })
+    .catch(function(e) {
+      if (errEl) errEl.textContent = 'Failed to load local models: ' + e.message;
+    });
+}
+
+function _initLocalModelsPanel() {
+  var addBtn = el('set-localModelDirAdd');
+  var input = el('set-localModelDirInput');
+  var rescanBtn = el('set-localModelRescan');
+  var rescanMsg = el('set-localModelRescanMsg');
+
+  if (addBtn && input) {
+    addBtn.addEventListener('click', function() {
+      var val = input.value.trim();
+      if (!val) return;
+      fetch('/api/local-models/dirs', { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var current = data.dirs || [];
+          if (current.indexOf(val) === -1) {
+            _putLocalModelDirs(current.concat([val]));
+          }
+          input.value = '';
+        })
+        .catch(function(e) {
+          var errEl = el('set-localModelsErr');
+          if (errEl) errEl.textContent = 'Failed to add directory: ' + e.message;
+        });
+    });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
+    });
+  }
+
+  if (rescanBtn) {
+    rescanBtn.addEventListener('click', function() {
+      rescanBtn.disabled = true;
+      if (rescanMsg) rescanMsg.textContent = 'Scanning…';
+      fetch('/api/local-models/scan', { method: 'POST', credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (rescanMsg) rescanMsg.textContent = 'Found ' + (data.count || 0) + ' model(s).';
+          setTimeout(function() { if (rescanMsg) rescanMsg.textContent = ''; }, 4000);
+          refreshLocalModels();
+        })
+        .catch(function(e) {
+          if (rescanMsg) rescanMsg.textContent = 'Scan failed: ' + e.message;
+        })
+        .finally(function() {
+          rescanBtn.disabled = false;
+        });
+    });
+  }
 }
 
 /* Shared fallback-chain widget — mirrors the Default Chat Model fallback UI
@@ -1631,8 +1852,8 @@ function initAppearance() {
   modalEl.querySelectorAll('[data-privacy-key]').forEach(function(chk) {
     chk.addEventListener('change', function() {
       if (chk.dataset.privacyKey !== 'sensitive-blur') return;
-      localStorage.setItem('odysseus-sensitive-blur', chk.checked ? 'on' : 'off');
-      window.dispatchEvent(new CustomEvent('odysseus-sensitive-blur-change', {
+      localStorage.setItem('apollo-sensitive-blur', chk.checked ? 'on' : 'off');
+      window.dispatchEvent(new CustomEvent('apollo-sensitive-blur-change', {
         detail: { enabled: chk.checked }
       }));
     });
@@ -1641,7 +1862,7 @@ function initAppearance() {
   var resetBtn = el('set-uiVisResetBtn');
   if (resetBtn) {
     resetBtn.addEventListener('click', function() {
-      localStorage.removeItem('odysseus-ui-visibility');
+      localStorage.removeItem('apollo-ui-visibility');
       syncAppearanceCheckboxes();
       syncPrivacyCheckboxes();
       window.applyUIVis({});
@@ -1660,7 +1881,7 @@ function syncAppearanceCheckboxes() {
 
 function syncPrivacyCheckboxes() {
   modalEl.querySelectorAll('[data-privacy-key="sensitive-blur"]').forEach(function(chk) {
-    chk.checked = localStorage.getItem('odysseus-sensitive-blur') === 'on';
+    chk.checked = localStorage.getItem('apollo-sensitive-blur') === 'on';
   });
 }
 
@@ -1950,7 +2171,7 @@ async function initShortcuts() {
         body: JSON.stringify({ keybinds }),
       });
       // Update global keybinds so they take effect immediately
-      window._odysseusKeybinds = keybinds;
+      window._apolloKeybinds = keybinds;
       if (uiModule && uiModule.showToast) uiModule.showToast('Shortcut saved');
     } catch (e) {
       console.error('Failed to save keybinds:', e);
@@ -2128,12 +2349,12 @@ function initAccount() {
       // SECURITY: wipe all client-side state on logout so the next user that
       // signs in on this browser doesn't inherit the previous account's
       // session id, last-used model, draft chat input, or any cached lists.
-      // Keep "odysseus-last-user" so the login form remembers the username
+      // Keep "apollo-last-user" so the login form remembers the username
       // (if "Remember me" was on). Without this the chat composer pre-loaded
       // the previous user's last model into a fresh session, which read as
       // cross-account leakage.
       try {
-        const _keepKeys = new Set(['odysseus-last-user']);
+        const _keepKeys = new Set(['apollo-last-user']);
         const _toRemove = [];
         for (let i = 0; i < localStorage.length; i++) {
           const k = localStorage.key(i);
@@ -2173,11 +2394,12 @@ function initAll() {
   initEmailAccountsSettings();
   initReminderSettings();
   initUnifiedIntegrations();
+  _initLocalModelsPanel();
 }
 
 function notifyIntegrationsChanged() {
   try {
-    window.dispatchEvent(new CustomEvent('odysseus-integrations-changed'));
+    window.dispatchEvent(new CustomEvent('apollo-integrations-changed'));
   } catch (_) {}
 }
 
@@ -2363,7 +2585,7 @@ async function initReminderSettings() {
   // regardless of channel). The hint should make that clear so
   // users don't think they have to choose between channels.
   const CHANNEL_HINTS = {
-    browser: 'Reminders appear as browser notifications inside Odysseus.',
+    browser: 'Reminders appear as browser notifications inside Apollo.',
     email: 'Reminders are emailed AND shown as a browser notification.',
     ntfy: 'Reminders are pushed via ntfy AND shown as a browser notification.',
   };
@@ -2371,7 +2593,7 @@ async function initReminderSettings() {
   applyReminderChannelAvailability();
   if (!channelSel.dataset.integrationRefreshWired) {
     channelSel.dataset.integrationRefreshWired = '1';
-    window.addEventListener('odysseus-integrations-changed', () => {
+    window.addEventListener('apollo-integrations-changed', () => {
       refreshReminderChannelAvailability().catch(e => console.warn('Failed to refresh reminder channels', e));
     });
   }
@@ -3313,7 +3535,7 @@ async function initUnifiedIntegrations() {
       if (ntfyHint) {
         ntfyHint.style.display = isNtfy ? 'block' : 'none';
         if (isNtfy) {
-          ntfyHint.innerHTML = 'Enter the ntfy server URL Odysseus can reach. Examples: <code>http://127.0.0.1:8091</code>, <code>http://100.x.y.z:8091</code>, or <code>https://ntfy.example.com</code>.';
+          ntfyHint.innerHTML = 'Enter the ntfy server URL Apollo can reach. Examples: <code>http://127.0.0.1:8091</code>, <code>http://100.x.y.z:8091</code>, or <code>https://ntfy.example.com</code>.';
         }
       }
       if (url) {
@@ -3527,7 +3749,7 @@ async function initUnifiedIntegrations() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = format === 'csv' ? 'odysseus-contacts.csv' : 'odysseus-contacts.vcf';
+        a.download = format === 'csv' ? 'apollo-contacts.csv' : 'apollo-contacts.vcf';
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -4360,7 +4582,7 @@ export function open(tab) {
   const activeTab = tab || (modalEl.querySelector('[data-settings-tab].active') || {}).dataset?.settingsTab || 'services';
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
-  if (activeTab === 'ai') refreshAiModelEndpoints();
+  if (activeTab === 'ai') { refreshAiModelEndpoints(); refreshLocalModels(); }
   if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
@@ -4385,7 +4607,7 @@ export function close() {
   }
 }
 
-const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints };
+const settingsModule = { open, close, initIntegrations, initUnifiedIntegrations, syncAdminVisibility, refreshAiModelEndpoints, refreshLocalModels };
 
 
 export default settingsModule;

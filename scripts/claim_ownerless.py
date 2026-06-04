@@ -83,7 +83,7 @@ def main():
         db.close()
 
     print(f"\nDone! All ownerless data now belongs to {owner}")
-    print("Restart the server: sudo systemctl restart odysseus-ui")
+    print("Restart the server: sudo systemctl restart apollo-ui")
 
 
 if __name__ == "__main__":

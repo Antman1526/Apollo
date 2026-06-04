@@ -93,8 +93,8 @@ app.add_middleware(
         "Content-Type",
         "X-API-Key",
         "X-Auth-Token",
-        "X-Odysseus-Internal-Token",
-        "X-Odysseus-Owner",
+        "X-Apollo-Internal-Token",
+        "X-Apollo-Owner",
         "X-Requested-With",
         "X-TZ-Offset",
     ],
@@ -235,7 +235,7 @@ if AUTH_ENABLED:
         forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
         unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
         loopback, so a remote visitor would otherwise inherit local trust and
-        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Odysseus's own
+        slip past LOCALHOST_BYPASS or spoof the internal-tool path. Apollo's own
         in-process agent loopback calls carry none of these headers, so they still
         qualify."""
         host = request.client.host if request.client else None
@@ -260,10 +260,10 @@ if AUTH_ENABLED:
                 _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
                 if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
                     # Impersonation: when the agent's loopback call sets
-                    # X-Odysseus-Owner, attribute the request to that user only
+                    # X-Apollo-Owner, attribute the request to that user only
                     # if they exist. Authorization checks remain separate; this
                     # is just owner attribution for notes/calendar/etc.
-                    _impersonate = (request.headers.get("X-Odysseus-Owner") or "").strip()
+                    _impersonate = (request.headers.get("X-Apollo-Owner") or "").strip()
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
@@ -637,6 +637,10 @@ app.include_router(setup_cookbook_routes())
 from routes.hwfit_routes import setup_hwfit_routes
 app.include_router(setup_hwfit_routes())
 
+# Local GGUF models (scan, serve, manage)
+from routes.localmodels_routes import setup_localmodels_routes
+app.include_router(setup_localmodels_routes())
+
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
 app.include_router(setup_compare_routes(session_manager))
@@ -697,6 +701,12 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+
+# Kick off a non-blocking local model directory scan so the catalog is warm
+# on first request without delaying app startup.
+import threading
+from services.localmodels.lifecycle import startup_scan
+threading.Thread(target=startup_scan, name="local-models-scan", daemon=True).start()
 
 # ========= ROUTES (kept in app.py) =========
 
@@ -975,13 +985,13 @@ async def startup_event():
 
     # Start scheduled task runner — skip when running under a cron-driven
     # deployment where an external worker drives task firing. Mirrors
-    # `ODYSSEUS_INPROCESS_POLLERS` from the email pollers.
-    _tasks_inprocess = os.environ.get("ODYSSEUS_INPROCESS_TASKS", "1").strip().lower()
+    # `APOLLO_INPROCESS_POLLERS` from the email pollers.
+    _tasks_inprocess = os.environ.get("APOLLO_INPROCESS_TASKS", "1").strip().lower()
     if _tasks_inprocess not in ("0", "false", "no", "off", ""):
         await task_scheduler.start()
     else:
         logger.info(
-            "In-process task scheduler disabled (ODYSSEUS_INPROCESS_TASKS=0); "
+            "In-process task scheduler disabled (APOLLO_INPROCESS_TASKS=0); "
             "drive task firing externally (e.g. cron)."
         )
     # Periodic null-owner sweep — re-runs the legacy-owner assignment hourly
@@ -1054,4 +1064,10 @@ async def shutdown_event():
         await mcp_manager.disconnect_all()
     except Exception as e:
         logger.warning(f"MCP shutdown error: {e}")
+    # Stop any local llama-server processes so they don't outlive the app
+    try:
+        from services.localmodels.server_manager import get_server
+        get_server().stop_all()
+    except Exception as e:
+        logger.warning(f"Local model server shutdown error: {e}")
     logger.info("Application shutdown complete")
