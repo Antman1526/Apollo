@@ -297,6 +297,20 @@ def _host_match(url: str, *domains: str) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
+def materialize_local_url(url: str, model: str) -> str:
+    """Turn a `local://llama.cpp...` sentinel into a live llama-server URL.
+
+    Idempotent: starts the model's server if needed (evicting the previous
+    warm chat model), then returns its OpenAI-compatible chat endpoint. Normal
+    URLs pass through unchanged.
+    """
+    if not isinstance(url, str) or not url.startswith("local://"):
+        return url
+    from services.localmodels.server_manager import get_server
+    base = get_server().ensure_running(model)
+    return base.rstrip("/") + "/v1/chat/completions"
+
+
 def _detect_provider(url: str) -> str:
     """Detect the API provider from a configured endpoint URL.
 
@@ -920,6 +934,7 @@ async def llm_call_async(
     prompt_type: Optional[str] = None
 ) -> str:
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
+    url = materialize_local_url(url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
@@ -1029,6 +1044,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
       - event: error                       — errors
       - data: [DONE]                       — end of stream
     """
+    url = materialize_local_url(url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
 
