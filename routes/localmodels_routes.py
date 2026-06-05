@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from services.localmodels import lifecycle
-from services.localmodels.scanner import scan_dirs
+from services.localmodels.scanner import scan_dirs, discover_piper_voices
 from services.localmodels.config import get_local_model_dirs, set_local_model_dirs
 from services.localmodels.server_manager import get_server
 
@@ -46,6 +46,12 @@ def setup_localmodels_routes() -> APIRouter:
         require_admin(request)
         models = lifecycle.rescan()
         return {"count": len(models), "models": [asdict(m) for m in models]}
+
+    @router.get("/voices")
+    def list_voices(request: Request):
+        """Piper TTS voices (*.onnx + sidecar) discovered in the model dirs."""
+        require_admin(request)
+        return {"voices": discover_piper_voices(get_local_model_dirs())}
 
     @router.get("/dirs")
     def get_dirs(request: Request):

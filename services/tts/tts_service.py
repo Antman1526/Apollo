@@ -2,6 +2,7 @@
 """Multi-provider TTS service — dispatches to local Kokoro, OpenAI-compatible API, or browser."""
 
 import io
+import os
 import wave
 import logging
 import hashlib
@@ -54,6 +55,8 @@ class TTSService:
         if provider == "local":
             kokoro = self._get_kokoro()
             return kokoro is not None and kokoro.available
+        if provider == "piper":
+            return self._get_piper().available
         if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
@@ -88,6 +91,13 @@ class TTSService:
         if self._kokoro is None:
             self._kokoro = _KokoroPipeline()
         return self._kokoro
+
+    # ── Piper (local, CPU / Mac-friendly) ──
+
+    def _get_piper(self):
+        if getattr(self, "_piper", None) is None:
+            self._piper = _PiperPipeline()
+        return self._piper
 
     # ── API endpoint ──
 
@@ -160,6 +170,13 @@ class TTSService:
             else:
                 logger.warning("Kokoro TTS not available")
                 return None
+        elif provider == "piper":
+            # `voice` holds the path to a Piper `.onnx` voice (with its
+            # `.onnx.json` beside it). CPU-only, works on Apple Silicon.
+            audio_data = self._get_piper().synthesize_raw(text, voice)
+            if audio_data is None:
+                logger.warning("Piper TTS not available or voice failed to load")
+                return None
         elif provider.startswith("endpoint:"):
             endpoint_id = provider.split(":", 1)[1]
             audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed)
@@ -206,6 +223,9 @@ class TTSService:
         if provider == "local":
             kokoro = self._get_kokoro()
             stats["model"] = "Kokoro-82M (GPU)" if (kokoro and kokoro.available) else "Kokoro (not loaded)"
+        elif provider == "piper":
+            import os as _os
+            stats["model"] = f"Piper ({_os.path.basename(settings['tts_voice'] or 'no voice set')})"
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
         elif provider.startswith("endpoint:"):
@@ -270,6 +290,60 @@ class _KokoroPipeline:
             return buf.getvalue()
         except Exception as e:
             logger.error(f"Kokoro synthesis failed: {e}", exc_info=True)
+            return None
+
+
+class _PiperPipeline:
+    """Loads Piper ONNX voices on demand and synthesizes WAV bytes.
+
+    CPU-only (no CUDA/torch), so this is the local-TTS path on Apple Silicon.
+    Voices are cached by their `.onnx` path; the matching `.onnx.json` must sit
+    beside the model file.
+    """
+
+    def __init__(self):
+        self._voices = {}  # path -> PiperVoice
+        self._import_error = None
+        try:
+            from piper import PiperVoice  # noqa: F401
+        except Exception as e:  # ImportError or a broken install
+            self._import_error = e
+            logger.warning("Piper TTS not available: %s (pip install piper-tts)", e)
+
+    @property
+    def available(self) -> bool:
+        return self._import_error is None
+
+    def _load(self, voice_path: str):
+        if not self.available:
+            return None
+        if not voice_path or not os.path.isfile(voice_path):
+            logger.warning("Piper voice not found: %r", voice_path)
+            return None
+        cached = self._voices.get(voice_path)
+        if cached is not None:
+            return cached
+        try:
+            from piper import PiperVoice
+            voice = PiperVoice.load(voice_path)
+            self._voices[voice_path] = voice
+            logger.info("Piper voice loaded: %s", os.path.basename(voice_path))
+            return voice
+        except Exception as e:
+            logger.error("Failed to load Piper voice %s: %s", voice_path, e, exc_info=True)
+            return None
+
+    def synthesize_raw(self, text: str, voice_path: str) -> Optional[bytes]:
+        voice = self._load(voice_path)
+        if voice is None:
+            return None
+        try:
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as wf:
+                voice.synthesize_wav(text, wf)  # sets WAV format itself
+            return buf.getvalue()
+        except Exception as e:
+            logger.error("Piper synthesis failed: %s", e, exc_info=True)
             return None
 
 

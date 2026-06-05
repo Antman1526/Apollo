@@ -47,3 +47,16 @@ def test_scan_skips_cache_and_blob_dirs(tmp_path):
     _touch(str(tmp_path / ".cache" / "Junk4-Q4_K_M.gguf"))
     names = {m.name for m in scan_dirs([str(tmp_path)])}
     assert names == {"Real-Model-Q4_K_M"}
+
+
+def test_discover_piper_voices(tmp_path):
+    from services.localmodels.scanner import discover_piper_voices
+    d = tmp_path / "TTS"
+    _touch(str(d / "en_US-amy-medium.onnx"))
+    (d / "en_US-amy-medium.onnx.json").write_text("{}")
+    _touch(str(d / "no-sidecar.onnx"))            # skipped: no .json sidecar
+    _touch(str(tmp_path / "cache" / "junk.onnx"))
+    (tmp_path / "cache" / "junk.onnx.json").write_text("{}")  # pruned (cache dir)
+    voices = discover_piper_voices([str(tmp_path)])
+    assert [v["name"] for v in voices] == ["en_US-amy-medium"]
+    assert voices[0]["path"].endswith("/TTS/en_US-amy-medium.onnx")

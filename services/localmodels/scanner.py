@@ -88,3 +88,27 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                     directory=base,
                 )
     return list(out.values())
+
+
+def discover_piper_voices(dirs: list[str]) -> list[dict]:
+    """Find Piper TTS voices (`*.onnx` with a sibling `*.onnx.json`) under the
+    configured dirs, so the UI can offer them without the user typing paths.
+
+    Returns [{"name": <stem>, "path": <abs .onnx path>}], deduped by path.
+    """
+    out: dict[str, dict] = {}
+    for raw in dirs or []:
+        base = os.path.realpath(os.path.expanduser(raw))
+        if not os.path.isdir(base):
+            continue
+        for root, subdirs, files in os.walk(base, followlinks=False):
+            subdirs[:] = [d for d in subdirs if d.lower() not in _SKIP_DIRS]
+            for fn in sorted(files):
+                if not fn.lower().endswith(".onnx") or fn.startswith("._"):
+                    continue
+                fp = os.path.join(root, fn)
+                if not os.path.isfile(fp + ".json"):
+                    continue  # a Piper voice needs its config sidecar
+                if fp not in out:
+                    out[fp] = {"name": fn[:-5], "path": fp}
+    return list(out.values())

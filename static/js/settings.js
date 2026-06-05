@@ -1056,6 +1056,31 @@ async function initTtsSettings() {
       modelSelect.style.display = 'none'; modelInput.style.display = '';
       voiceSelect.style.display = 'none'; voiceInput.style.display = prov === 'disabled' ? 'none' : '';
     }
+    // For local Piper, the voice field is a path to a .onnx voice; offer the
+    // ones auto-discovered under the configured model dirs.
+    if (prov === 'piper') {
+      voiceInput.placeholder = '/path/to/voice.onnx';
+      loadPiperVoices();
+    } else if (voiceInput.placeholder === '/path/to/voice.onnx') {
+      voiceInput.placeholder = 'af_heart';
+    }
+  }
+
+  var _piperVoicesLoaded = false;
+  async function loadPiperVoices() {
+    if (_piperVoicesLoaded) return;
+    _piperVoicesLoaded = true;
+    var dl = el('set-ttsPiperVoices');
+    if (!dl) return;
+    try {
+      var r = await fetch('/api/local-models/voices', { credentials: 'same-origin' });
+      var data = await r.json();
+      dl.innerHTML = '';
+      (data.voices || []).forEach(function(v) {
+        var o = document.createElement('option');
+        o.value = v.path; o.label = v.name; dl.appendChild(o);
+      });
+    } catch (e) { console.warn('Failed to load Piper voices', e); }
   }
 
   var ttsKeywords = ['tts', 'audio'];
