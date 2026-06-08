@@ -761,6 +761,34 @@ app.include_router(setup_lmproxy_routes(
     warm_url_provider=_warm_chat_base_url,
 ))
 
+# Native lifecycle: when running as the installed desktop app (PAPERCLIP_MODE=
+# native), Apollo spawns and supervises `paperclipai run`, pointing its agents
+# at the local-model proxy above. No-op for docker/external modes.
+from services.paperclip.runtime import PaperclipRuntime as _PaperclipRuntime
+
+_paperclip_runtime = _PaperclipRuntime(
+    _paperclip_cfg,
+    proxy_token_provider=_paperclip_proxy_token,
+    proxy_base_provider=lambda: os.getenv(
+        "PAPERCLIP_PROXY_BASE_URL",
+        f"http://localhost:{os.getenv('APP_PORT', '7000')}/lmproxy/v1"),
+)
+app.state.paperclip_runtime = _paperclip_runtime
+
+
+@app.on_event("startup")
+async def _start_paperclip_runtime():
+    if _paperclip_cfg.enabled and _paperclip_cfg.mode == "native":
+        def _boot():
+            if _paperclip_runtime.start():
+                _paperclip_runtime.wait_healthy(timeout=90)
+        threading.Thread(target=_boot, name="paperclip-runtime", daemon=True).start()
+
+
+@app.on_event("shutdown")
+async def _stop_paperclip_runtime():
+    _paperclip_runtime.stop()
+
 # Kick off a non-blocking local model directory scan so the catalog is warm
 # on first request without delaying app startup.
 import threading
