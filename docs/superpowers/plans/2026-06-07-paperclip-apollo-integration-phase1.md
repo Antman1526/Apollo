@@ -1008,3 +1008,38 @@ git commit -m "docs(paperclip): README usage for bundled Paperclip"
 - **Spec coverage:** §5–§10 of the spec map to Tasks 2–11; §8.2 (native) and §6.3 (Apollo `/v1` proxy) are explicitly deferred to Phase 2/3 above. §6 model wiring → Tasks 2 + 6 + 8. §9 auth → global middleware (HTTP) + Task 5 (WS). §13 attribution → Task 10.
 - **Type consistency:** `PaperclipConfig` fields used identically across config.py, routes, and tests; `setup_paperclip_routes(cfg, http_client=None, ws_validate=None)` signature consistent in Tasks 4–5 and app.py.
 - **Spike-gated items** are flagged in Tasks 4, 5, and 8 with concrete fallbacks; the assumed S3 wiring (`OPENAI_BASE_URL` + `openai/<model>`) is implemented concretely and verified in Task 8.
+
+---
+
+## Spike decision record (Task 1) — 2026-06-07
+
+Probed a **live, natively-running** Paperclip v2026.529.0 (`npx paperclipai run`
+on :3100; `/api/health` → version 2026.529.0, deploymentMode `local_trusted`,
+authReady true). Docker engine was unavailable, so verification used this
+native instance instead of a Docker build.
+
+- **S1 (subpath) = Outcome B (absolute root paths).** The UI references
+  `/assets/index-*.js`, `/assets/index-*.css`, `/favicon.ico`,
+  `/site.webmanifest`, `/apple-touch-icon.png` at the **root**, with no base-href
+  / PUBLIC_URL prefix. The compiled bundle calls its API at absolute `/api/*`
+  (`/api/auth/get-session`, `/api/auth/sign-in/email`, `/api/health`, …) via
+  better-auth. **Apollo also owns `/api/*`**, so a same-origin subpath embed
+  under `/paperclip/` collides irreparably (the SPA's `/api` + `/assets`
+  resolve to Apollo, not Paperclip). Vite `base` is build-time → no runtime fix.
+  **Conclusion:** the reverse-proxy-at-subpath UI seam is NOT viable. Pivot the
+  UI to a **direct iframe to Paperclip's own origin** (Paperclip ships its own
+  better-auth + deployment modes, so it self-protects). Keep config, lifecycle,
+  model wiring, settings, and attribution.
+- **Realtime:** Paperclip is an Express server (`X-Powered-By: Express`); auth +
+  data over `/api/*`. (No separate WS path observed from the shell; the direct
+  iframe makes Apollo-side WS proxying moot anyway.)
+- **S3 (opencode wiring):** `opencode-local` adapter (`type=opencode_local`)
+  uses `provider/model` ids (default `openai/gpt-5.2-codex`); OpenCode performs
+  provider routing. Local wiring = point OpenCode's `openai` provider at a local
+  base URL (Ollama `…:11434/v1`) and use `openai/<model>`. To be confirmed
+  against a running agent once an end-to-end run is possible.
+
+**Impact on plan:** Task 4's reverse proxy + Task 5's WS proxy are superseded for
+the UI by the direct-iframe pivot. Task 6 must expose Paperclip's port to the
+browser; Task 9's iframe `src` becomes the Paperclip origin URL; config gains a
+browser-facing URL. Pending user approval of the pivot.

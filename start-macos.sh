@@ -196,4 +196,7 @@ if [ -n "$TAILSCALE_URL" ]; then
 fi
 echo "  (this takes a few seconds; press Ctrl+C here to stop)"
 echo
+# Desktop app runs Paperclip in native mode (Apollo supervises it + auto-fetches
+# a Node runtime when the Paperclip feature is enabled). No-op unless enabled.
+export PAPERCLIP_MODE="${PAPERCLIP_MODE:-native}"
 "$VENV_PY" -m uvicorn app:app --host "$HOST" --port "$PORT"

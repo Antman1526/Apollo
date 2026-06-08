@@ -154,6 +154,24 @@ LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
+
+def _bypass_user() -> str:
+    """Identity that loopback-bypass requests act as.
+
+    LOCALHOST_BYPASS skips the login flow, but many routes attribute data to a
+    real owner (sessions, documents) and 403 when no user is present. To make
+    the no-login desktop experience fully work, treat the loopback caller as a
+    real account: prefer an admin, else the first user, else "" (anonymous).
+    """
+    try:
+        users = auth_manager.users or {}
+    except Exception:
+        users = {}
+    for name, data in users.items():
+        if isinstance(data, dict) and data.get("is_admin"):
+            return name
+    return next(iter(users), "")
+
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
         "/api/auth/setup",
@@ -168,7 +186,11 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    # /lmproxy is the local-model OpenAI proxy consumed by Paperclip's agents
+    # (a same-host child process with no Apollo session). It is guarded by its
+    # own bearer token in routes/lmproxy_routes.py, so it is exempt from the
+    # session-cookie middleware here.
+    AUTH_EXEMPT_PREFIXES = ["/static", "/lmproxy"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -279,6 +301,11 @@ if AUTH_ENABLED:
             # Cloudflare tunnel / reverse proxy. Keep LOCALHOST_BYPASS=false for
             # network-exposed deployments regardless.
             if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+                # Act as a real user so ownership-based routes (sessions,
+                # documents) work without a login instead of 403-ing on an
+                # empty identity.
+                request.state.current_user = _bypass_user()
+                request.state.api_token = False
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
@@ -701,6 +728,84 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+
+# Paperclip sidecar reverse proxy (bundled agent-management UI). HTTP traffic to
+# /paperclip/* is gated by the global AuthMiddleware; websockets bypass that
+# middleware, so the WS handler validates the session cookie via auth_manager.
+from routes.paperclip_routes import setup_paperclip_routes
+from services.paperclip.config import load_config as _load_paperclip_config, resolve_proxy_token as _paperclip_proxy_token
+_paperclip_cfg = _load_paperclip_config()
+app.include_router(setup_paperclip_routes(
+    _paperclip_cfg,
+    ws_validate=lambda token: auth_manager.validate_token(token),
+))
+
+# Local-model OpenAI proxy: a stable localhost endpoint Paperclip's opencode
+# agents use, forwarding to whichever GGUF model Apollo currently has warm.
+from routes.lmproxy_routes import setup_lmproxy_routes
+
+
+def _warm_chat_base_url():
+    try:
+        from services.localmodels.server_manager import get_server
+        for slot in get_server().status().values():
+            if slot.get("kind") == "chat" and slot.get("running"):
+                return slot.get("base_url")
+    except Exception:
+        pass
+    return None
+
+
+app.include_router(setup_lmproxy_routes(
+    token_provider=_paperclip_proxy_token,
+    warm_url_provider=_warm_chat_base_url,
+))
+
+# Native lifecycle: when running as the installed desktop app (PAPERCLIP_MODE=
+# native), Apollo spawns and supervises `paperclipai run`, pointing its agents
+# at the local-model proxy above. No-op for docker/external modes.
+from services.paperclip.runtime import PaperclipRuntime as _PaperclipRuntime
+
+_paperclip_runtime = _PaperclipRuntime(
+    _paperclip_cfg,
+    proxy_token_provider=_paperclip_proxy_token,
+    proxy_base_provider=lambda: os.getenv(
+        "PAPERCLIP_PROXY_BASE_URL",
+        f"http://localhost:{os.getenv('APP_PORT', '7000')}/lmproxy/v1"),
+)
+app.state.paperclip_runtime = _paperclip_runtime
+
+
+@app.on_event("startup")
+async def _start_paperclip_runtime():
+    if _paperclip_cfg.enabled and _paperclip_cfg.mode == "native":
+        def _boot():
+            # Auto-provision a pinned Node into ~/.apollo/.node so a fresh
+            # Mac/Windows install needs no Node prerequisite. Falls back to a
+            # system Node if the download fails.
+            try:
+                import json as _json
+                import urllib.request as _urlreq
+                from services.paperclip.node_bootstrap import ensure_node, INDEX_URL
+
+                def _fetch_index():
+                    with _urlreq.urlopen(INDEX_URL, timeout=15) as r:
+                        return _json.load(r)
+
+                paths = ensure_node(os.path.expanduser("~/.apollo"), fetch_index=_fetch_index)
+                if paths:
+                    os.environ.setdefault("PAPERCLIP_NODE_BIN", paths[0])
+                    os.environ.setdefault("PAPERCLIP_NPX_BIN", paths[1])
+            except Exception as e:
+                logging.getLogger("app").warning("Paperclip Node bootstrap skipped: %s", e)
+            if _paperclip_runtime.start():
+                _paperclip_runtime.wait_healthy(timeout=90)
+        threading.Thread(target=_boot, name="paperclip-runtime", daemon=True).start()
+
+
+@app.on_event("shutdown")
+async def _stop_paperclip_runtime():
+    _paperclip_runtime.stop()
 
 # Kick off a non-blocking local model directory scan so the catalog is warm
 # on first request without delaying app startup.

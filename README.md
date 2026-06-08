@@ -72,6 +72,40 @@ binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
 only when you intentionally want LAN/reverse-proxy access.
 
+#### Paperclip (agent management) — optional
+
+Apollo can bundle **[Paperclip](https://github.com/paperclipai/paperclip)**, an
+agent-management UI, as an opt-in sidecar. It runs as its own container (plus a
+small Postgres) behind a `paperclip` Compose profile, and Apollo reverse-proxies
+it at `/paperclip` — so it appears as a **Paperclip** tab inside Apollo, behind
+the same login. Its agents run on your **local model** (default: Ollama).
+
+Enable it:
+
+```bash
+# in .env
+PAPERCLIP_ENABLED=true
+PAPERCLIP_AUTH_SECRET=$(openssl rand -hex 32)   # paste the generated value
+# optional: PAPERCLIP_MODEL_BASE_URL / PAPERCLIP_MODEL_ENDPOINT (defaults to host Ollama)
+
+docker compose --profile paperclip up -d --build
+```
+
+On first open, Paperclip shows a one-time **claim** screen to create its admin
+account. Then add an agent with the **`opencode-local`** adapter and a model id
+like `openai/<your-ollama-model>` to run work on your local model. A normal
+`docker compose up` (without the profile) is unaffected — the sidecar never
+starts and no secret is required.
+
+> **Native desktop (no Docker):** in the macOS `.app`/`.dmg` and the Windows
+> launcher, Paperclip runs in **native mode** — Apollo supervises the
+> `paperclipai` process itself (it self-manages an embedded Postgres) and
+> **auto-downloads a pinned Node runtime** into `~/.apollo/.node` on first use,
+> so there's nothing to install. Enable with `PAPERCLIP_ENABLED=true`; agents are
+> pointed at Apollo's local-model proxy (`/lmproxy/v1`), which serves whichever
+> GGUF you have running from your local-models folder. Open it from the
+> **Paperclip** sidebar tab — a full-screen "agents at work" workspace.
+
 ### Native Linux / macOS
 ```bash
 git clone https://github.com/Antman1526/Apollo.git
