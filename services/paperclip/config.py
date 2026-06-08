@@ -75,12 +75,11 @@ def load_config() -> PaperclipConfig:
     )
 
 
-def resolve_auth_secret() -> str:
-    """Return a stable BETTER_AUTH_SECRET, generating + persisting one if unset."""
-    env = os.getenv("PAPERCLIP_AUTH_SECRET")
+def _read_or_make_secret(env_name: str, file_env: str, default_file: str) -> str:
+    env = os.getenv(env_name)
     if env:
         return env
-    path = os.getenv("PAPERCLIP_SECRET_FILE", os.path.expanduser("~/.apollo/paperclip_secret"))
+    path = os.getenv(file_env, os.path.expanduser(default_file))
     try:
         with open(path, "r", encoding="utf-8") as fh:
             existing = fh.read().strip()
@@ -97,3 +96,16 @@ def resolve_auth_secret() -> str:
     except OSError:
         pass
     return secret
+
+
+def resolve_auth_secret() -> str:
+    """Return a stable BETTER_AUTH_SECRET, generating + persisting one if unset."""
+    return _read_or_make_secret(
+        "PAPERCLIP_AUTH_SECRET", "PAPERCLIP_SECRET_FILE", "~/.apollo/paperclip_secret")
+
+
+def resolve_proxy_token() -> str:
+    """Bearer token guarding Apollo's local-model proxy. Passed to Paperclip's
+    opencode agents as OPENAI_API_KEY; validated by routes/lmproxy_routes."""
+    return _read_or_make_secret(
+        "PAPERCLIP_PROXY_TOKEN", "PAPERCLIP_PROXY_TOKEN_FILE", "~/.apollo/paperclip_proxy_token")

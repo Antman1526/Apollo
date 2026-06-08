@@ -186,7 +186,11 @@ if AUTH_ENABLED:
         "/api/version",
         "/login",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    # /lmproxy is the local-model OpenAI proxy consumed by Paperclip's agents
+    # (a same-host child process with no Apollo session). It is guarded by its
+    # own bearer token in routes/lmproxy_routes.py, so it is exempt from the
+    # session-cookie middleware here.
+    AUTH_EXEMPT_PREFIXES = ["/static", "/lmproxy"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -729,11 +733,32 @@ app.include_router(setup_companion_routes())
 # /paperclip/* is gated by the global AuthMiddleware; websockets bypass that
 # middleware, so the WS handler validates the session cookie via auth_manager.
 from routes.paperclip_routes import setup_paperclip_routes
-from services.paperclip.config import load_config as _load_paperclip_config
+from services.paperclip.config import load_config as _load_paperclip_config, resolve_proxy_token as _paperclip_proxy_token
 _paperclip_cfg = _load_paperclip_config()
 app.include_router(setup_paperclip_routes(
     _paperclip_cfg,
     ws_validate=lambda token: auth_manager.validate_token(token),
+))
+
+# Local-model OpenAI proxy: a stable localhost endpoint Paperclip's opencode
+# agents use, forwarding to whichever GGUF model Apollo currently has warm.
+from routes.lmproxy_routes import setup_lmproxy_routes
+
+
+def _warm_chat_base_url():
+    try:
+        from services.localmodels.server_manager import get_server
+        for slot in get_server().status().values():
+            if slot.get("kind") == "chat" and slot.get("running"):
+                return slot.get("base_url")
+    except Exception:
+        pass
+    return None
+
+
+app.include_router(setup_lmproxy_routes(
+    token_provider=_paperclip_proxy_token,
+    warm_url_provider=_warm_chat_base_url,
 ))
 
 # Kick off a non-blocking local model directory scan so the catalog is warm
