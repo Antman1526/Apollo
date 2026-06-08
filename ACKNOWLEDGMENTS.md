@@ -61,6 +61,7 @@ just composed.
 | [SearXNG](https://github.com/searxng/searxng) | `searxng/searxng:latest` | Default metasearch backend | AGPL-3.0 |
 | [ChromaDB](https://github.com/chroma-core/chroma) | `chromadb/chroma:latest` | Vector store for memory / RAG | Apache-2.0 |
 | [ntfy](https://github.com/binwiederhier/ntfy) | `binwiederhier/ntfy` | Push notifications (self-hosted reminders) | Apache-2.0 / GPL-2.0 |
+| [Paperclip](https://github.com/paperclipai/paperclip) | built from `v2026.529.0` | Optional bundled agent-management UI (opt-in, reverse-proxied at `/paperclip`) | MIT (see [`licenses/paperclip-LICENSE`](licenses/paperclip-LICENSE)) |
 
 ## Bundled front-end libraries
 
