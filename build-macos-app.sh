@@ -108,6 +108,9 @@ INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+# Run Paperclip in native mode (Apollo supervises it + auto-provisions Node when
+# the feature is enabled in Settings/.env). No-op unless PAPERCLIP_ENABLED=true.
+export PAPERCLIP_MODE="${PAPERCLIP_MODE:-native}"
 
 UVICORN="$INSTALL_DIR/venv/bin/uvicorn"
 LOG="$INSTALL_DIR/logs/apollo-app.log"

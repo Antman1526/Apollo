@@ -780,6 +780,24 @@ app.state.paperclip_runtime = _paperclip_runtime
 async def _start_paperclip_runtime():
     if _paperclip_cfg.enabled and _paperclip_cfg.mode == "native":
         def _boot():
+            # Auto-provision a pinned Node into ~/.apollo/.node so a fresh
+            # Mac/Windows install needs no Node prerequisite. Falls back to a
+            # system Node if the download fails.
+            try:
+                import json as _json
+                import urllib.request as _urlreq
+                from services.paperclip.node_bootstrap import ensure_node, INDEX_URL
+
+                def _fetch_index():
+                    with _urlreq.urlopen(INDEX_URL, timeout=15) as r:
+                        return _json.load(r)
+
+                paths = ensure_node(os.path.expanduser("~/.apollo"), fetch_index=_fetch_index)
+                if paths:
+                    os.environ.setdefault("PAPERCLIP_NODE_BIN", paths[0])
+                    os.environ.setdefault("PAPERCLIP_NPX_BIN", paths[1])
+            except Exception as e:
+                logging.getLogger("app").warning("Paperclip Node bootstrap skipped: %s", e)
             if _paperclip_runtime.start():
                 _paperclip_runtime.wait_healthy(timeout=90)
         threading.Thread(target=_boot, name="paperclip-runtime", daemon=True).start()

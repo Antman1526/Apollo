@@ -133,4 +133,7 @@ if (-not (Find-GitBash)) {
 Write-Step ("Starting Apollo at http://{0}:{1}" -f $BindHost, $Port)
 Write-Host "Press Ctrl+C to stop."
 Write-Host ""
+# Run Paperclip in native mode (Apollo supervises it + auto-provisions Node when
+# the feature is enabled). No-op unless PAPERCLIP_ENABLED=true.
+if (-not $env:PAPERCLIP_MODE) { $env:PAPERCLIP_MODE = "native" }
 & $venvPy -m uvicorn app:app --host $BindHost --port $Port
