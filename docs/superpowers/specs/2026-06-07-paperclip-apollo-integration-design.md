@@ -234,3 +234,67 @@ in S2.
 - **Version drift:** pin `PAPERCLIP_VERSION`; surface mismatches in diagnostics.
 - **Secret handling:** never log `BETTER_AUTH_SECRET` / `DATABASE_URL`; redact in diagnostics
   (consistent with Apollo's existing secret hygiene).
+
+---
+
+## Revision 2 — Native-first (2026-06-07)
+
+Direction clarified by the user: **Apollo is an installable Mac/Windows app that
+runs without Docker.** Paperclip is a built-in, interactive "AI agents for work"
+section *inside* Apollo, running on the user's local models, where you can watch
+agents working (an "office of AI agents"). Docker becomes a secondary/optional
+deployment; native is primary.
+
+### Enabling discovery
+`paperclipai` is **fully self-contained and cross-platform**: it backs itself
+with **`@embedded-postgres`** (downloads a platform Postgres binary, data under
+`~/.paperclip/instances/<id>/db/`) and runs the Node server. Verified on the
+host: live `postgres` backends execute from
+`@embedded-postgres/darwin-arm64/native/bin/postgres`. So Apollo does **not**
+manage Postgres at all — it only supervises the `paperclipai` process. This
+removes the Homebrew/vendored-Postgres work from the native path entirely.
+
+### Decisions (Revision 2)
+| Topic | Choice |
+| --- | --- |
+| Node runtime | **Bundle Node** in the Apollo app (zero prerequisites on a fresh Mac/Windows). |
+| Model wiring | **Apollo local-model proxy** — Apollo serves GGUF from the configured local-models path behind one stable OpenAI-compatible endpoint; Paperclip's `opencode-local` agents point at it. |
+| UI | **Dedicated full section/view** in Apollo (persistent workspace, not a modal). |
+| Postgres | None to manage — `paperclipai` uses embedded-postgres. |
+| Lifecycle | Apollo spawns/health-checks/supervises `paperclipai run` and stops it on exit. |
+
+### Native architecture
+```
+Apollo (native, bundled Python + bundled Node)
+  ├─ supervises: paperclipai run  ──>  embedded-postgres (~/.paperclip/.../db)
+  │                         │
+  │                         └─ opencode-local agents → OPENAI_BASE_URL =
+  │                                Apollo local-model proxy (token-auth, localhost)
+  ├─ local-model proxy: stable /v1/* → warm llama-server (GGUF from the
+  │     user's configured local-models folder)  [services/localmodels]
+  └─ UI: dedicated "Paperclip" section iframes Paperclip's origin (browser_url)
+```
+
+### Phase 2 components (this revision)
+1. **Apollo local-model proxy** — a stable, localhost, token-authenticated
+   OpenAI-compatible endpoint (`/v1/chat/completions`, `/v1/models`, …) that
+   forwards to the currently-warm `llama-server` (auto-starting the selected
+   model when needed). Auth-exempt prefix guarded by a generated bearer token
+   passed to Paperclip/opencode.
+2. **Native lifecycle** (`services/paperclip/runtime.py`) — locate the bundled
+   Node, ensure pinned `paperclipai`, spawn `paperclipai run` with env (PORT,
+   PAPERCLIP_HOME, `OPENAI_BASE_URL`=proxy, `OPENAI_API_KEY`=token), health-check
+   `/api/health`, supervise + restart, stop on shutdown. Cross-platform.
+3. **Dedicated UI section** — a persistent Paperclip workspace view (not a modal)
+   that iframes `browser_url`, with status/“start/stop” controls.
+4. **Bundling** — ship a Node runtime in the macOS `.app`/`.dmg`
+   (`build-macos-app.sh`) and the Windows launcher; warm the pinned `paperclipai`
+   on first run.
+
+### Phasing (Revision 2)
+- **Phase 1 (done):** config/proxy/status, opt-in Docker compose, direct-iframe
+  tab, attribution. Verified natively in external mode.
+- **Phase 2a:** local-model proxy + native lifecycle (auto-managed paperclipai
+  on local models) — verifiable on this host without installer changes.
+- **Phase 2b:** dedicated full section UI.
+- **Phase 2c:** Node bundling into Mac/Windows installers.
