@@ -97,6 +97,15 @@ like `openai/<your-ollama-model>` to run work on your local model. A normal
 `docker compose up` (without the profile) is unaffected — the sidecar never
 starts and no secret is required.
 
+> **Native desktop (no Docker):** in the macOS `.app`/`.dmg` and the Windows
+> launcher, Paperclip runs in **native mode** — Apollo supervises the
+> `paperclipai` process itself (it self-manages an embedded Postgres) and
+> **auto-downloads a pinned Node runtime** into `~/.apollo/.node` on first use,
+> so there's nothing to install. Enable with `PAPERCLIP_ENABLED=true`; agents are
+> pointed at Apollo's local-model proxy (`/lmproxy/v1`), which serves whichever
+> GGUF you have running from your local-models folder. Open it from the
+> **Paperclip** sidebar tab — a full-screen "agents at work" workspace.
+
 ### Native Linux / macOS
 ```bash
 git clone https://github.com/Antman1526/Apollo.git
