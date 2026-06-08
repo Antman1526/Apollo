@@ -27,6 +27,30 @@ def test_docker_defaults(monkeypatch):
     assert c.port == 3100
 
 
+def test_browser_url_defaults_to_localhost(monkeypatch):
+    cfg = _fresh(monkeypatch, {"PAPERCLIP_ENABLED": "true"})
+    c = cfg.load_config()
+    # The iframe points the browser directly at Paperclip's own origin.
+    assert c.browser_url == "http://localhost:3100"
+
+
+def test_external_mode_points_url_at_localhost(monkeypatch):
+    cfg = _fresh(monkeypatch, {"PAPERCLIP_ENABLED": "true", "PAPERCLIP_MODE": "external"})
+    c = cfg.load_config()
+    assert c.mode == "external"
+    assert c.url == "http://localhost:3100"
+    assert c.browser_url == "http://localhost:3100"
+
+
+def test_browser_url_override(monkeypatch):
+    cfg = _fresh(monkeypatch, {
+        "PAPERCLIP_ENABLED": "true",
+        "PAPERCLIP_BROWSER_URL": "http://box.local:3100",
+    })
+    c = cfg.load_config()
+    assert c.browser_url == "http://box.local:3100"
+
+
 def test_model_endpoint_ollama_default(monkeypatch):
     cfg = _fresh(monkeypatch, {"PAPERCLIP_ENABLED": "true"})
     c = cfg.load_config()

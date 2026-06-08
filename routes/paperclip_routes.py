@@ -36,11 +36,22 @@ def setup_paperclip_routes(
 
     @router.get("/api/paperclip/status")
     async def status():
+        # Server-side reachability ping (avoids browser CORS). Uses the
+        # Apollo-reachable url, not the browser-facing one.
+        reachable = None
+        if cfg.enabled:
+            try:
+                r = await client.get(f"{cfg.url}/api/health", timeout=2.0)
+                reachable = r.status_code < 500
+            except Exception:
+                reachable = False
         return {
             "enabled": cfg.enabled,
             "mode": cfg.mode,
             "url": cfg.url,
+            "browser_url": cfg.browser_url,
             "model_endpoint": cfg.model_endpoint,
+            "reachable": reachable,
         }
 
     @router.api_route(

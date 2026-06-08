@@ -14,7 +14,8 @@ _METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
 
 def _cfg(enabled=True):
     return PaperclipConfig(
-        enabled=enabled, mode="docker", url="http://upstream", port=3100,
+        enabled=enabled, mode="docker", url="http://upstream",
+        browser_url="http://localhost:3100", port=3100,
         model_endpoint="ollama", model_base_url="http://x/v1", model_name="",
     )
 
@@ -40,6 +41,7 @@ def test_status_reports_enabled():
         assert r.status_code == 200
         assert r.json()["enabled"] is True
         assert r.json()["url"] == "http://upstream"
+        assert r.json()["browser_url"] == "http://localhost:3100"
 
 
 def test_proxy_forwards_get_and_returns_body():

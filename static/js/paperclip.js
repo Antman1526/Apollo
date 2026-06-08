@@ -1,19 +1,21 @@
 // Paperclip integration UI: reveals the sidebar tool + iframe modal only when
 // the bundled Paperclip sidecar is enabled, and fills the Settings subsection.
-// Self-contained, dependency-free. The iframe loads same-origin /paperclip/,
-// which Apollo reverse-proxies (behind auth) to the Paperclip server.
+// Self-contained, dependency-free. The iframe loads Paperclip's OWN origin
+// (browser_url from /api/paperclip/status) — Paperclip's UI + /api are wired to
+// root paths, so it can't be embedded under an Apollo subpath. Paperclip brings
+// its own auth.
 
-const FRAME_SRC = '/paperclip/';
+let _frameSrc = '';
 
 function $(id) { return document.getElementById(id); }
 
 function openModal() {
   const modal = $('paperclip-modal');
-  if (!modal) return;
+  if (!modal || !_frameSrc) return;
   const frame = $('paperclip-frame');
   // Lazy-load the iframe on first open so a disabled/slow sidecar never blocks
   // initial page load.
-  if (frame && !frame.getAttribute('src')) frame.setAttribute('src', FRAME_SRC);
+  if (frame && !frame.getAttribute('src')) frame.setAttribute('src', _frameSrc);
   modal.classList.remove('hidden');
 }
 
@@ -24,6 +26,7 @@ function closeModal() {
 
 function applyStatus(status) {
   const enabled = !!(status && status.enabled);
+  _frameSrc = (status && status.browser_url) ? status.browser_url : '';
 
   // Sidebar tool button — hidden unless the sidecar is enabled.
   const btn = $('tool-paperclip-btn');
@@ -33,13 +36,19 @@ function applyStatus(status) {
   const section = $('set-paperclip-section');
   const stateEl = $('set-paperclipState');
   const endpointEl = $('set-paperclipEndpoint');
-  if (stateEl) stateEl.textContent = enabled ? 'Enabled' : 'Disabled';
+  if (stateEl) {
+    let label = enabled ? 'Enabled' : 'Disabled';
+    if (enabled && status.reachable === false) label = 'Enabled (not reachable)';
+    stateEl.textContent = label;
+  }
   if (endpointEl && status) {
-    endpointEl.textContent = status.model_endpoint
-      ? `Model endpoint: ${status.model_endpoint}` : '';
+    const bits = [];
+    if (status.model_endpoint) bits.push(`model: ${status.model_endpoint}`);
+    if (status.browser_url) bits.push(status.browser_url);
+    endpointEl.textContent = bits.join(' · ');
   }
   const openBtn = $('set-paperclipOpen');
-  if (openBtn) openBtn.disabled = !enabled;
+  if (openBtn) openBtn.disabled = !enabled || !_frameSrc;
   if (section) section.dataset.enabled = String(enabled);
 }
 
