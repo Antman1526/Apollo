@@ -154,6 +154,24 @@ LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
+
+def _bypass_user() -> str:
+    """Identity that loopback-bypass requests act as.
+
+    LOCALHOST_BYPASS skips the login flow, but many routes attribute data to a
+    real owner (sessions, documents) and 403 when no user is present. To make
+    the no-login desktop experience fully work, treat the loopback caller as a
+    real account: prefer an admin, else the first user, else "" (anonymous).
+    """
+    try:
+        users = auth_manager.users or {}
+    except Exception:
+        users = {}
+    for name, data in users.items():
+        if isinstance(data, dict) and data.get("is_admin"):
+            return name
+    return next(iter(users), "")
+
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
         "/api/auth/setup",
@@ -279,6 +297,11 @@ if AUTH_ENABLED:
             # Cloudflare tunnel / reverse proxy. Keep LOCALHOST_BYPASS=false for
             # network-exposed deployments regardless.
             if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+                # Act as a real user so ownership-based routes (sessions,
+                # documents) work without a login instead of 403-ing on an
+                # empty identity.
+                request.state.current_user = _bypass_user()
+                request.state.api_token = False
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
@@ -701,6 +724,17 @@ app.include_router(setup_contacts_routes())
 
 from companion import setup_companion_routes
 app.include_router(setup_companion_routes())
+
+# Paperclip sidecar reverse proxy (bundled agent-management UI). HTTP traffic to
+# /paperclip/* is gated by the global AuthMiddleware; websockets bypass that
+# middleware, so the WS handler validates the session cookie via auth_manager.
+from routes.paperclip_routes import setup_paperclip_routes
+from services.paperclip.config import load_config as _load_paperclip_config
+_paperclip_cfg = _load_paperclip_config()
+app.include_router(setup_paperclip_routes(
+    _paperclip_cfg,
+    ws_validate=lambda token: auth_manager.validate_token(token),
+))
 
 # Kick off a non-blocking local model directory scan so the catalog is warm
 # on first request without delaying app startup.
