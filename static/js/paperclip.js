@@ -72,6 +72,11 @@ function init() {
   const openBtn = $('set-paperclipOpen');
   if (openBtn) openBtn.addEventListener('click', openModal);
 
+  const popoutBtn = $('paperclip-popout-btn');
+  if (popoutBtn) popoutBtn.addEventListener('click', () => {
+    if (_frameSrc) window.open(_frameSrc, 'paperclip', 'noopener,width=1280,height=900');
+  });
+
   refreshStatus();
 }
 
