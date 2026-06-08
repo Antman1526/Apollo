@@ -111,15 +111,26 @@ class PaperclipRuntime:
         self._find_node = node_finder
         self._find_npx = npx_finder
         self._proc: Optional[subprocess.Popen] = None
+        self._reused = False
         self._lock = threading.Lock()
 
+    def _already_serving(self) -> bool:
+        return self._health(self._cfg.url.rstrip("/") + "/api/health", 2.0)
+
     def start(self) -> bool:
-        """Spawn paperclipai if we own its lifecycle. Returns True if spawned.
+        """Spawn paperclipai if we own its lifecycle. Returns True if running.
         Never raises — missing Node logs a warning and disables the feature."""
         if not self._cfg.enabled or self._cfg.mode != "native":
             return False
         with self._lock:
             if self._proc is not None and self._proc.poll() is None:
+                return True
+            # Reuse an already-running Paperclip on this port (the user's own
+            # `paperclipai run`, or a previous Apollo launch) rather than
+            # spawning a duplicate or colliding on the port.
+            if self._already_serving():
+                self._reused = True
+                logger.info("Paperclip already running at %s — reusing it.", self._cfg.url)
                 return True
             node = self._find_node()
             if not node:
@@ -172,6 +183,6 @@ class PaperclipRuntime:
                 pass
 
     def status(self) -> dict:
-        running = self._proc is not None and self._proc.poll() is None
+        running = (self._proc is not None and self._proc.poll() is None) or self._reused
         return {"mode": self._cfg.mode, "managed": self._cfg.mode == "native",
-                "running": running, "url": self._cfg.url}
+                "running": running, "reused": self._reused, "url": self._cfg.url}

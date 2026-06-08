@@ -82,7 +82,7 @@ def test_runtime_spawns_in_native_mode(monkeypatch):
     rt = runtime.PaperclipRuntime(
         _cfg(), proxy_token_provider=lambda: "tok",
         proxy_base_provider=lambda: "http://localhost:7000/lmproxy/v1",
-        spawn=fake_spawn, health_check=lambda url, timeout=0: True,
+        spawn=fake_spawn, health_check=lambda url, timeout=0: False,  # nothing serving yet
         node_finder=lambda: "/opt/node",
         npx_finder=lambda: "/opt/npx",
     )
@@ -91,3 +91,21 @@ def test_runtime_spawns_in_native_mode(monkeypatch):
     assert calls["env"]["OPENAI_API_KEY"] == "tok"
     rt.stop()
     assert calls.get("terminated") is True
+
+
+def test_runtime_reuses_already_running_paperclip():
+    spawned = {"called": False}
+
+    def fake_spawn(cmd, env=None, **kw):
+        spawned["called"] = True
+        raise AssertionError("must not spawn when Paperclip is already serving")
+
+    rt = runtime.PaperclipRuntime(
+        _cfg(), proxy_token_provider=lambda: "tok",
+        proxy_base_provider=lambda: "http://localhost:7000/lmproxy/v1",
+        spawn=fake_spawn, health_check=lambda url, timeout=0: True,  # already serving
+        node_finder=lambda: "/opt/node", npx_finder=lambda: "/opt/npx",
+    )
+    assert rt.start() is True
+    assert spawned["called"] is False
+    assert rt.status()["reused"] is True
