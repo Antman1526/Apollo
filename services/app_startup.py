@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Iterable
+
+
+@dataclass(frozen=True)
+class RouterSpec:
+    label: str
+    factory: Callable[..., Any]
+    args: tuple[Any, ...] = ()
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 def include_router_checked(app: Any, router: Any, label: str, logger: logging.Logger | None = None) -> Any:
@@ -35,3 +44,22 @@ def build_and_include_router(
             logger.exception("Failed to build %s routes", label)
         raise RuntimeError(f"Failed to build {label} routes") from exc
     return include_router_checked(app, router, label, logger=logger)
+
+
+def register_router_specs(
+    app: Any,
+    specs: Iterable[RouterSpec],
+    logger: logging.Logger | None = None,
+) -> dict[str, Any]:
+    """Register a simple sequence of routers and return them by label."""
+    routers: dict[str, Any] = {}
+    for spec in specs:
+        routers[spec.label] = build_and_include_router(
+            app,
+            spec.label,
+            spec.factory,
+            *spec.args,
+            logger=logger,
+            **spec.kwargs,
+        )
+    return routers

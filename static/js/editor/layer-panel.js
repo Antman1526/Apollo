@@ -354,11 +354,14 @@ export function createLayerPanelRenderer(deps) {
         delBtn.title = layer.isBase ? 'Delete original layer (Ctrl+Z to undo)' : 'Delete layer';
         delBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          if (layer.isBase && uiModule?.styledConfirm) {
-            const ok = await uiModule.styledConfirm(
-              'Delete the original photo layer? Ctrl+Z brings it back.',
-              { confirmText: 'Delete', cancelText: 'Cancel', danger: true }
-            );
+          if (layer.isBase) {
+            const message = 'Delete the original photo layer? Ctrl+Z brings it back.';
+            const ok = uiModule?.styledConfirm
+              ? await uiModule.styledConfirm(
+                message,
+                { confirmText: 'Delete', cancelText: 'Cancel', danger: true }
+              )
+              : confirm(message);
             if (!ok) return;
           }
           // Snapshot BEFORE removing so Ctrl+Z can bring it back.

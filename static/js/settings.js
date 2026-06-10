@@ -8,6 +8,7 @@ import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
+import { wireSystemStatusActions } from './systemStatusActions.js';
 
 let initialized = false;
 let modalEl = null;
@@ -3555,12 +3556,14 @@ async function initUnifiedIntegrations() {
       e.stopPropagation();
       _openEmailSettings();
     });
+    wireSystemStatusActions(listEl, { rerender: renderList });
     // Wire edit clicks
     listEl.querySelectorAll('.intg-card').forEach(card => {
       card.addEventListener('click', (e) => {
-        if (e.target.closest('.intg-del-btn')) return;
+        if (e.target.closest('.intg-del-btn') || e.target.closest('.system-status-action')) return;
         const type = card.dataset.intgType;
         const id = card.dataset.intgId;
+        if (!id) return;
         const items2 = listEl.querySelectorAll('.intg-card');
         items2.forEach(c => c.style.borderColor = '');
         card.style.borderColor = 'var(--accent)';

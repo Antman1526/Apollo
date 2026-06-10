@@ -12,6 +12,8 @@
 // derived from pointer velocity (slower → thicker), which gives signatures
 // their characteristic ink-bleed feel.
 
+import uiModule from './ui.js';
+
 const API_BASE = window.location.origin;
 
 // Last signature the user picked or created in this session. Lets the export
@@ -435,7 +437,7 @@ export function capture(opts = {}) {
         setLastUsed(out);
         close(out);
       } catch (e) {
-        alert('Failed to save signature: ' + e.message);
+        uiModule.showError?.('Failed to save signature: ' + e.message);
         saveBtn.disabled = false;
       }
     };

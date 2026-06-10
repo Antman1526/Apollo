@@ -42,6 +42,22 @@ export function renderSystemStatusCardHTML(systemStatus, options = {}) {
     })
     .filter(Boolean)
     .join('');
+  const actionButtons = order
+    .flatMap(([key]) => {
+      const item = components[key] || {};
+      return Array.isArray(item.actions) ? item.actions : [];
+    })
+    .filter(action => action && action.id && action.label)
+    .map(action => {
+      const endpoint = action.endpoint || `/api/system/actions/${action.id}`;
+      const method = action.method || 'POST';
+      const confirm = action.confirm || '';
+      return `<button type="button" class="admin-btn-sm system-status-action" data-system-action="${esc(action.id)}" data-system-action-endpoint="${esc(endpoint)}" data-system-action-method="${esc(method)}" data-system-action-confirm="${esc(confirm)}" style="white-space:nowrap;">${esc(action.label)}</button>`;
+    })
+    .join('');
+  const actionHtml = actionButtons
+    ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:${nextSteps ? '8px' : '0'};">${actionButtons}</div>`
+    : '';
   return `
       <div class="intg-card system-status-card" data-intg-type="system-status" style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
@@ -61,6 +77,7 @@ export function renderSystemStatusCardHTML(systemStatus, options = {}) {
           }).join('')}
         </div>
         ${nextSteps ? `<div style="display:grid;gap:3px">${nextSteps}</div>` : ''}
+        ${actionHtml}
       </div>
     `;
 }

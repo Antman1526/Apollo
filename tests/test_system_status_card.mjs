@@ -33,6 +33,34 @@ test('renders expanded system status components with next steps', () => {
   assert.match(html, /Inspect stuck task runs/);
 });
 
+test('renders action buttons from component metadata', () => {
+  const html = renderSystemStatusCardHTML({
+    ok: false,
+    ready_count: 9,
+    total: 10,
+    components: {
+      memory: {
+        ready: false,
+        state: 'degraded',
+        summary: 'Index drift',
+        next_step: 'Rebuild the semantic memory index',
+        actions: [{
+          id: 'memory.rebuild_semantic_index',
+          label: 'Rebuild index',
+          endpoint: '/api/system/actions/memory.rebuild_semantic_index',
+          method: 'POST',
+          confirm: 'Rebuild?',
+        }],
+      },
+    },
+  });
+
+  assert.match(html, /data-system-action="memory\.rebuild_semantic_index"/);
+  assert.match(html, /data-system-action-endpoint="\/api\/system\/actions\/memory\.rebuild_semantic_index"/);
+  assert.match(html, /Rebuild index/);
+  assert.match(html, /Rebuild\?/);
+});
+
 test('escapes component summaries and next steps', () => {
   const html = renderSystemStatusCardHTML({
     ok: false,

@@ -1289,6 +1289,8 @@ export function openPanel() {
     if (uiModule && uiModule.styledConfirm) {
       const ok = await uiModule.styledConfirm(`Delete ${ids.length} note${ids.length === 1 ? '' : 's'}?`, { confirmText: 'Delete', danger: true });
       if (!ok) return;
+    } else if (!confirm(`Delete ${ids.length} note${ids.length === 1 ? '' : 's'}?`)) {
+      return;
     }
     await Promise.all(ids.map(id => _deleteNoteApi(id).catch(() => {})));
     _exitSelectMode();

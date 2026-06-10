@@ -1,4 +1,4 @@
-from src.mcp_manager import _format_mcp_connection_error
+from src.mcp_manager import _format_mcp_connection_error, _stdio_env
 
 
 def test_playwright_mcp_connection_error_includes_install_hint():
@@ -24,3 +24,25 @@ def test_generic_mcp_connection_error_preserves_original_error():
     )
 
     assert msg == "boom"
+
+
+def test_stdio_env_quiets_npx_without_overriding_user_values(monkeypatch):
+    monkeypatch.setenv("EXISTING", "1")
+
+    env = _stdio_env("npx", {"NPM_CONFIG_LOGLEVEL": "warn", "CUSTOM": "yes"})
+
+    assert env["EXISTING"] == "1"
+    assert env["CUSTOM"] == "yes"
+    assert env["NPM_CONFIG_LOGLEVEL"] == "warn"
+    assert env["NPM_CONFIG_FUND"] == "false"
+    assert env["NPM_CONFIG_AUDIT"] == "false"
+    assert env["NO_UPDATE_NOTIFIER"] == "1"
+
+
+def test_stdio_env_keeps_non_npm_commands_simple(monkeypatch):
+    monkeypatch.setenv("EXISTING", "1")
+
+    env = _stdio_env("uvx", {})
+
+    assert env["EXISTING"] == "1"
+    assert "NPM_CONFIG_LOGLEVEL" not in env

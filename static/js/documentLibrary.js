@@ -37,6 +37,13 @@ export function initLibrary(config) {
   _syncDocIndicator = config.syncDocIndicator;
 }
 
+function _confirmDanger(message, confirmText = 'Delete') {
+  if (uiModule?.styledConfirm) {
+    return uiModule.styledConfirm(message, { confirmText, danger: true });
+  }
+  return Promise.resolve(window.confirm?.(message));
+}
+
 // ── Library state ──
 let _libraryOpen = false;
 // Track which tabs have already played their domino-in cascade so we only
@@ -1983,7 +1990,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         const deleteBtn = preview.querySelector('.doclib-chat-delete-btn');
         if (deleteBtn) deleteBtn.addEventListener('click', async (e) => {
           e.stopPropagation();
-          if (!await window.styledConfirm('Delete this chat?', { confirmText: 'Delete', danger: true })) return;
+          if (!await _confirmDanger('Delete this chat?')) return;
           await fetch(API_BASE + '/api/session/' + session.id, { method: 'DELETE' });
           card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
           card.classList.add('memory-tidy-removing');
@@ -2059,7 +2066,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Archive', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/archive', { method: 'POST', headers: {'Content-Type':'application/json'} }); _renderLibChats(); } },
           { label: 'Delete', action: async () => {
-            if (!await window.styledConfirm('Delete this chat?', { confirmText: 'Delete', danger: true })) return;
+            if (!await _confirmDanger('Delete this chat?')) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             card.style.maxHeight = `${Math.max(card.getBoundingClientRect().height, card.scrollHeight)}px`;
             card.classList.add('memory-tidy-removing');
@@ -2165,7 +2172,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     document.getElementById('doclib-chats-bulk-delete').addEventListener('click', async () => {
       const count = _chatsSelected.size;
       if (!count) return;
-      if (!await window.styledConfirm(`Delete ${count} chat${count > 1 ? 's' : ''}? This cannot be undone.`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmDanger(`Delete ${count} chat${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
       // Fade out selected cards
       const grid = document.getElementById('doclib-chats-grid');
       if (grid) {
@@ -2325,7 +2332,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           '<button class="doclib-chat-open-btn"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg>Open</button>';
         actions.querySelector('.doclib-chat-delete-btn').addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (!await window.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true })) return;
+          if (!await _confirmDanger('Delete this document?')) return;
           await fetch(`${API_BASE}/api/document/${d.id}`, { method: 'DELETE', credentials: 'same-origin' });
           _renderLibArchive();
         });
@@ -2414,7 +2421,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
           { label: 'Copy', action: () => _copyChatById(s.id) },
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/session/' + s.id + '/unarchive', { method: 'POST' }); _renderLibArchive(); } },
           { label: 'Delete', action: async () => {
-            if (!await window.styledConfirm('Delete this chat permanently?', { confirmText: 'Delete', danger: true })) return;
+            if (!await _confirmDanger('Delete this chat permanently?')) return;
             await fetch(API_BASE + '/api/session/' + s.id, { method: 'DELETE' });
             _renderLibArchive();
           }, danger: true },
@@ -2460,7 +2467,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         });
         card.querySelector('._arc-doc-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
           { label: 'Restore', action: async () => { await fetch(API_BASE + '/api/document/' + d.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
-          { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this document?', { confirmText: 'Delete', danger: true })) return; await fetch(API_BASE + '/api/document/' + d.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: 'Delete', danger: true, action: async () => { if (!await _confirmDanger('Delete this document?')) return; await fetch(API_BASE + '/api/document/' + d.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('documents:' + d.id);
@@ -2498,7 +2505,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
         card.querySelector('._arc-res-menu').addEventListener('click', (e) => { e.stopPropagation(); _showLibDropdown(e.currentTarget, [
           { label: 'Open', action: () => { const a = document.createElement('a'); a.href = '/api/research/report/' + r.id; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); } },
           { label: 'Restore', action: async () => { await fetch('/api/research/' + r.id + '/archive?archived=false', { method: 'POST', credentials: 'same-origin' }); _renderLibArchive(); } },
-          { label: 'Delete', danger: true, action: async () => { if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return; await fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
+          { label: 'Delete', danger: true, action: async () => { if (!await _confirmDanger('Delete this research?')) return; await fetch('/api/research/' + r.id, { method: 'DELETE', credentials: 'same-origin' }); _renderLibArchive(); } },
         ], { onSelect: () => {
           _arcSelectMode = true;
           _arcSelected.add('research:' + r.id);
@@ -2587,7 +2594,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     document.getElementById('doclib-arc-bulk-delete').addEventListener('click', async () => {
       const count = _arcSelected.size;
       if (!count) return;
-      if (!await window.styledConfirm(`Delete ${count} archived item${count > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmDanger(`Delete ${count} archived item${count > 1 ? 's' : ''} permanently?`)) return;
       const grid = document.getElementById('doclib-arc-grid');
       if (grid) {
         grid.querySelectorAll('.memory-item[data-arckey]').forEach(card => {
@@ -2904,7 +2911,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
                 if (uiModule) uiModule.showToast(toArchived ? 'Archived' : 'Restored');
               } },
             { label: 'Delete', danger: true, action: async () => {
-                if (!await window.styledConfirm('Delete this research?', { confirmText: 'Delete', danger: true })) return;
+                if (!await _confirmDanger('Delete this research?')) return;
                 const card = btn.closest('.doclib-research-card');
                 if (card) {
                   card.style.transition = 'opacity 0.25s, transform 0.25s';
@@ -3033,7 +3040,7 @@ let _libraryArchivedView = false;   // Documents tab showing archived docs?
     document.getElementById('doclib-research-bulk-delete')?.addEventListener('click', async () => {
       const count = _researchSelected.size;
       if (!count) return;
-      if (!await window.styledConfirm(`Delete ${count} research report${count > 1 ? 's' : ''} permanently?`, { confirmText: 'Delete', danger: true })) return;
+      if (!await _confirmDanger(`Delete ${count} research report${count > 1 ? 's' : ''} permanently?`)) return;
       const grid = document.getElementById('doclib-research-grid');
       if (grid) {
         grid.querySelectorAll('.doclib-research-card').forEach(card => {

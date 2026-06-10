@@ -64,7 +64,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
-from services.app_startup import build_and_include_router, include_router_checked
+from services.app_startup import RouterSpec, build_and_include_router, include_router_checked, register_router_specs
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -541,7 +541,7 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 # ========= INCLUDE ROUTERS =========
 
 # Auth
-auth_router = build_and_include_router(app, "Auth", setup_auth_routes, auth_manager, logger=logger)
+build_and_include_router(app, "Auth", setup_auth_routes, auth_manager, logger=logger)
 
 # Uploads
 from routes.upload_routes import setup_upload_routes
@@ -552,73 +552,48 @@ upload_cleanup_task = None
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
-build_and_include_router(app, "Emoji", setup_emoji_routes, logger=logger)
-
-# Sessions
 from routes.session_routes import setup_session_routes
-session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-build_and_include_router(app, "Sessions", setup_session_routes, session_manager, session_config, webhook_manager=webhook_manager, logger=logger)
-
-# Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
-build_and_include_router(app, "Admin wipe", setup_admin_wipe_routes, session_manager, logger=logger)
-
-# Memory
 from routes.memory_routes import setup_memory_routes
-build_and_include_router(app, "Memory", setup_memory_routes, memory_manager, session_manager, memory_vector=memory_vector, logger=logger)
 from routes.skills_routes import setup_skills_routes
-build_and_include_router(app, "Skills", setup_skills_routes, skills_manager, logger=logger)
-
-# Chat
 from routes.chat_routes import setup_chat_routes
-build_and_include_router(app, "Chat", setup_chat_routes,
-    session_manager, chat_handler, chat_processor,
-    memory_manager, research_handler, upload_handler,
-    memory_vector=memory_vector,
-    webhook_manager=webhook_manager,
-    skills_manager=skills_manager,
-    logger=logger,
-)
-
-# Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
-build_and_include_router(app, "Research", setup_research_routes, research_handler, session_manager=session_manager, logger=logger)
-
-# History
 from routes.history_routes import setup_history_routes
-build_and_include_router(app, "History", setup_history_routes, session_manager, logger=logger)
-
-# Search
 from routes.search_routes import setup_search_routes
-build_and_include_router(app, "Search", setup_search_routes, config, logger=logger)
-
-# Presets
 from routes.preset_routes import setup_preset_routes
-build_and_include_router(app, "Presets", setup_preset_routes, preset_manager, logger=logger)
-
-# Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-build_and_include_router(app, "Diagnostics", setup_diagnostics_routes, rag_manager, rag_available, research_handler, logger=logger)
-
-# Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
-build_and_include_router(app, "Cleanup", setup_cleanup_routes, session_manager, logger=logger)
-
-# Personal docs
 from routes.personal_routes import setup_personal_routes
-build_and_include_router(app, "Personal docs", setup_personal_routes, personal_docs_mgr, rag_manager, rag_available, logger=logger)
-
-# Embedding model management
 from routes.embedding_routes import setup_embedding_routes
-build_and_include_router(app, "Embedding", setup_embedding_routes, logger=logger)
-
-# Models
 from routes.model_routes import setup_model_routes
-build_and_include_router(app, "Models", setup_model_routes, model_discovery, logger=logger)
-
-# TTS
 from routes.tts_routes import setup_tts_routes
-build_and_include_router(app, "TTS", setup_tts_routes, tts_service, logger=logger)
+
+session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
+register_router_specs(app, [
+    RouterSpec("Emoji", setup_emoji_routes),
+    RouterSpec("Sessions", setup_session_routes, args=(session_manager, session_config), kwargs={"webhook_manager": webhook_manager}),
+    RouterSpec("Admin wipe", setup_admin_wipe_routes, args=(session_manager,)),
+    RouterSpec("Memory", setup_memory_routes, args=(memory_manager, session_manager), kwargs={"memory_vector": memory_vector}),
+    RouterSpec("Skills", setup_skills_routes, args=(skills_manager,)),
+    RouterSpec("Chat", setup_chat_routes, args=(
+        session_manager, chat_handler, chat_processor,
+        memory_manager, research_handler, upload_handler,
+    ), kwargs={
+        "memory_vector": memory_vector,
+        "webhook_manager": webhook_manager,
+        "skills_manager": skills_manager,
+    }),
+    RouterSpec("Research", setup_research_routes, args=(research_handler,), kwargs={"session_manager": session_manager}),
+    RouterSpec("History", setup_history_routes, args=(session_manager,)),
+    RouterSpec("Search", setup_search_routes, args=(config,)),
+    RouterSpec("Presets", setup_preset_routes, args=(preset_manager,)),
+    RouterSpec("Diagnostics", setup_diagnostics_routes, args=(rag_manager, rag_available, research_handler)),
+    RouterSpec("Cleanup", setup_cleanup_routes, args=(session_manager,)),
+    RouterSpec("Personal docs", setup_personal_routes, args=(personal_docs_mgr, rag_manager, rag_available)),
+    RouterSpec("Embedding", setup_embedding_routes),
+    RouterSpec("Models", setup_model_routes, args=(model_discovery,)),
+    RouterSpec("TTS", setup_tts_routes, args=(tts_service,)),
+], logger=logger)
 
 # STT
 from services.stt import get_stt_service
@@ -709,31 +684,23 @@ logger.info("AI interaction tools initialized (session, memory, RAG, UI control)
 
 # Webhooks
 from routes.webhook_routes import setup_webhook_routes
-build_and_include_router(app, "Webhooks", setup_webhook_routes, webhook_manager, auth_manager, session_manager, api_key_manager, logger=logger)
-
-# API Tokens
 from routes.api_token_routes import setup_api_token_routes
-build_and_include_router(app, "API tokens", setup_api_token_routes, logger=logger)
-
-logger.info("Webhook & API token routes initialized")
-
-# Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-build_and_include_router(app, "Notes", setup_note_routes, task_scheduler, logger=logger)
-
-# Email
 from routes.email_routes import setup_email_routes
-build_and_include_router(app, "Email", setup_email_routes, logger=logger)
-
 from routes.vault_routes import setup_vault_routes
-build_and_include_router(app, "Vault", setup_vault_routes, logger=logger)
-
-# Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
-build_and_include_router(app, "Contacts", setup_contacts_routes, logger=logger)
-
 from companion import setup_companion_routes
-build_and_include_router(app, "Companion", setup_companion_routes, logger=logger)
+
+register_router_specs(app, [
+    RouterSpec("Webhooks", setup_webhook_routes, args=(webhook_manager, auth_manager, session_manager, api_key_manager)),
+    RouterSpec("API tokens", setup_api_token_routes),
+    RouterSpec("Notes", setup_note_routes, args=(task_scheduler,)),
+    RouterSpec("Email", setup_email_routes),
+    RouterSpec("Vault", setup_vault_routes),
+    RouterSpec("Contacts", setup_contacts_routes),
+    RouterSpec("Companion", setup_companion_routes),
+], logger=logger)
+logger.info("Communication and integration routes initialized")
 
 # Paperclip sidecar reverse proxy (bundled agent-management UI). HTTP traffic to
 # /paperclip/* is gated by the global AuthMiddleware; websockets bypass that

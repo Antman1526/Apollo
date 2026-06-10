@@ -21,6 +21,7 @@ def _component(
     summary: str,
     metrics: dict[str, Any] | None = None,
     next_step: str | None = None,
+    actions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "label": label,
@@ -31,6 +32,29 @@ def _component(
     }
     if next_step:
         out["next_step"] = next_step
+    if actions:
+        out["actions"] = actions
+    return out
+
+
+def _action(
+    action_id: str,
+    label: str,
+    *,
+    endpoint: str | None = None,
+    method: str = "POST",
+    kind: str = "repair",
+    confirm: str | None = None,
+) -> dict[str, Any]:
+    out = {
+        "id": action_id,
+        "label": label,
+        "method": method,
+        "endpoint": endpoint or f"/api/system/actions/{action_id}",
+        "kind": kind,
+    }
+    if confirm:
+        out["confirm"] = confirm
     return out
 
 
@@ -87,6 +111,11 @@ def memory_status(memory_manager: Any = None, memory_vector: Any = None) -> dict
     try:
         memories = memory_manager.load_all()
         memory_count = len(memories or [])
+        indexable_count = len([
+            mem for mem in (memories or [])
+            if str((mem or {}).get("id") or "").strip()
+            and str((mem or {}).get("text") or "").strip()
+        ])
     except Exception as exc:
         return _component(
             label="Memory",
@@ -108,11 +137,22 @@ def memory_status(memory_manager: Any = None, memory_vector: Any = None) -> dict
             vector_error = str(exc)
             vector_ready = False
 
-    ready = vector_attached and vector_ready
+    vector_drift = abs(indexable_count - vector_count) if vector_attached and vector_ready else 0
+    ready = vector_attached and vector_ready and vector_drift == 0
+    actions: list[dict[str, Any]] = []
     if ready:
         state = "ready"
         summary = "Memory store and semantic index are ready"
         next_step = None
+    elif vector_attached and vector_ready and vector_drift:
+        state = "degraded"
+        summary = "Persistent memory is readable, but the semantic index is out of sync"
+        next_step = "Rebuild the semantic memory index"
+        actions.append(_action(
+            "memory.rebuild_semantic_index",
+            "Rebuild index",
+            confirm="Rebuild the semantic memory index from saved memory entries?",
+        ))
     elif vector_attached:
         state = "degraded"
         summary = "Persistent memory is readable, but the semantic index is unavailable"
@@ -124,9 +164,11 @@ def memory_status(memory_manager: Any = None, memory_vector: Any = None) -> dict
 
     metrics: dict[str, Any] = {
         "entries": memory_count,
+        "indexable_entries": indexable_count,
         "vector_attached": vector_attached,
         "vector_ready": vector_ready,
         "vector_entries": vector_count,
+        "vector_drift": vector_drift,
     }
     if vector_error:
         metrics["vector_error"] = vector_error
@@ -137,6 +179,7 @@ def memory_status(memory_manager: Any = None, memory_vector: Any = None) -> dict
         summary=summary,
         metrics=metrics,
         next_step=next_step,
+        actions=actions,
     )
 
 
@@ -302,13 +345,21 @@ def tool_server_status(mcp_manager: Any = None) -> dict[str, Any]:
     configured = len(statuses or {})
     connected = counts.get("connected", 0)
     errors = counts.get("error", 0)
-    ready = errors == 0 and (configured == 0 or connected > 0)
+    disconnected = configured - connected
+    ready = errors == 0 and (configured == 0 or connected == configured)
     state = "idle" if configured == 0 else "ready" if ready else "degraded"
     summary = (
         "No external tool servers configured"
         if configured == 0
         else f"{connected}/{configured} tool servers connected"
     )
+    actions = []
+    if not ready and configured:
+        actions.append(_action(
+            "tool_servers.reconnect_failed",
+            "Reconnect failed",
+            confirm="Reconnect failed or disconnected tool servers?",
+        ))
     return _component(
         label="Tool Servers",
         ready=ready,
@@ -317,11 +368,13 @@ def tool_server_status(mcp_manager: Any = None) -> dict[str, Any]:
         metrics={
             "configured": configured,
             "connected": connected,
+            "disconnected": disconnected,
             "errors": errors,
             "statuses": counts,
             "tools": len(tools or []),
         },
         next_step="Reconnect failed tool servers or review their configuration" if not ready and configured else None,
+        actions=actions,
     )
 
 

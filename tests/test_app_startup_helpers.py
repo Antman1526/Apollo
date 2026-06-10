@@ -1,6 +1,11 @@
 import pytest
 
-from services.app_startup import build_and_include_router, include_router_checked
+from services.app_startup import (
+    RouterSpec,
+    build_and_include_router,
+    include_router_checked,
+    register_router_specs,
+)
 
 
 class FakeApp:
@@ -30,3 +35,24 @@ def test_build_and_include_router_labels_factory_failures():
 def test_include_router_checked_labels_include_failures():
     with pytest.raises(RuntimeError, match="Failed to register Test routes"):
         include_router_checked(FakeApp(fail=True), object(), "Test")
+
+
+def test_register_router_specs_registers_in_order():
+    app = FakeApp()
+    first = object()
+    second = object()
+
+    out = register_router_specs(app, [
+        RouterSpec("First", lambda: first),
+        RouterSpec("Second", lambda value: second, args=("x",)),
+    ])
+
+    assert app.routers == [first, second]
+    assert out == {"First": first, "Second": second}
+
+
+def test_register_router_specs_labels_spec_failures():
+    with pytest.raises(RuntimeError, match="Failed to build Broken routes"):
+        register_router_specs(FakeApp(), [
+            RouterSpec("Broken", lambda: (_ for _ in ()).throw(ValueError("bad"))),
+        ])

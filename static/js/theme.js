@@ -730,6 +730,8 @@ export function initThemeUI() {
         const name = btn.dataset.delete;
         if (uiModule && uiModule.styledConfirm) {
           if (!await uiModule.styledConfirm(`Delete theme "${name}"?`, { confirmText: 'Delete', danger: true })) return;
+        } else if (!confirm(`Delete theme "${name}"?`)) {
+          return;
         }
         deleteCustomTheme(name);
       });
