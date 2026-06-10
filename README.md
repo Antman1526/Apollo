@@ -504,6 +504,9 @@ Apollo is a self-hosted workspace with powerful local tools: shell access, file 
 - Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only. Expose only the authenticated Apollo web/API entrypoint through your trusted proxy or private access layer.
 - Before publishing a fork, run `git status --short` and confirm no private files from `.env`, `data/`, `logs/`, uploads, backups, or local databases are staged.
 
+For runtime health checks, startup diagnostics, log cleanup, and recovery order,
+see [`docs/OPERATIONS.md`](docs/OPERATIONS.md).
+
 ### Private or proxied deployments
 Apollo serves plain HTTP on its app port. Docker Compose binds Apollo and the bundled services to `127.0.0.1` by default, so a typical production/private setup is:
 

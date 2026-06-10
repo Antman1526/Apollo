@@ -476,8 +476,12 @@ class TaskScheduler:
             t = getattr(self, attr, None)
             if t:
                 t.cancel()
-                try: await t
-                except asyncio.CancelledError: pass
+                try:
+                    await t
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    logger.debug("Background scheduler helper %s stopped with error: %s", attr, e, exc_info=True)
         logger.info("Task scheduler stopped")
 
     async def _note_pings_loop(self):
@@ -573,8 +577,8 @@ class TaskScheduler:
                         sleep_for = max(1.0, min(60.0, delta))
                 finally:
                     _db.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not compute next scheduler wake time: %s", e, exc_info=True)
             await asyncio.sleep(sleep_for)
 
     async def _check_due_tasks(self):
@@ -843,8 +847,8 @@ class TaskScheduler:
             try:
                 _t = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
                 _owner = _t.owner if _t else None
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Could not load owner for failed task %s: %s", task_id, e, exc_info=True)
             _should_notify_error = False
             try:
                 _t_for_notify = db.query(ScheduledTask).filter(ScheduledTask.id == task_id).first()
@@ -878,8 +882,8 @@ class TaskScheduler:
                             cron_expression=task_obj.cron_expression,
                             tz_name=_resolve_task_timezone(db, task_obj),
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Could not advance next_run after task %s failed: %s", task_id, e, exc_info=True)
                 try:
                     db.commit()
                 except Exception as commit_err:

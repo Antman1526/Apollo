@@ -90,8 +90,8 @@ def _tool_path_roots() -> list[str]:
         private_tmp = os.path.realpath("/tmp")
         if private_tmp != "/tmp":
             roots.append(private_tmp)
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("Could not resolve /tmp realpath for tool confinement: %s", e, exc_info=True)
 
     # $TMPDIR — per-user temp root on macOS (e.g. /var/folders/.../T/).
     tmpdir = os.environ.get("TMPDIR")
@@ -104,8 +104,8 @@ def _tool_path_roots() -> list[str]:
         extra = get_setting("tool_path_extra_roots")
         if isinstance(extra, list):
             roots.extend(str(r) for r in extra if r)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Could not load extra tool path roots: %s", e, exc_info=True)
 
     # Deduplicate; resolve symlinks so containment is unambiguous.
     seen: set[str] = set()
@@ -245,7 +245,7 @@ async def _run_subprocess_streaming(
                 except Exception:
                     # Progress is best-effort — never let a UI hiccup
                     # break the underlying subprocess.
-                    pass
+                    logger.debug("Subprocess progress callback failed", exc_info=True)
             await asyncio.sleep(PROGRESS_INTERVAL_S)
 
     rd_out = asyncio.create_task(_reader(proc.stdout, stdout_full, "out"))
@@ -259,24 +259,24 @@ async def _run_subprocess_streaming(
         timed_out = True
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to kill timed-out subprocess: %s", e, exc_info=True)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Timed-out subprocess did not exit cleanly: %s", e, exc_info=True)
     except asyncio.CancelledError:
         # User hit stop / SSE stream torn down. Kill the child so it
         # doesn't keep running orphaned. Re-raise so the agent loop's
         # cancellation propagates as the user expects.
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to kill cancelled subprocess: %s", e, exc_info=True)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Cancelled subprocess did not exit cleanly: %s", e, exc_info=True)
         # Best-effort: stop the readers + emitter before re-raising.
         for t in (rd_out, rd_err):
             t.cancel()
@@ -294,8 +294,8 @@ async def _run_subprocess_streaming(
         for t in (rd_out, rd_err):
             try:
                 await asyncio.wait_for(t, timeout=1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Subprocess pipe reader did not finish cleanly: %s", e, exc_info=True)
 
     return (
         "\n".join(stdout_full),

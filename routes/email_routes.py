@@ -512,12 +512,16 @@ def setup_email_routes():
                         del _IMAP_POOL[pool_key]
                         return conn, True  # reused
                     except Exception:
-                        try: conn.logout()
-                        except Exception: pass
+                        try:
+                            conn.logout()
+                        except Exception as e:
+                            logger.debug("Failed to close stale pooled IMAP connection for %s: %s", pool_key, e, exc_info=True)
                         del _IMAP_POOL[pool_key]
                 else:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception as e:
+                        logger.debug("Failed to close idle pooled IMAP connection for %s: %s", pool_key, e, exc_info=True)
                     del _IMAP_POOL[pool_key]
         # Fresh connection
         return _imap_connect(account_id, owner=owner), False
@@ -526,8 +530,10 @@ def setup_email_routes():
         # SECURITY: match the (account_id, owner) key used by _pooled_connect
         # so a pooled handle is returned to the same per-user slot.
         if not ok:
-            try: conn.logout()
-            except Exception: pass
+            try:
+                conn.logout()
+            except Exception as e:
+                logger.debug("Failed to close failed IMAP connection for account=%s owner=%s: %s", account_id, owner, e, exc_info=True)
             return
         with _pool_lock:
             _IMAP_POOL[(account_id, owner)] = (conn, _time.monotonic())
@@ -1209,8 +1215,8 @@ def setup_email_routes():
                     with _imap(account_id, owner=owner) as conn2:
                         conn2.select(_q(folder))
                         conn2.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to mark email uid=%s folder=%s as seen: %s", uid, folder, e, exc_info=True)
             _t_total = _t.monotonic() - _t0
             if _t_total > 2.0:
                 logger.warning(
@@ -1256,8 +1262,8 @@ def setup_email_routes():
                         ).fetchone()
                         if _rs and _rs[0]:
                             cached_sender_sig = _rs[0]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Sender signature cache lookup failed for %s: %s", sender_addr, e, exc_info=True)
                 if _row3:
                     cached_boundaries = {"sig_start": _row3[0], "quote_start": _row3[1]}
                     if _row3[2]:
@@ -1278,8 +1284,8 @@ def setup_email_routes():
                         except Exception:
                             cached_turns = None
                 _c.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Email cached metadata lookup failed for message_id=%s: %s", message_id, e, exc_info=True)
 
             # If no cached turns, parse on-the-fly so the client never has
             # to do the heavy lifting. Cheap on a 50KB body, free for short
@@ -3165,8 +3171,10 @@ def setup_email_routes():
                     conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception as e:
+                        logger.debug("Failed to close IMAP test connection for host=%s: %s", imap_host, e, exc_info=True)
             except Exception as e:
                 imap_result = {"ok": False, "error": str(e)[:200]}
 
@@ -3187,8 +3195,10 @@ def setup_email_routes():
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
                 finally:
-                    try: smtp.quit()
-                    except Exception: pass
+                    try:
+                        smtp.quit()
+                    except Exception as e:
+                        logger.debug("Failed to close SMTP test connection for host=%s: %s", smtp_host, e, exc_info=True)
             except Exception as e:
                 smtp_result = {"ok": False, "error": str(e)[:200]}
 
