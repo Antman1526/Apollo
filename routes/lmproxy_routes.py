@@ -28,7 +28,11 @@ def setup_lmproxy_routes(
     http_client: Optional[httpx.AsyncClient] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["lmproxy"])
+    owns_client = http_client is None
     client = http_client or httpx.AsyncClient(timeout=None)
+    if owns_client:
+        # include_router propagates this to the app's shutdown hooks.
+        router.add_event_handler("shutdown", client.aclose)
 
     def _authed(request: Request) -> bool:
         expected = token_provider()
@@ -62,6 +66,11 @@ def setup_lmproxy_routes(
             )
         except httpx.ConnectError:
             return JSONResponse({"error": "local model server unreachable"}, status_code=502)
+        except httpx.RequestError as exc:
+            return JSONResponse(
+                {"error": f"local model request failed: {exc.__class__.__name__}"},
+                status_code=502,
+            )
         return StreamingResponse(
             upstream.aiter_raw(),
             status_code=upstream.status_code,

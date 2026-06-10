@@ -60,6 +60,26 @@ def test_503_when_no_warm_model():
         assert r.status_code == 503
 
 
+def test_502_when_upstream_request_fails_mid_flight():
+    """Any transport-level failure (not just refused connections) must map to
+    502 instead of crashing the handler with a 500."""
+    def boom(request):
+        raise httpx.ReadError("connection lost", request=request)
+    app = FastAPI()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(boom))
+    app.include_router(setup_lmproxy_routes(
+        token_provider=lambda: TOKEN,
+        warm_url_provider=lambda: "http://warm",
+        http_client=client,
+    ))
+    with TestClient(app) as c:
+        r = c.post("/lmproxy/v1/chat/completions",
+                   headers={"Authorization": f"Bearer {TOKEN}"},
+                   json={"model": "x", "messages": []})
+        assert r.status_code == 502
+        assert "ReadError" in r.json()["error"]
+
+
 def test_forwards_chat_to_warm_llama_server():
     def view(request):
         assert request.url.path == "/v1/chat/completions"
