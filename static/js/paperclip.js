@@ -8,6 +8,7 @@ let _view = 'floor';
 let _demoTimer = null;
 let _demoIndex = 0;
 let _liveStream = null;
+let _liveRetryTimer = null;
 let _floorState = createFloorState();
 
 const ZONES = [
@@ -18,13 +19,23 @@ const ZONES = [
   { id: 'done', label: 'Done' },
 ];
 
-const WORKSPACE_STATIONS = {
-  backlog: { id: 'backlog', label: 'Backlog Desk', x: 10, y: 18 },
-  working: { id: 'working', label: 'Build Bench', x: 42, y: 22 },
-  review: { id: 'review', label: 'Review Table', x: 72, y: 20 },
-  blocked: { id: 'blocked', label: 'Help Bar', x: 22, y: 66 },
-  done: { id: 'done', label: 'Done Dock', x: 70, y: 68 },
+// Shared corners of the office. Agents go here for cross-cutting states;
+// backlog/working states keep them at their own assigned desk instead.
+const SHARED_STATIONS = {
+  review: { id: 'review', label: 'Review Table', x: 76, y: 18 },
+  blocked: { id: 'blocked', label: 'Help Bar', x: 14, y: 74 },
+  done: { id: 'done', label: 'Done Dock', x: 76, y: 70 },
 };
+
+// Personal desk slots laid out as two office rows. Each agent is assigned the
+// next free slot on first sight and keeps it for the session.
+const OFFICE_DESKS = [
+  { x: 16, y: 32 }, { x: 36, y: 32 }, { x: 56, y: 32 },
+  { x: 16, y: 56 }, { x: 36, y: 56 }, { x: 56, y: 56 },
+];
+
+// How long an activity message keeps two agents in a face-to-face chat.
+const CONVERSATION_WINDOW_MS = 45000;
 
 const ROLE_LABELS = {
   research: 'Research',
@@ -91,6 +102,7 @@ function normalizeZone(zone) {
 function createFloorState() {
   return {
     agents: new Map(),
+    deskAssignments: new Map(),
     activity: [],
     messages: [],
     selectedAgentId: '',
@@ -121,6 +133,9 @@ function ensureAgent(state, id, payload = {}) {
   existing.name = payload.name || payload.agent?.name || existing.name;
   existing.role = normalizeRole(payload.role || payload.agent?.role || existing.role);
   state.agents.set(agentId, existing);
+  if (state.deskAssignments && !state.deskAssignments.has(agentId)) {
+    state.deskAssignments.set(agentId, state.deskAssignments.size);
+  }
   if (!state.selectedAgentId) state.selectedAgentId = agentId;
   return existing;
 }
@@ -137,9 +152,12 @@ function applyFloorEvent(state, event) {
   state.lastUpdated = Date.now();
 
   if (type === 'agent.status' || type === 'heartbeat.run.queued' || type === 'heartbeat.run.status') {
-    const agent = ensureAgent(state, payloadAgentId(payload), payload);
+    const agentId = payloadAgentId(payload);
+    const known = state.agents.has(agentId);
+    const agent = ensureAgent(state, agentId, payload);
     const status = payload.status || payload.state || (type === 'heartbeat.run.queued' ? 'queued' : agent.status);
-    agent.previousZone = agent.zone;
+    // A brand-new agent has no previous spot to walk from.
+    agent.previousZone = known ? agent.zone : undefined;
     agent.status = status;
     agent.zone = zoneForStatus(status);
     agent.task = payload.task || payload.title || payload.run?.title || agent.task;
@@ -154,10 +172,12 @@ function applyFloorEvent(state, event) {
   }
 
   if (type === 'heartbeat.run.log') {
-    const agent = ensureAgent(state, payloadAgentId(payload), payload);
+    const agentId = payloadAgentId(payload);
+    const known = state.agents.has(agentId);
+    const agent = ensureAgent(state, agentId, payload);
     const chunk = payload.chunk || payload.text || payload.message || '';
     if (chunk) pushLimited(agent.transcript, chunk, 32);
-    agent.previousZone = agent.zone;
+    agent.previousZone = known ? agent.zone : undefined;
     agent.status = 'running';
     agent.zone = 'working';
     agent.thinking = true;
@@ -166,10 +186,12 @@ function applyFloorEvent(state, event) {
   }
 
   if (type === 'heartbeat.run.event') {
-    const agent = ensureAgent(state, payloadAgentId(payload), payload);
+    const agentId = payloadAgentId(payload);
+    const known = state.agents.has(agentId);
+    const agent = ensureAgent(state, agentId, payload);
     const tool = payload.tool || payload.name || payload.event || 'tool';
     pushLimited(agent.tools, tool, 8);
-    agent.previousZone = agent.zone;
+    agent.previousZone = known ? agent.zone : undefined;
     agent.zone = 'working';
     agent.thinking = true;
     agent.updatedAt = Date.now();
@@ -232,8 +254,18 @@ function renderLegoAgentHTML(agent, selected = false) {
   `;
 }
 
-function workspacePoint(zoneId, index = 0) {
-  const station = WORKSPACE_STATIONS[zoneId] || WORKSPACE_STATIONS.backlog;
+function clampX(x) { return Math.max(4, Math.min(86, x)); }
+function clampY(y) { return Math.max(10, Math.min(78, y)); }
+
+function deskPointFor(state, agentId) {
+  const index = state.deskAssignments?.get(agentId) ?? 0;
+  const slot = OFFICE_DESKS[index % OFFICE_DESKS.length];
+  const lap = Math.floor(index / OFFICE_DESKS.length);
+  return { x: clampX(slot.x + lap * 5), y: clampY(slot.y + lap * 4) };
+}
+
+function stationPoint(zoneId, index = 0) {
+  const station = SHARED_STATIONS[zoneId] || SHARED_STATIONS.review;
   const spread = [
     { x: 0, y: 0 },
     { x: 8, y: 6 },
@@ -242,9 +274,27 @@ function workspacePoint(zoneId, index = 0) {
     { x: -8, y: -5 },
   ][index % 5];
   return {
-    x: Math.max(4, Math.min(86, station.x + spread.x)),
-    y: Math.max(10, Math.min(78, station.y + spread.y)),
+    x: clampX(station.x + spread.x),
+    y: clampY(station.y + spread.y),
   };
+}
+
+function workspacePoint(state, agentId, zoneId, index = 0) {
+  // Backlog and working agents are at their own desk; everyone else heads to
+  // the matching shared corner of the office.
+  if (zoneId === 'working' || zoneId === 'backlog') return deskPointFor(state, agentId);
+  return stationPoint(zoneId, index);
+}
+
+function conversationLineFor(agent) {
+  const task = String(agent.task || '').trim();
+  switch (agent.zone) {
+    case 'working': return task ? `On it — ${task}.` : 'On it now.';
+    case 'review': return task ? `Reviewing ${task} — almost there.` : 'Deep in review.';
+    case 'blocked': return task ? `Stuck on ${task}, could use a hand.` : 'Blocked — could use a hand.';
+    case 'done': return task ? `Just wrapped ${task}.` : 'All wrapped up here.';
+    default: return task ? `Next on my list: ${task}.` : 'Picking up the next task.';
+  }
 }
 
 function computeWorkspaceLayout(state = _floorState) {
@@ -252,8 +302,8 @@ function computeWorkspaceLayout(state = _floorState) {
   const agents = sortedAgents(state).map((agent) => {
     const zoneIndex = zoneCounts[agent.zone] || 0;
     zoneCounts[agent.zone] = zoneIndex + 1;
-    const point = workspacePoint(agent.zone, zoneIndex);
-    const fromPoint = workspacePoint(agent.previousZone || agent.zone, zoneIndex);
+    const point = workspacePoint(state, agent.id, agent.zone, zoneIndex);
+    const fromPoint = workspacePoint(state, agent.id, agent.previousZone || agent.zone, zoneIndex);
     return {
       ...agent,
       x: point.x,
@@ -272,20 +322,70 @@ function computeWorkspaceLayout(state = _floorState) {
     }))
     .filter((message) => message.from && message.to)
     .slice(0, 6);
+
+  // Recent messages become live conversations: the sender's words plus a
+  // reply the receiver derives from their own task.
+  const now = Date.now();
+  const conversations = interactions
+    .filter((interaction) => !interaction.at || now - interaction.at <= CONVERSATION_WINDOW_MS)
+    .slice(0, 2)
+    .map((interaction) => ({
+      ...interaction,
+      fromText: interaction.text,
+      toText: conversationLineFor(interaction.to),
+    }));
+
+  // For the newest conversation the sender physically walks over.
+  const meeting = conversations[0];
+  if (meeting && meeting.from.id !== meeting.to.id) {
+    const side = meeting.to.x >= meeting.from.x ? -1 : 1;
+    meeting.from.x = clampX(meeting.to.x + side * 13);
+    meeting.from.y = clampY(meeting.to.y + 4);
+    meeting.from.moving = meeting.from.x !== meeting.from.fromX || meeting.from.y !== meeting.from.fromY;
+  }
+
   const talkingIds = new Set();
-  for (const interaction of interactions) {
-    if (interaction.from?.id) talkingIds.add(interaction.from.id);
-    if (interaction.to?.id) talkingIds.add(interaction.to.id);
+  for (const conversation of conversations) {
+    talkingIds.add(conversation.from.id);
+    talkingIds.add(conversation.to.id);
   }
   for (const agent of agents) {
     agent.talking = talkingIds.has(agent.id);
     agent.workingAtDesk = agent.zone === 'working' || agent.thinking;
     agent.pose = agent.talking ? 'talking' : agent.moving ? 'walking' : agent.workingAtDesk ? 'sitting' : 'standing';
   }
+
+  // Heads-down agents murmur what they are working on.
+  const murmurs = agents
+    .filter((agent) => agent.zone === 'working' && !agent.talking && (agent.transcript.length || agent.task))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, 2)
+    .map((agent) => ({
+      id: agent.id,
+      x: agent.x,
+      y: agent.y,
+      text: agent.transcript[0] || `Working on ${agent.task}`,
+    }));
+
+  const desks = agents.map((agent) => {
+    const point = deskPointFor(state, agent.id);
+    return {
+      ownerId: agent.id,
+      ownerName: agent.name,
+      x: point.x,
+      y: point.y,
+      active: agent.zone === 'working',
+      occupied: agent.zone === 'working' || agent.zone === 'backlog',
+    };
+  });
+
   return {
-    stations: Object.values(WORKSPACE_STATIONS),
+    stations: Object.values(SHARED_STATIONS),
+    desks,
     agents,
     interactions,
+    conversations,
+    murmurs,
   };
 }
 
@@ -308,12 +408,6 @@ function renderWorkspaceAgentHTML(agent, selected = false) {
       title="${escapeHTML(`${agent.name}: ${agent.task || agent.zone}`)}"
       style="--agent-x:${agent.x}%;--agent-y:${agent.y}%;--from-x:${agent.fromX}%;--from-y:${agent.fromY}%;">
       <span class="paperclip-walk-path" aria-hidden="true"></span>
-      ${agent.workingAtDesk ? `
-        <span class="paperclip-agent-desk" aria-hidden="true">
-          <span class="paperclip-desk-screen"></span>
-          <span class="paperclip-desk-keyboard"></span>
-        </span>
-      ` : ''}
       <span class="paperclip-lego-agent" aria-hidden="true">
         <span class="paperclip-lego-head"><span class="paperclip-lego-face"></span></span>
         <span class="paperclip-lego-body">
@@ -347,12 +441,44 @@ function renderInteractionArcs(layout) {
   `;
 }
 
-function renderInteractionBubbles(layout) {
-  return layout.interactions.slice(0, 3).map((interaction) => `
-    <div class="paperclip-interaction-bubble" style="--bubble-x:${interaction.to.x}%;--bubble-y:${interaction.to.y}%;">
-      ${escapeHTML(interaction.text)}
+function renderDeskHTML(desk) {
+  const classes = [
+    'paperclip-agent-desk',
+    desk.active ? 'active' : '',
+    desk.occupied ? 'occupied' : 'empty',
+  ].filter(Boolean).join(' ');
+  return `
+    <div class="${classes}" style="--desk-x:${desk.x}%;--desk-y:${desk.y}%;" aria-hidden="true">
+      <span class="paperclip-desk-chair"></span>
+      <span class="paperclip-desk-screen"></span>
+      <span class="paperclip-desk-keyboard"></span>
+      <span class="paperclip-desk-nameplate">${escapeHTML(desk.ownerName)}</span>
     </div>
-  `).join('');
+  `;
+}
+
+function renderConversationHTML(layout) {
+  const bubbles = [];
+  for (const conversation of layout.conversations) {
+    bubbles.push(`
+      <div class="paperclip-chat-bubble from-bubble" style="--bubble-x:${conversation.from.x}%;--bubble-y:${conversation.from.y}%;">
+        <strong>${escapeHTML(conversation.from.name)}</strong>${escapeHTML(conversation.fromText)}
+      </div>
+    `);
+    bubbles.push(`
+      <div class="paperclip-chat-bubble to-bubble" style="--bubble-x:${conversation.to.x}%;--bubble-y:${conversation.to.y}%;">
+        <strong>${escapeHTML(conversation.to.name)}</strong>${escapeHTML(conversation.toText)}
+      </div>
+    `);
+  }
+  for (const murmur of layout.murmurs) {
+    bubbles.push(`
+      <div class="paperclip-murmur-bubble" style="--bubble-x:${murmur.x}%;--bubble-y:${murmur.y}%;">
+        ${escapeHTML(murmur.text)}
+      </div>
+    `);
+  }
+  return bubbles.join('');
 }
 
 function renderWorkspaceHTML(state = _floorState) {
@@ -360,14 +486,16 @@ function renderWorkspaceHTML(state = _floorState) {
   return `
     <div class="paperclip-workspace-map">
       <div class="paperclip-workspace-grid" aria-hidden="true"></div>
+      <div class="paperclip-office-plant" aria-hidden="true"></div>
       ${layout.stations.map((station) => `
         <div class="paperclip-workstation station-${station.id}" style="--station-x:${station.x}%;--station-y:${station.y}%;">
           <span>${escapeHTML(station.label)}</span>
         </div>
       `).join('')}
+      ${layout.desks.map((desk) => renderDeskHTML(desk)).join('')}
       ${renderInteractionArcs(layout)}
       ${layout.agents.map((agent) => renderWorkspaceAgentHTML(agent, agent.id === state.selectedAgentId)).join('')}
-      ${renderInteractionBubbles(layout)}
+      ${renderConversationHTML(layout)}
     </div>
   `;
 }
@@ -461,7 +589,9 @@ function renderFloor() {
 }
 
 function liveStateLabel() {
-  if (_liveStream?.state === 'live') return 'Live';
+  if (_liveStream?.state === 'live') {
+    return _floorState.source === 'live' ? 'Live' : 'Live · waiting for agents';
+  }
   if (_liveStream?.state === 'connecting') return 'Connecting live';
   if (_status?.reachable === true) return 'Preview (stream unavailable)';
   return 'Preview';
@@ -546,23 +676,39 @@ function createLiveEventStream({
     onOpen();
   };
   source.onerror = (error) => {
+    // Browser EventSource auto-reconnects after transient errors; only a
+    // permanently closed source means the stream is gone for good.
+    const closed = EventSourceCtor.CLOSED ?? 2;
+    if (source.readyState !== undefined && source.readyState !== closed) {
+      if (stream.state === 'live') stream.state = 'connecting';
+      return;
+    }
     stream.state = 'preview';
     onError(error);
   };
   source.onmessage = (message) => {
     const event = parseLiveEvent(message.data);
-    if (event?.type === 'paperclip.stream.unavailable') {
+    if (!event) return;
+    if (event.type === 'paperclip.stream.unavailable') {
       stream.state = 'preview';
       onError(event);
       return;
     }
-    if (event) onEvent(event);
+    if (event.type === 'paperclip.stream.waiting') {
+      // Connected, but no agent activity has been ingested yet. Stay live
+      // without forwarding the placeholder downstream.
+      stream.state = 'live';
+      return;
+    }
+    onEvent(event);
   };
   return stream;
 }
 
 function handleLiveEvent(event) {
   if (_floorState.source !== 'live') {
+    // First real event: swap the demo preview for the live floor.
+    stopPreviewLoop();
     _floorState = createFloorState();
     _floorState.source = 'live';
   }
@@ -574,15 +720,16 @@ function startLiveStream() {
   if (_liveStream || _status?.reachable !== true) return false;
   _liveStream = createLiveEventStream({
     onOpen() {
-      stopPreviewLoop();
-      _floorState.source = 'live';
+      // Keep the preview running until real events arrive (the stream may
+      // be connected but idle); just refresh the "Live" label.
       renderFloor();
     },
     onEvent: handleLiveEvent,
     onError() {
       stopLiveStream();
-      _floorState.source = 'preview';
+      if (_floorState.source === 'live') _floorState = createFloorState();
       startPreviewLoop();
+      scheduleLiveRetry();
     },
   });
   if (_liveStream.state === 'preview') {
@@ -597,6 +744,21 @@ function stopLiveStream() {
   _liveStream = null;
 }
 
+function scheduleLiveRetry() {
+  if (_liveRetryTimer || typeof window === 'undefined' || typeof window.setTimeout !== 'function') return;
+  _liveRetryTimer = window.setTimeout(() => {
+    _liveRetryTimer = null;
+    const modal = $('paperclip-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    startLiveStream();
+  }, 20000);
+}
+
+function cancelLiveRetry() {
+  if (_liveRetryTimer && typeof window !== 'undefined') window.clearTimeout(_liveRetryTimer);
+  _liveRetryTimer = null;
+}
+
 function startFloorUpdates() {
   seedFloorPreview();
   renderFloor();
@@ -604,13 +766,16 @@ function startFloorUpdates() {
 }
 
 function stopFloorUpdates() {
+  cancelLiveRetry();
   stopLiveStream();
   stopPreviewLoop();
 }
 
 function openModal() {
   const modal = $('paperclip-modal');
-  if (!modal || !_frameSrc) return;
+  // The Floor view works without an iframe URL; only require one of
+  // (enabled sidecar, browser URL) so the workspace is reachable.
+  if (!modal || (!_frameSrc && !_status?.enabled)) return;
   modal.classList.remove('hidden');
   setView(_view || 'floor');
   startFloorUpdates();

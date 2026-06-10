@@ -54,15 +54,18 @@ class _EventHub:
     def __init__(self, history: int = 200):
         self._subscribers: set[asyncio.Queue] = set()
         self._recent: deque = deque(maxlen=history)
+        self._seq = 0
 
     def publish(self, events: list[dict]) -> int:
         accepted = 0
         for event in events:
-            self._recent.append(event)
+            self._seq += 1
+            entry = (self._seq, event)
+            self._recent.append(entry)
             accepted += 1
             for queue in list(self._subscribers):
                 try:
-                    queue.put_nowait(event)
+                    queue.put_nowait(entry)
                 except asyncio.QueueFull:
                     pass
         return accepted
@@ -76,7 +79,8 @@ class _EventHub:
         self._subscribers.discard(queue)
 
     @property
-    def recent(self) -> list[dict]:
+    def recent(self) -> list[tuple[int, dict]]:
+        """Buffered (seq, event) pairs, oldest first."""
         return list(self._recent)
 
 
@@ -86,7 +90,11 @@ def setup_paperclip_routes(
     ws_validate: Optional[Callable[[Optional[str]], bool]] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["paperclip"])
+    owns_client = http_client is None
     client = http_client or httpx.AsyncClient(timeout=None)
+    if owns_client:
+        # include_router propagates this to the app's shutdown hooks.
+        router.add_event_handler("shutdown", client.aclose)
     hub = _EventHub()
     events_token = os.environ.get("PAPERCLIP_EVENTS_TOKEN", "")
 
@@ -183,29 +191,43 @@ def setup_paperclip_routes(
         Backed by the ingest hub (/api/paperclip/events). Replays the recent
         buffer on connect, then streams live events with keepalive comments.
         When the sidecar is disabled and nothing has been ingested, emits the
-        legacy `paperclip.stream.unavailable` event first so the Floor can
-        fall back to preview mode exactly as before.
+        legacy `paperclip.stream.unavailable` event so the Floor falls back to
+        preview mode. When enabled but idle it emits `paperclip.stream.waiting`
+        and holds the connection so the Floor goes live as soon as agent
+        activity starts.
         """
 
+        def sse(payload: dict) -> str:
+            return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+
         async def events():
-            recent = hub.recent
-            if not recent:
-                reason = "disabled" if not cfg.enabled else "collector_unavailable"
-                payload = {
+            if not cfg.enabled and not hub.recent:
+                yield sse({
                     "type": "paperclip.stream.unavailable",
-                    "payload": {"reason": reason},
-                }
-                yield f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+                    "payload": {"reason": "disabled"},
+                })
                 return
 
+            # Subscribe before snapshotting the replay buffer so events
+            # published in between are not lost; the seq watermark drops the
+            # ones that show up in both.
             queue = hub.subscribe()
             try:
-                for event in recent:
-                    yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+                recent = hub.recent
+                last_seq = recent[-1][0] if recent else 0
+                if not recent:
+                    yield sse({
+                        "type": "paperclip.stream.waiting",
+                        "payload": {"reason": "no_events_yet"},
+                    })
+                for _seq, event in recent:
+                    yield sse(event)
                 while True:
                     try:
-                        event = await asyncio.wait_for(queue.get(), timeout=25.0)
-                        yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+                        seq, event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                        if seq <= last_seq:
+                            continue
+                        yield sse(event)
                     except asyncio.TimeoutError:
                         yield ": keepalive\n\n"
             finally:
@@ -234,6 +256,11 @@ def setup_paperclip_routes(
             )
         except httpx.ConnectError:
             return JSONResponse({"detail": "Paperclip is not reachable"}, status_code=502)
+        except httpx.RequestError as exc:
+            return JSONResponse(
+                {"detail": f"Paperclip request failed: {exc.__class__.__name__}"},
+                status_code=502,
+            )
         resp_headers = filter_response_headers(upstream.headers)
         if request.method == "HEAD":
             await upstream.aclose()

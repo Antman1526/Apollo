@@ -1,3 +1,4 @@
+import asyncio
 import warnings
 
 import httpx
@@ -87,14 +88,65 @@ def test_proxy_disabled_returns_503():
         assert c.get("/paperclip/anything").status_code == 503
 
 
-def test_stream_reports_collector_unavailable_until_live_collector_exists():
+def _stream_endpoint(app):
+    """The live stream never ends, and TestClient buffers whole bodies, so the
+    SSE tests drive the endpoint's generator directly."""
+    for route in app.routes:
+        if getattr(route, "path", "") == "/api/paperclip/stream":
+            return route.endpoint
+    raise AssertionError("stream route not found")
+
+
+def test_stream_waits_for_events_when_enabled_but_idle():
+    """An enabled-but-idle stream stays open with a waiting placeholder so the
+    Floor can go live once events arrive, instead of closing and stranding the
+    UI in preview mode."""
     app = _app(_cfg())
-    with TestClient(app) as c:
-        r = c.get("/api/paperclip/stream")
-        assert r.status_code == 200
-        assert r.headers["content-type"].startswith("text/event-stream")
-        assert "paperclip.stream.unavailable" in r.text
-        assert "collector_unavailable" in r.text
+    endpoint = _stream_endpoint(app)
+
+    async def run():
+        resp = await endpoint()
+        assert resp.media_type == "text/event-stream"
+        gen = resp.body_iterator
+        try:
+            return await asyncio.wait_for(gen.__anext__(), timeout=5)
+        finally:
+            await gen.aclose()
+
+    first = asyncio.run(run())
+    assert "paperclip.stream.waiting" in first
+
+
+def test_stream_delivers_events_ingested_after_connect(monkeypatch):
+    monkeypatch.setenv("PAPERCLIP_EVENTS_TOKEN", "tok")
+    app = _app(_cfg())
+    endpoint = _stream_endpoint(app)
+
+    async def run():
+        resp = await endpoint()
+        gen = resp.body_iterator
+        try:
+            first = await asyncio.wait_for(gen.__anext__(), timeout=5)
+            assert "paperclip.stream.waiting" in first
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as ac:
+                r = await ac.post(
+                    "/api/paperclip/events",
+                    json={"events": [{
+                        "type": "agent.status",
+                        "payload": {"agentId": "a1", "status": "running"},
+                    }]},
+                    headers={"X-Paperclip-Events-Token": "tok"},
+                )
+                assert r.status_code == 200
+                assert r.json() == {"accepted": 1, "rejected": 0}
+            return await asyncio.wait_for(gen.__anext__(), timeout=5)
+        finally:
+            await gen.aclose()
+
+    event_line = asyncio.run(run())
+    assert "agent.status" in event_line
+    assert '"a1"' in event_line
 
 
 def test_stream_reports_disabled_when_paperclip_is_disabled():

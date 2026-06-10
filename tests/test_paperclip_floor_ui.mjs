@@ -128,6 +128,187 @@ test('shows agents talking and sitting at desks while performing tasks', () => {
   assert.match(html, /Write collector tests/);
 });
 
+test('assigns each agent a stable personal desk in the office', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'queued' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'b2', name: 'Ben', status: 'running' },
+  });
+
+  const first = paperclip.computeWorkspaceLayout(state);
+  assert.equal(first.desks.length, 2);
+  const adaDesk = first.desks.find((desk) => desk.ownerId === 'a1');
+  const benDesk = first.desks.find((desk) => desk.ownerId === 'b2');
+  assert.ok(adaDesk && benDesk);
+  assert.notDeepEqual([adaDesk.x, adaDesk.y], [benDesk.x, benDesk.y]);
+
+  // Changing zones must not move the agent's assigned desk.
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', status: 'running' },
+  });
+  const second = paperclip.computeWorkspaceLayout(state);
+  const adaDeskAfter = second.desks.find((desk) => desk.ownerId === 'a1');
+  assert.deepEqual([adaDeskAfter.x, adaDeskAfter.y], [adaDesk.x, adaDesk.y]);
+});
+
+test('working agents sit at their own desk; idle agents stand by it', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'running', task: 'Wire SSE retry' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'b2', name: 'Ben', status: 'queued' },
+  });
+
+  const layout = paperclip.computeWorkspaceLayout(state);
+  const ada = layout.agents.find((agent) => agent.id === 'a1');
+  const adaDesk = layout.desks.find((desk) => desk.ownerId === 'a1');
+  assert.equal(ada.x, adaDesk.x);
+  assert.equal(ada.pose, 'sitting');
+  assert.equal(adaDesk.active, true);
+
+  const ben = layout.agents.find((agent) => agent.id === 'b2');
+  const benDesk = layout.desks.find((desk) => desk.ownerId === 'b2');
+  assert.equal(ben.x, benDesk.x);
+  assert.equal(ben.pose, 'standing');
+  assert.equal(benDesk.active, false);
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-desk-nameplate/);
+  assert.match(html, /Ada/);
+});
+
+test('conversations pair the sender message with a task-based reply', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'lead', name: 'Lead', status: 'review', task: 'Audit floor layout' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'dev', name: 'Dev', status: 'running', task: 'Ship desk view' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'activity.logged',
+    payload: { fromAgentId: 'lead', toAgentId: 'dev', message: 'How is the desk view going?' },
+  });
+
+  const layout = paperclip.computeWorkspaceLayout(state);
+  assert.equal(layout.conversations.length, 1);
+  const convo = layout.conversations[0];
+  assert.equal(convo.fromText, 'How is the desk view going?');
+  assert.match(convo.toText, /Ship desk view/);
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-chat-bubble/);
+  assert.match(html, /How is the desk view going\?/);
+  assert.match(html, /Ship desk view/);
+});
+
+test('the sender walks over to the receiver for the newest conversation', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'lead', name: 'Lead', status: 'done' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'dev', name: 'Dev', status: 'running' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'activity.logged',
+    payload: { fromAgentId: 'lead', toAgentId: 'dev', message: 'Quick sync?' },
+  });
+
+  const layout = paperclip.computeWorkspaceLayout(state);
+  const lead = layout.agents.find((agent) => agent.id === 'lead');
+  const dev = layout.agents.find((agent) => agent.id === 'dev');
+  assert.ok(Math.abs(lead.x - dev.x) <= 15, `sender should stand next to receiver (dx=${Math.abs(lead.x - dev.x)})`);
+  assert.ok(Math.abs(lead.y - dev.y) <= 15, `sender should stand next to receiver (dy=${Math.abs(lead.y - dev.y)})`);
+  assert.equal(lead.pose, 'talking');
+  assert.equal(dev.pose, 'talking');
+});
+
+test('busy agents murmur their current work when not in a conversation', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'dev', name: 'Dev', status: 'running', task: 'Refactor hub' },
+  });
+
+  const layout = paperclip.computeWorkspaceLayout(state);
+  assert.equal(layout.murmurs.length, 1);
+  assert.match(layout.murmurs[0].text, /Refactor hub/);
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-murmur-bubble/);
+  assert.match(html, /Refactor hub/);
+});
+
+test('tolerates transient stream errors while EventSource reconnects', () => {
+  class FakeEventSource {
+    constructor() {
+      this.readyState = 0;
+      FakeEventSource.instance = this;
+    }
+
+    close() {
+      this.closed = true;
+    }
+  }
+  FakeEventSource.CLOSED = 2;
+
+  const errors = [];
+  const stream = paperclip.createLiveEventStream({
+    EventSource: FakeEventSource,
+    onError: (event) => errors.push(event),
+  });
+
+  FakeEventSource.instance.onopen();
+  assert.equal(stream.state, 'live');
+
+  // Browser EventSource auto-reconnects: a transient error is not fatal.
+  FakeEventSource.instance.readyState = 0;
+  FakeEventSource.instance.onerror(new Error('blip'));
+  assert.equal(stream.state, 'connecting');
+  assert.equal(errors.length, 0);
+
+  FakeEventSource.instance.readyState = 2;
+  FakeEventSource.instance.onerror(new Error('gone'));
+  assert.equal(stream.state, 'preview');
+  assert.equal(errors.length, 1);
+});
+
+test('a waiting stream stays live without forwarding placeholder events', () => {
+  class FakeEventSource {
+    constructor() {
+      FakeEventSource.instance = this;
+    }
+
+    close() {}
+  }
+
+  const received = [];
+  const stream = paperclip.createLiveEventStream({
+    EventSource: FakeEventSource,
+    onEvent: (event) => received.push(event),
+  });
+
+  FakeEventSource.instance.onmessage({
+    data: '{"type":"paperclip.stream.waiting","payload":{"reason":"no_events_yet"}}',
+  });
+
+  assert.equal(stream.state, 'live');
+  assert.deepEqual(received, []);
+});
+
 test('allowlists role CSS classes while preserving role labels as text', () => {
   const html = paperclip.renderLegoAgentHTML({
     id: 'reviewer',
