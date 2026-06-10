@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import platform
+import shutil
 import tarfile
 import urllib.request
 import zipfile
@@ -87,7 +88,10 @@ def _default_download_extract(url: str, dest_parent: str) -> None:
     os.makedirs(dest_parent, exist_ok=True)
     tmp = os.path.join(dest_parent, "_node_download.tmp")
     logger.info("Downloading Node: %s", url)
-    urllib.request.urlretrieve(url, tmp)
+    # urlretrieve has no timeout; a stalled nodejs.org connection would hang
+    # Apollo startup forever.
+    with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as out:
+        shutil.copyfileobj(resp, out)
     try:
         if url.endswith(".zip"):
             with zipfile.ZipFile(tmp) as z:

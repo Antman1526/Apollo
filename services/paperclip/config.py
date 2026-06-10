@@ -13,8 +13,10 @@ _TRUE = {"1", "true", "yes", "on"}
 
 # Default model endpoints. In Docker the Apollo/Paperclip containers reach an
 # Ollama running on the host via host.docker.internal (Mac/Windows; Linux gets
-# an extra_hosts mapping in docker-compose.yml).
+# an extra_hosts mapping in docker-compose.yml). Native/external mode runs on
+# the host itself, where that name does not resolve — use localhost instead.
 _OLLAMA_DOCKER = "http://host.docker.internal:11434/v1"
+_OLLAMA_LOCAL = "http://localhost:11434/v1"
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,7 @@ def _bool(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in _TRUE
 
 
-def _resolve_model(endpoint: str) -> tuple[str, str]:
+def _resolve_model(endpoint: str, mode: str = "docker") -> tuple[str, str]:
     """Return (base_url, model_name) for the selected endpoint."""
     if endpoint == "custom":
         return (
@@ -44,14 +46,17 @@ def _resolve_model(endpoint: str) -> tuple[str, str]:
             os.getenv("PAPERCLIP_MODEL_NAME", ""),
         )
     if endpoint == "apollo":
-        # Phase 3 adds the Apollo /v1 proxy; default to the in-cluster apollo host.
+        # Phase 3 adds the Apollo /v1 proxy; in Docker that's the in-cluster
+        # apollo host, natively it's the local Apollo instance.
+        default_apollo = "http://apollo:7000/v1" if mode == "docker" else "http://localhost:7000/v1"
         return (
-            os.getenv("PAPERCLIP_MODEL_BASE_URL", "http://apollo:7000/v1"),
+            os.getenv("PAPERCLIP_MODEL_BASE_URL", default_apollo),
             os.getenv("PAPERCLIP_MODEL_NAME", ""),
         )
     # ollama (default)
+    default_ollama = _OLLAMA_DOCKER if mode == "docker" else _OLLAMA_LOCAL
     return (
-        os.getenv("PAPERCLIP_MODEL_BASE_URL", _OLLAMA_DOCKER),
+        os.getenv("PAPERCLIP_MODEL_BASE_URL", default_ollama),
         os.getenv("PAPERCLIP_MODEL_NAME", ""),
     )
 
@@ -68,7 +73,7 @@ def load_config() -> PaperclipConfig:
     # hard-wired to root paths, so it cannot be embedded under an Apollo subpath).
     browser_url = os.getenv("PAPERCLIP_BROWSER_URL", f"http://localhost:{port}").rstrip("/")
     endpoint = os.getenv("PAPERCLIP_MODEL_ENDPOINT", "ollama").strip().lower()
-    base_url, model_name = _resolve_model(endpoint)
+    base_url, model_name = _resolve_model(endpoint, mode)
     return PaperclipConfig(
         enabled=enabled, mode=mode, url=url, browser_url=browser_url, port=port,
         model_endpoint=endpoint, model_base_url=base_url, model_name=model_name,

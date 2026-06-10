@@ -179,6 +179,8 @@ class PaperclipRuntime:
         except Exception:
             try:
                 proc.kill()
+                # Reap the killed child so it doesn't linger as a zombie.
+                proc.wait(timeout=5)
             except Exception:
                 pass
 

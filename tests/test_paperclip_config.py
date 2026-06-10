@@ -59,6 +59,28 @@ def test_model_endpoint_ollama_default(monkeypatch):
     assert c.model_base_url == "http://host.docker.internal:11434/v1"
 
 
+def test_model_endpoint_ollama_native_uses_localhost(monkeypatch):
+    """host.docker.internal does not resolve outside Docker, so native and
+    external modes must default Ollama to localhost."""
+    for mode in ("native", "external"):
+        cfg = _fresh(monkeypatch, {
+            "PAPERCLIP_ENABLED": "true",
+            "PAPERCLIP_MODE": mode,
+        })
+        c = cfg.load_config()
+        assert c.model_base_url == "http://localhost:11434/v1", mode
+
+
+def test_model_endpoint_apollo_native_uses_localhost(monkeypatch):
+    cfg = _fresh(monkeypatch, {
+        "PAPERCLIP_ENABLED": "true",
+        "PAPERCLIP_MODE": "native",
+        "PAPERCLIP_MODEL_ENDPOINT": "apollo",
+    })
+    c = cfg.load_config()
+    assert c.model_base_url == "http://localhost:7000/v1"
+
+
 def test_model_endpoint_custom_overrides(monkeypatch):
     cfg = _fresh(monkeypatch, {
         "PAPERCLIP_ENABLED": "true",
