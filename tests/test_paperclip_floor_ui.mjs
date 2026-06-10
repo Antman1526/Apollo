@@ -66,6 +66,8 @@ test('renders a walking workspace with positioned agents and interactions', () =
     type: 'agent.status',
     payload: { agentId: 'coder', name: 'Coder', role: 'coding', status: 'review' },
   });
+  // Simulate one rendered frame so subsequent movement is walk-animated.
+  paperclip.commitWorkspaceLayout(state, paperclip.computeWorkspaceLayout(state));
   paperclip.applyFloorEvent(state, {
     type: 'activity.logged',
     payload: { fromAgentId: 'researcher', toAgentId: 'coder', message: 'Handing off source notes.' },
@@ -75,6 +77,8 @@ test('renders a walking workspace with positioned agents and interactions', () =
   assert.equal(layout.agents.length, 2);
   assert.equal(layout.interactions.length, 1);
   assert.ok(layout.agents.every((agent) => Number.isFinite(agent.x) && Number.isFinite(agent.y)));
+  const researcher = layout.agents.find((agent) => agent.id === 'researcher');
+  assert.equal(researcher.moving, true);
 
   const html = paperclip.renderWorkspaceHTML(state);
   assert.match(html, /paperclip-workspace-map/);
@@ -82,6 +86,34 @@ test('renders a walking workspace with positioned agents and interactions', () =
   assert.match(html, /paperclip-walk-path/);
   assert.match(html, /paperclip-interaction-arc/);
   assert.match(html, /Handing off source notes/);
+});
+
+test('agents walk exactly once per move, not on every render tick', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'queued' },
+  });
+
+  // Fresh agents appear in place without a walk animation.
+  const first = paperclip.computeWorkspaceLayout(state);
+  assert.equal(first.agents[0].moving, false);
+  paperclip.commitWorkspaceLayout(state, first);
+
+  // A zone change walks once...
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', status: 'review' },
+  });
+  const second = paperclip.computeWorkspaceLayout(state);
+  assert.equal(second.agents[0].moving, true);
+  paperclip.commitWorkspaceLayout(state, second);
+
+  // ...and the next render tick must NOT replay the walk.
+  const third = paperclip.computeWorkspaceLayout(state);
+  assert.equal(third.agents[0].moving, false);
+  assert.equal(third.agents[0].fromX, third.agents[0].x);
+  assert.equal(third.agents[0].fromY, third.agents[0].y);
 });
 
 test('shows agents talking and sitting at desks while performing tasks', () => {
@@ -288,6 +320,28 @@ test('renders an isometric office scene with furniture', () => {
   assert.match(html, /station-blocked/);
   assert.match(html, /station-done/);
   assert.match(html, /paperclip-iso-name/);
+});
+
+test('decorates the office with windows, a clock, desk props and status dots', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'running', task: 'Polish pass' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'b2', name: 'Ben', status: 'queued' },
+  });
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-iso-window/);
+  assert.match(html, /paperclip-window-light/);
+  assert.match(html, /paperclip-wall-clock/);
+  assert.match(html, /paperclip-desk-prop/);
+  assert.match(html, /paperclip-chip-dot/);
+  // Zone classes drive the status dot color.
+  assert.match(html, /zone-working/);
+  assert.match(html, /zone-backlog/);
 });
 
 test('projects logical floor coords onto the isometric stage', () => {

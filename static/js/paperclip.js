@@ -152,12 +152,8 @@ function applyFloorEvent(state, event) {
   state.lastUpdated = Date.now();
 
   if (type === 'agent.status' || type === 'heartbeat.run.queued' || type === 'heartbeat.run.status') {
-    const agentId = payloadAgentId(payload);
-    const known = state.agents.has(agentId);
-    const agent = ensureAgent(state, agentId, payload);
+    const agent = ensureAgent(state, payloadAgentId(payload), payload);
     const status = payload.status || payload.state || (type === 'heartbeat.run.queued' ? 'queued' : agent.status);
-    // A brand-new agent has no previous spot to walk from.
-    agent.previousZone = known ? agent.zone : undefined;
     agent.status = status;
     agent.zone = zoneForStatus(status);
     agent.task = payload.task || payload.title || payload.run?.title || agent.task;
@@ -172,12 +168,9 @@ function applyFloorEvent(state, event) {
   }
 
   if (type === 'heartbeat.run.log') {
-    const agentId = payloadAgentId(payload);
-    const known = state.agents.has(agentId);
-    const agent = ensureAgent(state, agentId, payload);
+    const agent = ensureAgent(state, payloadAgentId(payload), payload);
     const chunk = payload.chunk || payload.text || payload.message || '';
     if (chunk) pushLimited(agent.transcript, chunk, 32);
-    agent.previousZone = known ? agent.zone : undefined;
     agent.status = 'running';
     agent.zone = 'working';
     agent.thinking = true;
@@ -186,12 +179,9 @@ function applyFloorEvent(state, event) {
   }
 
   if (type === 'heartbeat.run.event') {
-    const agentId = payloadAgentId(payload);
-    const known = state.agents.has(agentId);
-    const agent = ensureAgent(state, agentId, payload);
+    const agent = ensureAgent(state, payloadAgentId(payload), payload);
     const tool = payload.tool || payload.name || payload.event || 'tool';
     pushLimited(agent.tools, tool, 8);
-    agent.previousZone = known ? agent.zone : undefined;
     agent.zone = 'working';
     agent.thinking = true;
     agent.updatedAt = Date.now();
@@ -309,14 +299,17 @@ function computeWorkspaceLayout(state = _floorState) {
     const zoneIndex = zoneCounts[agent.zone] || 0;
     zoneCounts[agent.zone] = zoneIndex + 1;
     const point = workspacePoint(state, agent.id, agent.zone, zoneIndex);
-    const fromPoint = workspacePoint(state, agent.id, agent.previousZone || agent.zone, zoneIndex);
+    // Walk from wherever the last rendered frame left the agent; a fresh
+    // agent appears in place. commitWorkspaceLayout() advances lastX/lastY
+    // after each render so a move animates exactly once.
+    const hasLast = agent.lastX !== undefined && agent.lastY !== undefined;
     return {
       ...agent,
       x: point.x,
       y: point.y,
-      fromX: fromPoint.x,
-      fromY: fromPoint.y,
-      moving: agent.previousZone && agent.previousZone !== agent.zone,
+      fromX: hasLast ? agent.lastX : point.x,
+      fromY: hasLast ? agent.lastY : point.y,
+      moving: false,
     };
   });
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
@@ -347,7 +340,12 @@ function computeWorkspaceLayout(state = _floorState) {
     const side = meeting.to.x >= meeting.from.x ? -1 : 1;
     meeting.from.x = clampX(meeting.to.x + side * 13);
     meeting.from.y = clampY(meeting.to.y + 4);
-    meeting.from.moving = meeting.from.x !== meeting.from.fromX || meeting.from.y !== meeting.from.fromY;
+  }
+
+  // Final positions are settled: anything displaced since the last rendered
+  // frame walks there.
+  for (const agent of agents) {
+    agent.moving = agent.x !== agent.fromX || agent.y !== agent.fromY;
   }
 
   const talkingIds = new Set();
@@ -378,6 +376,7 @@ function computeWorkspaceLayout(state = _floorState) {
     return {
       ownerId: agent.id,
       ownerName: agent.name,
+      slot: state.deskAssignments?.get(agent.id) ?? 0,
       x: point.x,
       y: point.y,
       active: agent.zone === 'working',
@@ -393,6 +392,19 @@ function computeWorkspaceLayout(state = _floorState) {
     conversations,
     murmurs,
   };
+}
+
+// Record where this frame left every agent so the next layout walks from
+// there (and only walks when something actually moved).
+function commitWorkspaceLayout(state, layout) {
+  if (!state?.agents || !layout?.agents) return;
+  for (const rendered of layout.agents) {
+    const agent = state.agents.get(rendered.id);
+    if (agent) {
+      agent.lastX = rendered.x;
+      agent.lastY = rendered.y;
+    }
+  }
 }
 
 // ── Isometric stage ──────────────────────────────────────────────────────
@@ -493,6 +505,33 @@ function wallPanelSVG(gx1, gx2, hTop, hSize, fill, stickies = []) {
   return `<polygon points="${quadAt(gx1, gx2, hTop, hSize)}" fill="${fill}"/>${notes}`;
 }
 
+// A window on the back wall: frame, sky glass, mullion, and a soft pool of
+// daylight spilling onto the floor.
+function windowSVG(gx1, gx2, hTop, hSize) {
+  const mid = (gx1 + gx2) / 2;
+  const a = isoProject(gx1 + 0.4, 0);
+  const b = isoProject(gx2 - 0.4, 0);
+  const c = isoProject(gx2 + 7, 15);
+  const d = isoProject(gx1 + 7, 15);
+  return `<g class="paperclip-iso-window">` +
+    wallPanelSVG(gx1, gx2, hTop, hSize, '#5b4f45') +
+    wallPanelSVG(gx1 + 0.6, gx2 - 0.6, hTop - 2, hSize - 4, '#aac4d4') +
+    wallPanelSVG(mid - 0.25, mid + 0.25, hTop - 2, hSize - 4, '#5b4f45') +
+    `<polygon class="paperclip-window-light" points="${isoPoints([a, b, c, d])}" fill="rgba(255, 244, 212, 0.1)"/>` +
+    '</g>';
+}
+
+// Analog clock on the left wall (an ellipse approximates the wall angle).
+function wallClockSVG(gy, height) {
+  const p = isoProject(0, gy);
+  const cy = p.py - height;
+  return `<g class="paperclip-wall-clock">` +
+    `<ellipse cx="${p.px.toFixed(1)}" cy="${cy.toFixed(1)}" rx="9" ry="10" fill="#f2ede2" stroke="#3a3128" stroke-width="2"/>` +
+    `<line x1="${p.px.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${p.px.toFixed(1)}" y2="${(cy - 6).toFixed(1)}" stroke="#3a3128" stroke-width="1.6"/>` +
+    `<line x1="${p.px.toFixed(1)}" y1="${cy.toFixed(1)}" x2="${(p.px + 4.5).toFixed(1)}" y2="${(cy + 2).toFixed(1)}" stroke="#3a3128" stroke-width="1.6"/>` +
+    '</g>';
+}
+
 function wallDecorSVG() {
   return [
     // Kanban board with sticky notes.
@@ -503,6 +542,10 @@ function wallDecorSVG() {
     // Picture frames.
     wallPanelSVG(8, 15, 72, 22, '#46506b'),
     wallPanelSVG(88, 95, 74, 20, '#3a3f4a'),
+    // Daylight.
+    windowSVG(52, 60, 78, 34),
+    windowSVG(63, 71, 78, 34),
+    wallClockSVG(50, 64),
   ].join('');
 }
 
@@ -513,6 +556,27 @@ function screenSVG(gx, gy, w, hBottom, hTop, active) {
     { px: a.px, py: a.py - hTop + 2 }, { px: b.px, py: b.py - hTop + 2 },
     { px: b.px, py: b.py - hBottom - 2 }, { px: a.px, py: a.py - hBottom - 2 },
   ])}" fill="#7fd4a3"/>`;
+}
+
+// A small personal item on the desktop, stable per desk slot: a coffee mug,
+// a stack of papers, or a tiny succulent.
+function deskPropSVG(gx, gy, slot, active) {
+  const kind = slot % 3;
+  if (kind === 0) {
+    const p = isoProject(gx, gy);
+    const steam = active
+      ? `<circle cx="${p.px.toFixed(1)}" cy="${(p.py - 42).toFixed(1)}" r="1.4" fill="rgba(255,255,255,0.4)"/>`
+      : '';
+    return `<g class="paperclip-desk-prop prop-mug">${isoBoxSVG(gx, gy, 1.1, 1.1, 33, 37.5, PALETTE.sofaPink)}${steam}</g>`;
+  }
+  if (kind === 1) {
+    return `<g class="paperclip-desk-prop prop-papers">${isoBoxSVG(gx, gy, 2.4, 1.7, 33, 33.9, { top: '#f4f1e8', left: '#ddd8cb', right: '#cbc6b8' })}</g>`;
+  }
+  const p = isoProject(gx, gy);
+  return `<g class="paperclip-desk-prop prop-plant">` +
+    isoBoxSVG(gx, gy, 1.1, 1.1, 33, 36, PALETTE.plantPot) +
+    `<circle cx="${p.px.toFixed(1)}" cy="${(p.py - 39).toFixed(1)}" r="3.4" fill="#46b173"/>` +
+    '</g>';
 }
 
 function deskSVG(desk) {
@@ -531,6 +595,7 @@ function deskSVG(desk) {
   parts.push(isoBoxSVG(x + 1, y - 1.3, 4.2, 0.6, 37, 56, PALETTE.dark));
   parts.push(screenSVG(x + 1, y - 1.3, 4.2, 37, 56, desk.active));
   parts.push(isoBoxSVG(x - 0.8, y + 0.6, 3, 1.2, 33, 34, PALETTE.metal));
+  parts.push(deskPropSVG(x - 3.4, y - 1.2, desk.slot, desk.active));
   const np = isoProject(x - 2.6, y + 3.4);
   const classes = [
     'paperclip-agent-desk',
@@ -638,8 +703,9 @@ function renderWorkspaceAgentSVG(agent, selected = false) {
     agent.workingAtDesk ? 'working-at-desk' : '',
     `pose-${agent.pose || 'standing'}`,
     `role-${roleKey}`,
+    `zone-${zoneKey}`,
   ].filter(Boolean).join(' ');
-  const chipWidth = Math.min(132, agent.name.length * 5.8 + 18);
+  const chipWidth = Math.min(140, agent.name.length * 5.8 + 28);
   const trail = agent.moving
     ? `<line class="paperclip-walk-path" x1="${f.px.toFixed(1)}" y1="${f.py.toFixed(1)}" x2="${p.px.toFixed(1)}" y2="${p.py.toFixed(1)}"/>`
     : '';
@@ -687,7 +753,8 @@ function renderWorkspaceAgentSVG(agent, selected = false) {
       ` : ''}
       <g class="paperclip-iso-chip">
         <rect x="${(-chipWidth / 2).toFixed(1)}" y="7" width="${chipWidth.toFixed(1)}" height="14" rx="7"/>
-        <text class="paperclip-iso-name" x="0" y="17" text-anchor="middle">${escapeHTML(agent.name)}</text>
+        <circle class="paperclip-chip-dot" cx="${(-chipWidth / 2 + 8).toFixed(1)}" cy="14" r="2.6"/>
+        <text class="paperclip-iso-name" x="4" y="17" text-anchor="middle">${escapeHTML(agent.name)}</text>
       </g>
     </g>
   `;
@@ -720,8 +787,7 @@ function renderConversationHTML(layout) {
   return bubbles.join('');
 }
 
-function renderWorkspaceHTML(state = _floorState) {
-  const layout = computeWorkspaceLayout(state);
+function renderWorkspaceHTML(state = _floorState, layout = computeWorkspaceLayout(state)) {
   // Furniture and agents share one depth-sorted paint list so anything nearer
   // the viewer genuinely occludes what stands behind it. Ties paint agents
   // after furniture (kind 1 > 0) so a seated agent shows in front of their desk.
@@ -792,10 +858,17 @@ function renderFocusHTML(state) {
   `;
 }
 
-function renderZones(state = _floorState) {
+let _lastFloorHTML = '';
+
+function renderZones(state = _floorState, layout = undefined) {
   const zoneGrid = $('paperclip-zone-grid');
   if (!zoneGrid) return;
-  zoneGrid.innerHTML = renderWorkspaceHTML(state);
+  const html = renderWorkspaceHTML(state, layout);
+  // Rewriting identical markup restarts every CSS animation; skip no-ops.
+  if (html !== _lastFloorHTML || !zoneGrid.firstChild) {
+    zoneGrid.innerHTML = html;
+    _lastFloorHTML = html;
+  }
   scaleWorkspaceStage();
 }
 
@@ -826,7 +899,7 @@ function renderBoard(state = _floorState) {
         </div>
         <div class="paperclip-board-cards">
           ${zoneAgents.map((agent) => `
-            <button type="button" class="paperclip-board-card ${agent.id === state.selectedAgentId ? 'selected' : ''}" data-agent-id="${escapeHTML(agent.id)}">
+            <button type="button" class="paperclip-board-card role-${normalizeRole(agent.role)} ${agent.id === state.selectedAgentId ? 'selected' : ''}" data-agent-id="${escapeHTML(agent.id)}">
               <span>${escapeHTML(agent.name)}</span>
               <small>${escapeHTML(agent.task || 'Ready')}</small>
             </button>
@@ -838,7 +911,8 @@ function renderBoard(state = _floorState) {
 }
 
 function renderFloor() {
-  renderZones(_floorState);
+  const layout = computeWorkspaceLayout(_floorState);
+  renderZones(_floorState, layout);
   renderBoard(_floorState);
   const focus = $('paperclip-focus-pane');
   if (focus) focus.innerHTML = renderFocusHTML(_floorState);
@@ -849,6 +923,7 @@ function renderFloor() {
   const liveCount = $('paperclip-live-count');
   if (liveCount) liveCount.textContent = `${_floorState.agents.size} agents`;
   bindAgentSelection();
+  commitWorkspaceLayout(_floorState, layout);
 }
 
 function liveStateLabel() {
@@ -1163,6 +1238,7 @@ export {
   applyFloorEvent,
   applyStatus,
   bindAgentSelection,
+  commitWorkspaceLayout,
   computeWorkspaceLayout,
   createFloorState,
   createLiveEventStream,

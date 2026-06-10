@@ -548,6 +548,13 @@ g.paperclip-roaming-agent.walking .paperclip-fig-leg.right {
   fill: var(--fg);
 }
 
+/* Status dot on the name chip, colored by the agent's zone. */
+.paperclip-chip-dot { fill: #8a8f98; }
+g.zone-working .paperclip-chip-dot { fill: #3b82f6; }
+g.zone-review .paperclip-chip-dot { fill: #c678dd; }
+g.zone-blocked .paperclip-chip-dot { fill: #e06c75; }
+g.zone-done .paperclip-chip-dot { fill: #50fa7b; }
+
 g.paperclip-speech-burst rect {
   fill: color-mix(in srgb, var(--panel) 92%, var(--bg));
   stroke: color-mix(in srgb, var(--green) 60%, var(--border));
@@ -846,6 +853,12 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   color: color-mix(in srgb, var(--fg) 60%, transparent);
   line-height: 1.35;
 }
+
+/* Role accent matching the minifig torso colors. */
+.paperclip-board-card.role-research { border-left: 3px solid #20b486; }
+.paperclip-board-card.role-coding { border-left: 3px solid #3b82f6; }
+.paperclip-board-card.role-review { border-left: 3px solid #c678dd; }
+.paperclip-board-card.role-ops { border-left: 3px solid #e06c75; }
 
 .paperclip-classic-view iframe {
   width: 100%;
