@@ -16,6 +16,8 @@ A self-hosted AI workspace -- meant to be the self-hosted version of the UI expe
   - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI</sub>
   - **Local Models** -- point Apollo at folders of GGUF models; they're discovered automatically, appear in the model picker, and a llama.cpp server is launched on the fly when you pick one.<br>　<sub>folder auto-scan · auto-serve on select · single warm chat model · configurable dirs (Settings → AI)</sub>
   - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
+  - **Ralph Loop** -- an opt-in PRD/task loop for learning across iterations and getting scoped agent work done.<br>　<sub>prd.json · progress.md · AGENTS learning snippets · quality gates</sub>
+  - **Browser + Crawl Agents** -- browser-use verifies real UI workflows, while crawl4ai turns web sources into research-ready Markdown.<br>　<sub>Paperclip Floor QA · Ralph verification commands · Crawl4AI source imports</sub>
   - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
   - **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
@@ -75,10 +77,11 @@ only when you intentionally want LAN/reverse-proxy access.
 #### Paperclip (agent management) — optional
 
 Apollo can bundle **[Paperclip](https://github.com/paperclipai/paperclip)**, an
-agent-management UI, as an opt-in sidecar. It runs as its own container (plus a
-small Postgres) behind a `paperclip` Compose profile, and Apollo reverse-proxies
-it at `/paperclip` — so it appears as a **Paperclip** tab inside Apollo, behind
-the same login. Its agents run on your **local model** (default: Ollama).
+agent-management UI, as an opt-in sidecar. In Docker it runs as its own
+container (plus a small Postgres) behind a `paperclip` Compose profile; in
+native desktop mode Apollo supervises the `paperclipai` process directly. Its
+agents run on your **local model** (default: Ollama or Apollo's local-model
+proxy).
 
 Enable it:
 
@@ -103,8 +106,166 @@ starts and no secret is required.
 > **auto-downloads a pinned Node runtime** into `~/.apollo/.node` on first use,
 > so there's nothing to install. Enable with `PAPERCLIP_ENABLED=true`; agents are
 > pointed at Apollo's local-model proxy (`/lmproxy/v1`), which serves whichever
-> GGUF you have running from your local-models folder. Open it from the
-> **Paperclip** sidebar tab — a full-screen "agents at work" workspace.
+> GGUF you have running from your local-models folder.
+
+Open it from the **Paperclip** sidebar tab. Apollo shows three views:
+
+- **Floor** — the Apollo-native animated workspace. Agents appear as small
+  Lego-like people walking between stations, talking, sitting at desks, and
+  showing current tasks/transcripts.
+- **Board** — the same agent state as a Kanban-style work board.
+- **Classic** — Paperclip's own UI loaded from `PAPERCLIP_BROWSER_URL`.
+
+The Floor first tries Apollo's `/api/paperclip/stream` SSE endpoint. Until the
+Phase 3 collector is connected to Paperclip's authenticated live-events
+websocket, that endpoint returns an explicit `paperclip.stream.unavailable`
+event and the UI falls back to preview animation instead of failing with a 404.
+
+#### Apollo Ralph loop (optional)
+
+Apollo includes an opt-in Ralph-style loop inspired by
+[Ralph for Claude Code](https://github.com/frankbria/ralph-claude-code) and
+[snarktank/ralph](https://github.com/snarktank/ralph). It does not run unless
+you invoke it, and it keeps its workspace state under `.apollo/ralph/`.
+
+```bash
+scripts/apollo-ralph init
+scripts/apollo-ralph status
+scripts/apollo-ralph next --prompt
+scripts/apollo-ralph check
+scripts/apollo-ralph record story-1 --passes --learning "What changed"
+```
+
+Use the shared workbench status when you want one readiness view for Paperclip,
+the embedded browser, browser-use, crawl4ai, and Ralph:
+
+```bash
+scripts/apollo-integrations agent-workbench --pretty
+```
+
+#### Embedded browser panel and agent tool
+
+Apollo is a FastAPI/static-web app, not an Electron shell, so the IDE browser is
+implemented as a sandboxed in-app panel plus a shared Playwright Chromium
+session for agents. Open the panel from **Browser** in the sidebar or icon rail.
+It includes back, forward, reload, an address bar, Go, external-open, and a
+console rail fed by the agent browser session.
+
+Agent mode exposes a native `browser` tool:
+
+```json
+{"action":"navigate","url":"http://localhost:3000"}
+{"action":"getVisibleText"}
+{"action":"waitForSelector","selector":"#app"}
+{"action":"click","selector":"button[type=submit]"}
+{"action":"type","selector":"input[name=q]","text":"Apollo"}
+{"action":"screenshot","full_page":true}
+```
+
+The same contract is available over HTTP under `/api/browser/*`, including
+`/navigate`, `/current`, `/html`, `/text`, `/execute`, `/screenshot`, `/wait`,
+`/click`, `/type`, `/events`, and `/detect-localhost`. Only `http://` and
+`https://` navigation is allowed; `file://`, `javascript:`, `data:`, Chromium
+internal URLs, and Node/Electron-style schemes are blocked.
+
+Install the optional runtime when agent browser control is needed:
+
+```bash
+pip install playwright
+python -m playwright install chromium
+```
+
+The loop uses `prd.json` for user stories, dependencies, priorities, and pass
+state; `progress.md` for append-only learning; `AGENTS.learning.md` for durable
+project notes; and `state.json`/`logs/` for iteration history. `run-once`
+prints the next agent prompt by default, or can feed it to an agent command and
+then run `./scripts/check.sh` as the quality gate:
+
+```bash
+scripts/apollo-ralph run-once --agent-cmd "claude --print" --auto-mark
+```
+
+The prompt contract requires the agent to emit `EXIT_SIGNAL: true` only when
+the selected story is complete and checks pass. `--auto-mark` requires both the
+configured quality check and that explicit exit signal, keeping the loop focused
+on one verified task at a time. Use `--timeout-minutes` to cap a single agent
+iteration.
+
+Stories can also require an extra verification command:
+
+```json
+{
+  "id": "paperclip-floor-browser-qa",
+  "title": "Verify Paperclip Floor in a real browser",
+  "verificationCommand": "scripts/check-paperclip-browser --base-url http://127.0.0.1:7000"
+}
+```
+
+`--auto-mark` requires that command to pass too.
+
+#### browser-use and crawl4ai
+
+Apollo includes mandatory integration points for
+[browser-use](https://github.com/browser-use/browser-use) and
+[crawl4ai](https://github.com/unclecode/crawl4AI).
+
+Install crawl4ai with Apollo's main dependencies, then install browser-use into
+its isolated browser-agent environment:
+
+```bash
+pip install -r requirements.txt
+scripts/setup-browser-use-env
+```
+
+Use browser-use to verify Paperclip's animated Floor from a real browser agent:
+
+```bash
+scripts/check-paperclip-browser --status
+scripts/check-paperclip-browser --base-url http://127.0.0.1:7000
+```
+
+By default the browser agent uses Apollo's local OpenAI-compatible proxy, so a
+`BROWSER_USE_API_KEY` is not required for local model checks. The verifier sends
+local requests to `<base-url>/lmproxy/v1`, uses Apollo's Paperclip proxy token,
+and reads the model from `APOLLO_BROWSER_USE_MODEL`, `PAPERCLIP_MODEL_NAME`, or
+`APOLLO_LOCAL_MODEL_ID`. You can also pass the model directly:
+
+```bash
+scripts/check-paperclip-browser \
+  --base-url http://127.0.0.1:7000 \
+  --model llama3
+```
+
+For a custom OpenAI-compatible local endpoint, use:
+
+```bash
+scripts/check-paperclip-browser \
+  --base-url http://127.0.0.1:7000 \
+  --model qwen-local \
+  --model-base-url http://127.0.0.1:11434/v1 \
+  --model-api-key local-token
+```
+
+If you intentionally want Browser Use's hosted model instead, set
+`APOLLO_BROWSER_USE_LLM_PROVIDER=browser-use` and `BROWSER_USE_API_KEY`, or pass
+`--llm-provider browser-use`.
+
+Use crawl4ai to import a web source into the research library as clean Markdown:
+
+```bash
+scripts/apollo-research crawl https://example.com --owner <apollo-user>
+```
+
+The API equivalents are:
+
+- `GET /api/paperclip/status` includes `browser_use` readiness.
+- `GET /api/integrations/agent-workbench/status` reports Paperclip, embedded browser, browser-use, crawl4ai, and Ralph readiness together.
+- `GET /api/research/crawl4ai/status` reports crawl4ai readiness.
+- `POST /api/research/crawl4ai/crawl` crawls and optionally saves a source import.
+
+For safety, crawl4ai URL imports block private, loopback, link-local, reserved,
+and non-HTTP(S) targets by default. Set `APOLLO_CRAWL4AI_ALLOW_PRIVATE=true`
+only for trusted local development.
 
 ### Native Linux / macOS
 ```bash
@@ -119,8 +280,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
 downloads and serves. The app itself is lightweight; local model serving is the
 heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
-connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
-you intentionally want LAN/reverse-proxy access.
+connect to API or remote model servers instead. Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon
 Docker on macOS cannot use the Metal GPU. For GPU-accelerated Cookbook on an

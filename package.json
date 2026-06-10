@@ -3,6 +3,11 @@
     "type": "git",
     "url": "https://github.com/Antman1526/Apollo.git"
   },
+  "scripts": {
+    "check": "bash scripts/check.sh",
+    "test": "npm run test:js",
+    "test:js": "node --test tests/test_paperclip_floor_ui.mjs"
+  },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
   },

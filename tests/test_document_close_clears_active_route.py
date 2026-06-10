@@ -21,7 +21,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 from unittest.mock import MagicMock
 
-import core.database as cdb
+from tests.real_modules import import_real_module
+
+cdb = import_real_module("core.database")
 import routes.document_routes as droutes
 from core.database import Document
 from core.database import Session as DbSession

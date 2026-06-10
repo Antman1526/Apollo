@@ -185,6 +185,11 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        # Agent-activity ingest for the Paperclip Floor. The handler in
+        # routes/paperclip_routes.py authenticates itself (shared token via
+        # PAPERCLIP_EVENTS_TOKEN, or loopback-only when unset) — same
+        # self-authenticating pattern as the task webhook routes below.
+        "/api/paperclip/events",
     }
     # /lmproxy is the local-model OpenAI proxy consumed by Paperclip's agents
     # (a same-host child process with no Apollo session). It is guarded by its
@@ -739,6 +744,41 @@ app.include_router(setup_paperclip_routes(
     _paperclip_cfg,
     ws_validate=lambda token: auth_manager.validate_token(token),
 ))
+
+
+async def _paperclip_status_for_integrations():
+    reachable = None
+    if _paperclip_cfg.enabled:
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(f"{_paperclip_cfg.url}/api/health")
+                reachable = r.status_code < 500
+        except Exception:
+            reachable = False
+    return {
+        "enabled": _paperclip_cfg.enabled,
+        "mode": _paperclip_cfg.mode,
+        "url": _paperclip_cfg.url,
+        "browser_url": _paperclip_cfg.browser_url,
+        "model_endpoint": _paperclip_cfg.model_endpoint,
+        "reachable": reachable,
+    }
+
+
+from routes.integration_routes import setup_integration_routes
+app.include_router(setup_integration_routes(_paperclip_status_for_integrations))
+
+from routes.system_status_routes import setup_system_status_routes
+app.include_router(setup_system_status_routes(
+    memory_manager=memory_manager,
+    memory_vector=memory_vector,
+    mcp_manager=mcp_manager,
+    task_scheduler=task_scheduler,
+))
+
+from routes.browser_routes import setup_browser_routes
+app.include_router(setup_browser_routes())
 
 # Local-model OpenAI proxy: a stable localhost endpoint Paperclip's opencode
 # agents use, forwarding to whichever GGUF model Apollo currently has warm.

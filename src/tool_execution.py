@@ -696,6 +696,7 @@ async def execute_tool_block(
         do_create_document, do_update_document, do_edit_document,
         do_suggest_document, do_search_chats, do_manage_tasks,
         do_manage_skills, do_api_call, do_manage_endpoints,
+        do_browser,
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
         do_manage_documents, do_manage_settings, do_manage_notes,
         do_manage_calendar,
@@ -744,6 +745,11 @@ async def execute_tool_block(
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
+        return desc, result
+    if disabled_tools and tool in {"browser", "builtin_browser"} and ({"browser", "builtin_browser"} & set(disabled_tools)):
+        desc = f"{tool}: BLOCKED"
+        result = {"error": "Browser tool is disabled by user.", "exit_code": 1}
+        logger.info("Browser tool blocked by user: %s", tool)
         return desc, result
 
     if tool in _ADMIN_TOOLS and not _owner_is_admin(owner):
@@ -828,6 +834,9 @@ async def execute_tool_block(
         first_line = content.split("\n")[0].strip()[:60]
         desc = f"api_call: {first_line}"
         result = await do_api_call(content)
+    elif tool in ("browser", "builtin_browser"):
+        desc = "browser"
+        result = await do_browser(content, owner=owner)
     elif tool == "manage_endpoints":
         desc = "manage_endpoints"
         result = await do_manage_endpoints(content, owner=owner)

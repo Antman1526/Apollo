@@ -144,7 +144,12 @@ export function handleUIControl(uiData) {
 
     } else if (uiEvent === 'open_panel' || uiData.ui_event === 'open_panel') {
       var panel = uiData.panel;
-      if (panel === 'documents') {
+      if (panel === 'browser') {
+        import('./browserPanel.js').then(function(mod) {
+          var fn = mod.open || (mod.default && mod.default.open);
+          if (fn) fn();
+        }).catch(function(){});
+      } else if (panel === 'documents') {
         import('./documentLibrary.js').then(function(mod) {
           var fn = mod.openLibrary || (mod.default && mod.default.openLibrary);
           if (fn) fn();

@@ -1,0 +1,6 @@
+# Browser-use is intentionally isolated from the main Apollo venv.
+# browser-use 0.13.0 pins aiohttp==3.13.4, while ChromaDB's Kubernetes
+# dependency currently requires aiohttp>=3.13.5. Install this into
+# .apollo/browser-use-venv via scripts/setup-browser-use-env.
+browser-use==0.13.0
+litellm

@@ -10,9 +10,23 @@ import { isAltGrEvent } from './platform.js';
 
 let initialized = false;
 let modalEl = null;
+let _settingsIsAdmin = null;
 
 function el(id) { return document.getElementById(id); }
 function esc(s) { return uiModule.esc(s); }
+
+async function settingsUserIsAdmin() {
+  if (typeof window._isAdmin === 'boolean') return window._isAdmin;
+  if (_settingsIsAdmin !== null) return _settingsIsAdmin;
+  try {
+    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    const data = res.ok ? await res.json() : {};
+    _settingsIsAdmin = !!data.is_admin;
+  } catch (_) {
+    _settingsIsAdmin = false;
+  }
+  return _settingsIsAdmin;
+}
 
 /* ── Tab switching ── */
 const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
@@ -21,8 +35,10 @@ function initTabs() {
   modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.settingsTab;
-      // Lazy-init admin when first clicking an admin tab
-      if (ADMIN_TABS.has(tab) && window.adminModule && typeof window.adminModule.open === 'function') {
+      // Lazy-init admin-only tabs for admins. The Integrations tab is mixed:
+      // the Agent Workbench and personal integrations are useful to everyone,
+      // while API-service management is gated inside the tab itself.
+      if (ADMIN_TABS.has(tab) && tab !== 'integrations' && window._isAdmin && window.adminModule && typeof window.adminModule.open === 'function') {
         window.adminModule.open(tab);
         return;
       }
@@ -2273,6 +2289,12 @@ function initAccount() {
   if (tfaContent) {
     async function render2FA() {
       try {
+        const authRes = await fetch('/api/auth/status', { credentials: 'same-origin' });
+        const authData = authRes.ok ? await authRes.json() : {};
+        if (!authData.username) {
+          tfaContent.innerHTML = '<div style="font-size:11px;opacity:0.45;">2FA is available when user accounts are enabled.</div>';
+          return;
+        }
         const res = await fetch('/api/auth/2fa/status', { credentials: 'same-origin' });
         const data = await res.json();
         if (data.enabled) {
@@ -2506,15 +2528,17 @@ async function initReminderSettings() {
   // Detect whether ntfy integration exists — try admin endpoint, fall back to
   // checking if an ntfy integration was saved in settings (non-admin users).
   let ntfyConfigured = false;
-  try {
-    const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-    if (res.ok) {
-      const data = await res.json();
-      ntfyConfigured = (data.integrations || []).some(
-        i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
-      );
-    }
-  } catch (_) {}
+  if (await settingsUserIsAdmin()) {
+    try {
+      const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
+      if (res.ok) {
+        const data = await res.json();
+        ntfyConfigured = (data.integrations || []).some(
+          i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
+        );
+      }
+    } catch (_) {}
+  }
   // If admin check failed, check if ntfy was previously selected (trust the saved setting)
   if (!ntfyConfigured) {
     try {
@@ -2569,15 +2593,17 @@ async function initReminderSettings() {
     smtpConfigured = emailAccounts.length > 0;
 
     ntfyConfigured = false;
-    try {
-      const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
-      if (res.ok) {
-        const data = await res.json();
-        ntfyConfigured = (data.integrations || []).some(
-          i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
-        );
-      }
-    } catch (_) {}
+    if (await settingsUserIsAdmin()) {
+      try {
+        const res = await fetch('/api/auth/integrations', { credentials: 'same-origin' });
+        if (res.ok) {
+          const data = await res.json();
+          ntfyConfigured = (data.integrations || []).some(
+            i => (i.preset === 'ntfy' || (i.name || '').toLowerCase() === 'ntfy') && i.enabled !== false && i.base_url
+          );
+        }
+      } catch (_) {}
+    }
     if (!ntfyConfigured) {
       try {
         const res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
@@ -3137,6 +3163,12 @@ async function initIntegrations() {
   const formCard = el('integration-form-card');
   const addBtn = el('intg-add-btn');
   if (!listEl || !formCard) return;
+  if (!await settingsUserIsAdmin()) {
+    listEl.innerHTML = '<div style="padding:12px;opacity:0.5;font-size:12px;">API service integrations are admin-managed. Use the unified Integrations panel for personal connections.</div>';
+    formCard.style.display = 'none';
+    if (addBtn) addBtn.disabled = true;
+    return;
+  }
 
   const presetSel = el('intg-preset');
   const nameIn = el('intg-name');
@@ -3344,6 +3376,7 @@ const INTG_TYPES = {
 };
 
 let _unifiedInited = false;
+let _unifiedIsAdmin = null;
 
 async function initUnifiedIntegrations() {
   if (_unifiedInited) return;
@@ -3359,15 +3392,26 @@ async function initUnifiedIntegrations() {
     open('email');
   }
 
+  async function currentUserIsAdmin() {
+    _unifiedIsAdmin = await settingsUserIsAdmin();
+    return _unifiedIsAdmin;
+  }
+
   async function fetchAll() {
-    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes] = await Promise.all([
-      fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] })),
+    const isAdmin = await currentUserIsAdmin();
+    const apiIntegrationsReq = isAdmin
+      ? fetch('/api/auth/integrations', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { integrations: [] }).catch(() => ({ integrations: [] }))
+      : Promise.resolve({ integrations: [] });
+    const [apiRes, calRes, cardRes, contactsRes, emailAccountsRes, mcpRes, vaultRes, workbenchRes, systemRes] = await Promise.all([
+      apiIntegrationsReq,
       fetch('/api/calendar/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
       fetch('/api/contacts/list', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { contacts: [], count: 0 }).catch(() => ({ contacts: [], count: 0 })),
       fetch('/api/email/accounts', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : { accounts: [] }).catch(() => ({ accounts: [] })),
       fetch('/api/mcp/servers', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch('/api/vault/config', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : {}).catch(() => ({})),
+      fetch('/api/integrations/agent-workbench/status', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).catch(() => null),
+      fetch('/api/system/status', { credentials: 'same-origin' }).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
     const items = [];
     // API integrations
@@ -3413,7 +3457,98 @@ async function initUnifiedIntegrations() {
       items.push({ type: 'mcp', id: srv.id || srv.name, name: srv.name || 'MCP Server', detail: statusText, enabled: srv.is_enabled !== false, data: srv });
     }
     // Vaultwarden removed as an integration option.
-    return items;
+    return { items, workbench: workbenchRes, systemStatus: systemRes, isAdmin };
+  }
+
+  function renderStatePill(state) {
+    const label = String(state || 'unknown');
+    const color = label === 'ready'
+      ? 'var(--green,#50fa7b)'
+      : label === 'needs_setup'
+        ? 'var(--accent,var(--red))'
+        : 'var(--orange,#ffb86c)';
+    return `<span style="font-size:9px;text-transform:uppercase;letter-spacing:0.5px;padding:1px 5px;border:1px solid color-mix(in srgb, ${color} 45%, transparent);border-radius:3px;color:${color};background:color-mix(in srgb, ${color} 10%, transparent);">${esc(label.replace('_', ' '))}</span>`;
+  }
+
+  function renderWorkbenchCard(workbench) {
+    if (!workbench || !workbench.components) return '';
+    const components = workbench.components || {};
+    const order = [
+      ['paperclip', 'Paperclip'],
+      ['browser_use', 'Browser Use'],
+      ['crawl4ai', 'Crawl4AI'],
+      ['ralph', 'Ralph'],
+    ];
+    const nextSteps = order
+      .map(([key, label]) => {
+        const item = components[key] || {};
+        if (item.ready) return '';
+        return `<div style="font-size:11px;opacity:0.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}: ${esc(item.next_step || 'Needs setup')}</div>`;
+      })
+      .filter(Boolean)
+      .join('');
+    return `
+      <div class="intg-card agent-workbench-card" data-intg-type="agent-workbench" style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="opacity:0.7"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/></svg></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px">Agent Workbench ${renderStatePill(workbench.ok ? 'ready' : 'degraded')}</div>
+            <div style="font-size:11px;opacity:0.55">${Number(workbench.ready_count || 0)}/${Number(workbench.total || 0)} systems ready</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:${nextSteps ? '8px' : '0'};">
+          ${order.map(([key, label]) => {
+            const item = components[key] || {};
+            return `<div style="border:1px solid color-mix(in srgb, var(--border) 70%, transparent);border-radius:5px;padding:6px;min-width:0;">
+              <div style="font-size:11px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(label)}</div>
+              <div style="margin-top:4px">${renderStatePill(item.state || 'unknown')}</div>
+            </div>`;
+          }).join('')}
+        </div>
+        ${nextSteps ? `<div style="display:grid;gap:3px">${nextSteps}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderSystemStatusCard(systemStatus) {
+    if (!systemStatus || !systemStatus.components) return '';
+    const components = systemStatus.components || {};
+    const order = [
+      ['storage', 'Storage'],
+      ['memory', 'Memory'],
+      ['tool_servers', 'Tool Servers'],
+      ['terminal', 'Terminal'],
+      ['background', 'Background'],
+    ];
+    const nextSteps = order
+      .map(([key, label]) => {
+        const item = components[key] || {};
+        if (item.ready || !item.next_step) return '';
+        return `<div style="font-size:11px;opacity:0.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}: ${esc(item.next_step)}</div>`;
+      })
+      .filter(Boolean)
+      .join('');
+    return `
+      <div class="intg-card system-status-card" data-intg-type="system-status" style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+          <span style="opacity:0.7"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></span>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px">System Status ${renderStatePill(systemStatus.ok ? 'ready' : 'degraded')}</div>
+            <div style="font-size:11px;opacity:0.55">${Number(systemStatus.ready_count || 0)}/${Number(systemStatus.total || 0)} systems ready</div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:${nextSteps ? '8px' : '0'};">
+          ${order.map(([key, label]) => {
+            const item = components[key] || {};
+            return `<div style="border:1px solid color-mix(in srgb, var(--border) 70%, transparent);border-radius:5px;padding:6px;min-width:0;" title="${esc(item.summary || '')}">
+              <div style="font-size:11px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(label)}</div>
+              <div style="margin-top:4px">${renderStatePill(item.state || 'unknown')}</div>
+            </div>`;
+          }).join('')}
+        </div>
+        ${nextSteps ? `<div style="display:grid;gap:3px">${nextSteps}</div>` : ''}
+      </div>
+    `;
   }
 
   function renderCard(item) {
@@ -3438,16 +3573,19 @@ async function initUnifiedIntegrations() {
   }
 
   async function renderList() {
-    const items = await fetchAll();
+    const { items, workbench, systemStatus, isAdmin } = await fetchAll();
+    const systemHtml = renderSystemStatusCard(systemStatus);
+    const workbenchHtml = renderWorkbenchCard(workbench);
+    if (addBtn) addBtn.title = isAdmin ? 'Add integration' : 'Add personal integration';
     const noticeHtml = integrationNotice ? `
       <div class="intg-followup-note" style="display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:8px;border:1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);border-left:3px solid var(--accent, var(--red));border-radius:5px;background:color-mix(in srgb, var(--accent, var(--red)) 8%, transparent);font-size:11px;">
         <span style="flex:1;line-height:1.35">${integrationNotice}</span>
         <button type="button" class="admin-btn-sm intg-open-email-settings" style="white-space:nowrap;">Email settings</button>
       </div>` : '';
     if (items.length === 0) {
-      listEl.innerHTML = noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
+      listEl.innerHTML = systemHtml + workbenchHtml + noticeHtml + '<div style="padding:12px;opacity:0.5;font-size:12px;text-align:center">No integrations configured</div>';
     } else {
-      listEl.innerHTML = noticeHtml + items.map(renderCard).join('');
+      listEl.innerHTML = systemHtml + workbenchHtml + noticeHtml + items.map(renderCard).join('');
     }
     listEl.querySelector('.intg-open-email-settings')?.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -4551,7 +4689,8 @@ async function initUnifiedIntegrations() {
 
   // ── Add button with type picker ──
   if (addBtn) {
-    addBtn.addEventListener('click', () => {
+    addBtn.addEventListener('click', async () => {
+      const isAdmin = await currentUserIsAdmin();
       formEl.style.display = '';
       formEl.innerHTML = `
         <div class="admin-card" style="margin-top:8px">
@@ -4560,7 +4699,7 @@ async function initUnifiedIntegrations() {
             <div class="settings-row"><label class="settings-label">Type</label>
               <select id="uf-type-picker" class="settings-input">
                 <option value="">Select...</option>
-                <option value="api">API Service</option>
+                ${isAdmin ? '<option value="api">API Service</option>' : ''}
                 <option value="caldav">CalDAV Calendar</option>
                 <option value="contacts">Contacts Import</option>
                 <option value="carddav">Contacts (CardDAV)</option>
@@ -4608,7 +4747,7 @@ export function open(tab) {
   document.body.classList.toggle('settings-appearance-open', activeTab === 'appearance');
   syncAppearanceOpacity(activeTab === 'appearance');
   if (activeTab === 'ai') { refreshAiModelEndpoints(); refreshLocalModels(); }
-  if (ADMIN_TABS.has(activeTab) && window.adminModule && !window.adminModule._initialized) {
+  if (ADMIN_TABS.has(activeTab) && activeTab !== 'integrations' && window._isAdmin && window.adminModule && !window.adminModule._initialized) {
     window.adminModule._initData();
   }
 }

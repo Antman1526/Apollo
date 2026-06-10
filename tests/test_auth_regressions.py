@@ -79,6 +79,7 @@ _ensure_stub("src.endpoint_resolver",
     resolve_endpoint=MagicMock(return_value=("", "", {})),
     normalize_base=MagicMock(),
     build_chat_url=MagicMock(),
+    build_models_url=MagicMock(),
     build_headers=MagicMock(),
 )
 

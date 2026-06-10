@@ -1,9 +1,19 @@
+import warnings
+
 import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.applications import Starlette
+from starlette.exceptions import StarletteDeprecationWarning
 from starlette.responses import JSONResponse as StarJSON, PlainTextResponse
 from starlette.routing import Route
+
+warnings.filterwarnings(
+    "ignore",
+    message="Using `httpx` with `starlette.testclient` is deprecated.*",
+    category=StarletteDeprecationWarning,
+)
+
 from starlette.testclient import TestClient
 
 from routes.paperclip_routes import setup_paperclip_routes
@@ -42,6 +52,8 @@ def test_status_reports_enabled():
         assert r.json()["enabled"] is True
         assert r.json()["url"] == "http://upstream"
         assert r.json()["browser_url"] == "http://localhost:3100"
+        assert r.json()["browser_use"]["package"] == "browser-use"
+        assert r.json()["agent_workbench"]["components"]["paperclip"]["state"] == "ready"
 
 
 def test_proxy_forwards_get_and_returns_body():
@@ -73,6 +85,25 @@ def test_proxy_disabled_returns_503():
     app = _app(_cfg(enabled=False))
     with TestClient(app) as c:
         assert c.get("/paperclip/anything").status_code == 503
+
+
+def test_stream_reports_collector_unavailable_until_live_collector_exists():
+    app = _app(_cfg())
+    with TestClient(app) as c:
+        r = c.get("/api/paperclip/stream")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("text/event-stream")
+        assert "paperclip.stream.unavailable" in r.text
+        assert "collector_unavailable" in r.text
+
+
+def test_stream_reports_disabled_when_paperclip_is_disabled():
+    app = _app(_cfg(enabled=False))
+    with TestClient(app) as c:
+        r = c.get("/api/paperclip/stream")
+        assert r.status_code == 200
+        assert "paperclip.stream.unavailable" in r.text
+        assert "disabled" in r.text
 
 
 def test_ws_requires_auth():

@@ -1,9 +1,19 @@
+import warnings
+
 import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.applications import Starlette
+from starlette.exceptions import StarletteDeprecationWarning
 from starlette.responses import JSONResponse as StarJSON
 from starlette.routing import Route
+
+warnings.filterwarnings(
+    "ignore",
+    message="Using `httpx` with `starlette.testclient` is deprecated.*",
+    category=StarletteDeprecationWarning,
+)
+
 from starlette.testclient import TestClient
 
 from routes.lmproxy_routes import setup_lmproxy_routes

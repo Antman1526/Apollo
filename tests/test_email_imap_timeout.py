@@ -124,3 +124,44 @@ async def test_account_config_uses_shared_imap_timeout(monkeypatch):
     assert captured["open"] == ("imap.one.com", 993, False, _IMAP_TIMEOUT_SECONDS)
     assert captured["login"] == ("user@example.com", "pw")
     assert captured["logout"] is True
+
+
+@pytest.mark.asyncio
+async def test_list_emails_skips_imap_when_not_configured(monkeypatch):
+    import routes.email_routes as email_routes
+
+    def fake_config(account_id=None, owner="", *, log_missing=True):
+        return {
+            "imap_host": "",
+            "imap_user": "",
+            "imap_password": "",
+        }
+
+    def fail_connect(account_id=None, owner=""):
+        raise AssertionError("_imap_connect should not run without IMAP config")
+
+    monkeypatch.setattr(email_routes, "_get_email_config", fake_config)
+    monkeypatch.setattr(email_routes, "_imap_connect", fail_connect)
+
+    router = email_routes.setup_email_routes()
+    endpoint = next(route.endpoint for route in router.routes if route.path == "/api/email/list")
+
+    result = await endpoint(
+        folder="INBOX",
+        limit=50,
+        offset=0,
+        filter="all",
+        from_addr=None,
+        account_id=None,
+        has_attachments=0,
+        cache_bust=None,
+        owner="alice",
+    )
+
+    assert result == {
+        "emails": [],
+        "total": 0,
+        "folder": "INBOX",
+        "offset": 0,
+        "configured": False,
+    }

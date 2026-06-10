@@ -1,36 +1,661 @@
-// Paperclip integration UI: reveals the sidebar tool + iframe modal only when
-// the bundled Paperclip sidecar is enabled, and fills the Settings subsection.
-// Self-contained, dependency-free. The iframe loads Paperclip's OWN origin
-// (browser_url from /api/paperclip/status) — Paperclip's UI + /api are wired to
-// root paths, so it can't be embedded under an Apollo subpath. Paperclip brings
-// its own auth.
+// Paperclip integration UI. The Apollo-native "Floor" renders agents as an
+// animated visual workspace; the classic iframe still loads Paperclip's OWN
+// origin because its Vite build and API calls are rooted at /.
 
 let _frameSrc = '';
+let _status = null;
+let _view = 'floor';
+let _demoTimer = null;
+let _demoIndex = 0;
+let _liveStream = null;
+let _floorState = createFloorState();
+
+const ZONES = [
+  { id: 'backlog', label: 'Backlog' },
+  { id: 'working', label: 'Working' },
+  { id: 'review', label: 'Review' },
+  { id: 'blocked', label: 'Blocked' },
+  { id: 'done', label: 'Done' },
+];
+
+const WORKSPACE_STATIONS = {
+  backlog: { id: 'backlog', label: 'Backlog Desk', x: 10, y: 18 },
+  working: { id: 'working', label: 'Build Bench', x: 42, y: 22 },
+  review: { id: 'review', label: 'Review Table', x: 72, y: 20 },
+  blocked: { id: 'blocked', label: 'Help Bar', x: 22, y: 66 },
+  done: { id: 'done', label: 'Done Dock', x: 70, y: 68 },
+};
+
+const ROLE_LABELS = {
+  research: 'Research',
+  coding: 'Code',
+  ops: 'Ops',
+  review: 'Review',
+};
+
+const ALLOWED_ROLES = new Set(Object.keys(ROLE_LABELS));
+const ALLOWED_ZONES = new Set(ZONES.map((zone) => zone.id));
+const boundAgentSelectionDocs = new WeakSet();
+
+const DEMO_EVENTS = [
+  { type: 'agent.status', payload: { agentId: 'researcher', name: 'Researcher', role: 'research', status: 'queued', task: 'Collect source context' } },
+  { type: 'agent.status', payload: { agentId: 'coder', name: 'Coder', role: 'coding', status: 'running', task: 'Build The Floor UI' } },
+  { type: 'agent.status', payload: { agentId: 'reviewer', name: 'Reviewer', role: 'review', status: 'review', task: 'Check route safety' } },
+  { type: 'agent.status', payload: { agentId: 'operator', name: 'Operator', role: 'ops', status: 'blocked', task: 'Waiting for collector auth' } },
+  { type: 'heartbeat.run.log', payload: { agentId: 'coder', chunk: 'Rendering Lego-like agent figures' } },
+  { type: 'activity.logged', payload: { fromAgentId: 'researcher', toAgentId: 'coder', message: 'Paperclip events map cleanly to zones.' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'researcher', status: 'running', task: 'Read live-events-ws.ts' } },
+  { type: 'heartbeat.run.log', payload: { agentId: 'researcher', chunk: 'Found heartbeat.run.log transcript chunks.' } },
+  { type: 'activity.logged', payload: { fromAgentId: 'coder', toAgentId: 'reviewer', message: 'Floor and Board views ready for review.' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'reviewer', status: 'running', task: 'Validate visual states' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'coder', status: 'done', task: 'The Floor shell' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'operator', status: 'queued', task: 'Prepare collector spike' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'operator', status: 'running', task: 'Provision collector auth spike' } },
+  { type: 'activity.logged', payload: { fromAgentId: 'reviewer', toAgentId: 'operator', message: 'Need auth notes before collector work.' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'researcher', status: 'review', task: 'Package Paperclip findings' } },
+  { type: 'heartbeat.run.status', payload: { agentId: 'reviewer', status: 'done', task: 'Visual QA complete' } },
+];
+
+const PREVIEW_SEED_COUNT = 6;
 
 function $(id) { return document.getElementById(id); }
+
+function escapeHTML(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function zoneForStatus(status) {
+  const s = String(status || '').toLowerCase();
+  if (['running', 'working', 'in_progress', 'active', 'thinking'].includes(s)) return 'working';
+  if (['review', 'reviewing', 'needs_review'].includes(s)) return 'review';
+  if (['blocked', 'error', 'failed', 'crashed'].includes(s)) return 'blocked';
+  if (['done', 'complete', 'completed', 'success'].includes(s)) return 'done';
+  return 'backlog';
+}
+
+function normalizeRole(role) {
+  const token = String(role || 'coding').trim().toLowerCase().match(/[a-z0-9_-]+/)?.[0] || '';
+  return ALLOWED_ROLES.has(token) ? token : 'coding';
+}
+
+function normalizeZone(zone) {
+  const token = String(zone || 'backlog').trim().toLowerCase().match(/[a-z0-9_-]+/)?.[0] || '';
+  return ALLOWED_ZONES.has(token) ? token : 'backlog';
+}
+
+function createFloorState() {
+  return {
+    agents: new Map(),
+    activity: [],
+    messages: [],
+    selectedAgentId: '',
+    source: 'preview',
+    lastUpdated: null,
+  };
+}
+
+function payloadAgentId(payload = {}) {
+  return payload.agentId || payload.agent_id || payload.agent?.id || payload.run?.agentId || payload.run?.agent_id || payload.id || '';
+}
+
+function ensureAgent(state, id, payload = {}) {
+  const agentId = id || payloadAgentId(payload) || `agent-${state.agents.size + 1}`;
+  const existing = state.agents.get(agentId) || {
+    id: agentId,
+    name: payload.name || payload.agent?.name || agentId,
+    role: normalizeRole(payload.role || payload.agent?.role),
+    status: 'queued',
+    zone: 'backlog',
+    task: '',
+    thinking: false,
+    transcript: [],
+    tools: [],
+    messages: [],
+    updatedAt: Date.now(),
+  };
+  existing.name = payload.name || payload.agent?.name || existing.name;
+  existing.role = normalizeRole(payload.role || payload.agent?.role || existing.role);
+  state.agents.set(agentId, existing);
+  if (!state.selectedAgentId) state.selectedAgentId = agentId;
+  return existing;
+}
+
+function pushLimited(items, item, limit = 24) {
+  items.unshift(item);
+  if (items.length > limit) items.length = limit;
+}
+
+function applyFloorEvent(state, event) {
+  if (!state || !event) return state;
+  const payload = event.payload || {};
+  const type = event.type || '';
+  state.lastUpdated = Date.now();
+
+  if (type === 'agent.status' || type === 'heartbeat.run.queued' || type === 'heartbeat.run.status') {
+    const agent = ensureAgent(state, payloadAgentId(payload), payload);
+    const status = payload.status || payload.state || (type === 'heartbeat.run.queued' ? 'queued' : agent.status);
+    agent.previousZone = agent.zone;
+    agent.status = status;
+    agent.zone = zoneForStatus(status);
+    agent.task = payload.task || payload.title || payload.run?.title || agent.task;
+    agent.thinking = agent.zone === 'working';
+    agent.updatedAt = Date.now();
+    pushLimited(state.activity, {
+      kind: 'status',
+      text: `${agent.name} -> ${agent.zone}`,
+      at: agent.updatedAt,
+    }, 18);
+    return state;
+  }
+
+  if (type === 'heartbeat.run.log') {
+    const agent = ensureAgent(state, payloadAgentId(payload), payload);
+    const chunk = payload.chunk || payload.text || payload.message || '';
+    if (chunk) pushLimited(agent.transcript, chunk, 32);
+    agent.previousZone = agent.zone;
+    agent.status = 'running';
+    agent.zone = 'working';
+    agent.thinking = true;
+    agent.updatedAt = Date.now();
+    return state;
+  }
+
+  if (type === 'heartbeat.run.event') {
+    const agent = ensureAgent(state, payloadAgentId(payload), payload);
+    const tool = payload.tool || payload.name || payload.event || 'tool';
+    pushLimited(agent.tools, tool, 8);
+    agent.previousZone = agent.zone;
+    agent.zone = 'working';
+    agent.thinking = true;
+    agent.updatedAt = Date.now();
+    return state;
+  }
+
+  if (type === 'activity.logged') {
+    const fromId = payload.fromAgentId || payload.from_agent_id || payload.from;
+    const toId = payload.toAgentId || payload.to_agent_id || payload.to;
+    const text = payload.message || payload.text || payload.summary || 'Activity logged';
+    const activity = { kind: 'message', fromId, toId, text, at: Date.now() };
+    pushLimited(state.activity, activity, 18);
+    if (fromId && toId) {
+      pushLimited(state.messages, activity, 12);
+      const from = ensureAgent(state, fromId, { name: fromId });
+      const to = ensureAgent(state, toId, { name: toId });
+      pushLimited(from.messages, `To ${to.name}: ${text}`, 8);
+      pushLimited(to.messages, `From ${from.name}: ${text}`, 8);
+    }
+    return state;
+  }
+
+  pushLimited(state.activity, {
+    kind: 'event',
+    text: type || 'Paperclip event',
+    at: Date.now(),
+  }, 18);
+  return state;
+}
+
+function renderLegoAgentHTML(agent, selected = false) {
+  const roleKey = normalizeRole(agent.role);
+  const zoneKey = normalizeZone(agent.zone);
+  const role = ROLE_LABELS[roleKey] || ROLE_LABELS.coding;
+  const classes = [
+    'paperclip-agent-tile',
+    selected ? 'selected' : '',
+    agent.thinking ? 'thinking' : '',
+    `zone-${zoneKey}`,
+    `role-${roleKey}`,
+  ].filter(Boolean).join(' ');
+  return `
+    <button type="button" class="${classes}" data-agent-id="${escapeHTML(agent.id)}" title="${escapeHTML(agent.name)}">
+      <span class="paperclip-lego-agent" aria-hidden="true">
+        <span class="paperclip-lego-head"><span class="paperclip-lego-face"></span></span>
+        <span class="paperclip-lego-body">
+          <span class="paperclip-lego-arm left"></span>
+          <span class="paperclip-lego-torso"></span>
+          <span class="paperclip-lego-arm right"></span>
+        </span>
+        <span class="paperclip-lego-legs"><span></span><span></span></span>
+      </span>
+      <span class="paperclip-agent-copy">
+        <span class="paperclip-agent-name">${escapeHTML(agent.name)}</span>
+        <span class="paperclip-agent-role">${escapeHTML(role)} / ${escapeHTML(zoneKey)}</span>
+        <span class="paperclip-agent-task">${escapeHTML(agent.task || 'Ready')}</span>
+      </span>
+      <span class="paperclip-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+    </button>
+  `;
+}
+
+function workspacePoint(zoneId, index = 0) {
+  const station = WORKSPACE_STATIONS[zoneId] || WORKSPACE_STATIONS.backlog;
+  const spread = [
+    { x: 0, y: 0 },
+    { x: 8, y: 6 },
+    { x: -7, y: 8 },
+    { x: 5, y: -7 },
+    { x: -8, y: -5 },
+  ][index % 5];
+  return {
+    x: Math.max(4, Math.min(86, station.x + spread.x)),
+    y: Math.max(10, Math.min(78, station.y + spread.y)),
+  };
+}
+
+function computeWorkspaceLayout(state = _floorState) {
+  const zoneCounts = {};
+  const agents = sortedAgents(state).map((agent) => {
+    const zoneIndex = zoneCounts[agent.zone] || 0;
+    zoneCounts[agent.zone] = zoneIndex + 1;
+    const point = workspacePoint(agent.zone, zoneIndex);
+    const fromPoint = workspacePoint(agent.previousZone || agent.zone, zoneIndex);
+    return {
+      ...agent,
+      x: point.x,
+      y: point.y,
+      fromX: fromPoint.x,
+      fromY: fromPoint.y,
+      moving: agent.previousZone && agent.previousZone !== agent.zone,
+    };
+  });
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const interactions = state.messages
+    .map((message) => ({
+      ...message,
+      from: byId.get(message.fromId),
+      to: byId.get(message.toId),
+    }))
+    .filter((message) => message.from && message.to)
+    .slice(0, 6);
+  const talkingIds = new Set();
+  for (const interaction of interactions) {
+    if (interaction.from?.id) talkingIds.add(interaction.from.id);
+    if (interaction.to?.id) talkingIds.add(interaction.to.id);
+  }
+  for (const agent of agents) {
+    agent.talking = talkingIds.has(agent.id);
+    agent.workingAtDesk = agent.zone === 'working' || agent.thinking;
+    agent.pose = agent.talking ? 'talking' : agent.moving ? 'walking' : agent.workingAtDesk ? 'sitting' : 'standing';
+  }
+  return {
+    stations: Object.values(WORKSPACE_STATIONS),
+    agents,
+    interactions,
+  };
+}
+
+function renderWorkspaceAgentHTML(agent, selected = false) {
+  const roleKey = normalizeRole(agent.role);
+  const zoneKey = normalizeZone(agent.zone);
+  const role = ROLE_LABELS[roleKey] || ROLE_LABELS.coding;
+  const classes = [
+    'paperclip-roaming-agent',
+    selected ? 'selected' : '',
+    agent.thinking ? 'thinking' : '',
+    agent.moving ? 'walking' : '',
+    agent.talking ? 'talking' : '',
+    agent.workingAtDesk ? 'working-at-desk' : '',
+    `pose-${agent.pose || 'standing'}`,
+    `role-${roleKey}`,
+  ].filter(Boolean).join(' ');
+  return `
+    <button type="button" class="${classes}" data-agent-id="${escapeHTML(agent.id)}"
+      title="${escapeHTML(`${agent.name}: ${agent.task || agent.zone}`)}"
+      style="--agent-x:${agent.x}%;--agent-y:${agent.y}%;--from-x:${agent.fromX}%;--from-y:${agent.fromY}%;">
+      <span class="paperclip-walk-path" aria-hidden="true"></span>
+      ${agent.workingAtDesk ? `
+        <span class="paperclip-agent-desk" aria-hidden="true">
+          <span class="paperclip-desk-screen"></span>
+          <span class="paperclip-desk-keyboard"></span>
+        </span>
+      ` : ''}
+      <span class="paperclip-lego-agent" aria-hidden="true">
+        <span class="paperclip-lego-head"><span class="paperclip-lego-face"></span></span>
+        <span class="paperclip-lego-body">
+          <span class="paperclip-lego-arm left"></span>
+          <span class="paperclip-lego-torso"></span>
+          <span class="paperclip-lego-arm right"></span>
+        </span>
+        <span class="paperclip-lego-legs"><span></span><span></span></span>
+      </span>
+      ${agent.talking ? '<span class="paperclip-speech-burst" aria-hidden="true"><span></span><span></span><span></span></span>' : ''}
+      <span class="paperclip-roaming-label">
+        <strong>${escapeHTML(agent.name)}</strong>
+        <small>${escapeHTML(role)} / ${escapeHTML(zoneKey)}</small>
+        ${agent.workingAtDesk ? `<em>${escapeHTML(agent.task || 'Working')}</em>` : ''}
+      </span>
+      <span class="paperclip-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+    </button>
+  `;
+}
+
+function renderInteractionArcs(layout) {
+  if (!layout.interactions.length) return '';
+  return `
+    <svg class="paperclip-interaction-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+      ${layout.interactions.map((interaction) => {
+        const midX = (interaction.from.x + interaction.to.x) / 2;
+        const midY = Math.min(interaction.from.y, interaction.to.y) - 10;
+        return `<path class="paperclip-interaction-arc" d="M ${interaction.from.x} ${interaction.from.y} Q ${midX} ${midY} ${interaction.to.x} ${interaction.to.y}" />`;
+      }).join('')}
+    </svg>
+  `;
+}
+
+function renderInteractionBubbles(layout) {
+  return layout.interactions.slice(0, 3).map((interaction) => `
+    <div class="paperclip-interaction-bubble" style="--bubble-x:${interaction.to.x}%;--bubble-y:${interaction.to.y}%;">
+      ${escapeHTML(interaction.text)}
+    </div>
+  `).join('');
+}
+
+function renderWorkspaceHTML(state = _floorState) {
+  const layout = computeWorkspaceLayout(state);
+  return `
+    <div class="paperclip-workspace-map">
+      <div class="paperclip-workspace-grid" aria-hidden="true"></div>
+      ${layout.stations.map((station) => `
+        <div class="paperclip-workstation station-${station.id}" style="--station-x:${station.x}%;--station-y:${station.y}%;">
+          <span>${escapeHTML(station.label)}</span>
+        </div>
+      `).join('')}
+      ${renderInteractionArcs(layout)}
+      ${layout.agents.map((agent) => renderWorkspaceAgentHTML(agent, agent.id === state.selectedAgentId)).join('')}
+      ${renderInteractionBubbles(layout)}
+    </div>
+  `;
+}
+
+function sortedAgents(state = _floorState) {
+  const zoneRank = new Map(ZONES.map((zone, index) => [zone.id, index]));
+  return Array.from(state.agents.values()).sort((a, b) => {
+    const zoneDelta = (zoneRank.get(a.zone) ?? 99) - (zoneRank.get(b.zone) ?? 99);
+    return zoneDelta || a.name.localeCompare(b.name);
+  });
+}
+
+function renderActivityHTML(state) {
+  if (!state.activity.length) return '<div class="paperclip-empty-line">No activity</div>';
+  return state.activity.map((item) => `
+    <div class="paperclip-activity-item ${item.kind === 'message' ? 'message' : ''}">
+      <span>${escapeHTML(item.text)}</span>
+    </div>
+  `).join('');
+}
+
+function renderFocusHTML(state) {
+  const agent = state.agents.get(state.selectedAgentId) || sortedAgents(state)[0];
+  if (!agent) return '<div class="paperclip-empty-line">No agents</div>';
+  const transcript = agent.transcript.length
+    ? agent.transcript.map((line) => `<div class="paperclip-transcript-line">${escapeHTML(line)}</div>`).join('')
+    : '<div class="paperclip-empty-line">No transcript</div>';
+  const tools = agent.tools.length
+    ? agent.tools.map((tool) => `<span class="paperclip-tool-chip">${escapeHTML(tool)}</span>`).join('')
+    : '<span class="paperclip-tool-chip muted">idle</span>';
+  const messages = agent.messages.length
+    ? agent.messages.map((msg) => `<div class="paperclip-message-line">${escapeHTML(msg)}</div>`).join('')
+    : '<div class="paperclip-empty-line">No messages</div>';
+  return `
+    <div class="paperclip-focus-head">
+      ${renderLegoAgentHTML(agent, true)}
+      <div class="paperclip-focus-status">${escapeHTML(agent.status)} / ${escapeHTML(agent.task || 'Ready')}</div>
+    </div>
+    <div class="paperclip-pane-title">Tools</div>
+    <div class="paperclip-tool-row">${tools}</div>
+    <div class="paperclip-pane-title">Transcript</div>
+    <div class="paperclip-transcript">${transcript}</div>
+    <div class="paperclip-pane-title">Messages</div>
+    <div class="paperclip-messages">${messages}</div>
+  `;
+}
+
+function renderZones(state = _floorState) {
+  const zoneGrid = $('paperclip-zone-grid');
+  if (!zoneGrid) return;
+  zoneGrid.innerHTML = renderWorkspaceHTML(state);
+}
+
+function renderBoard(state = _floorState) {
+  const board = $('paperclip-board-view');
+  if (!board) return;
+  const agents = sortedAgents(state);
+  board.innerHTML = ZONES.map((zone) => {
+    const zoneAgents = agents.filter((agent) => agent.zone === zone.id);
+    return `
+      <section class="paperclip-board-lane">
+        <div class="paperclip-board-lane-head">
+          <span>${zone.label}</span>
+          <span>${zoneAgents.length}</span>
+        </div>
+        <div class="paperclip-board-cards">
+          ${zoneAgents.map((agent) => `
+            <button type="button" class="paperclip-board-card ${agent.id === state.selectedAgentId ? 'selected' : ''}" data-agent-id="${escapeHTML(agent.id)}">
+              <span>${escapeHTML(agent.name)}</span>
+              <small>${escapeHTML(agent.task || 'Ready')}</small>
+            </button>
+          `).join('') || '<div class="paperclip-empty-line">Empty</div>'}
+        </div>
+      </section>
+    `;
+  }).join('');
+}
+
+function renderFloor() {
+  renderZones(_floorState);
+  renderBoard(_floorState);
+  const focus = $('paperclip-focus-pane');
+  if (focus) focus.innerHTML = renderFocusHTML(_floorState);
+  const rail = $('paperclip-activity-rail');
+  if (rail) rail.innerHTML = renderActivityHTML(_floorState);
+  const liveState = $('paperclip-live-state');
+  if (liveState) liveState.textContent = liveStateLabel();
+  const liveCount = $('paperclip-live-count');
+  if (liveCount) liveCount.textContent = `${_floorState.agents.size} agents`;
+  bindAgentSelection();
+}
+
+function liveStateLabel() {
+  if (_liveStream?.state === 'live') return 'Live';
+  if (_liveStream?.state === 'connecting') return 'Connecting live';
+  if (_status?.reachable === true) return 'Preview (stream unavailable)';
+  return 'Preview';
+}
+
+function bindAgentSelection(doc = document, onSelect = selectAgent) {
+  if (!doc || boundAgentSelectionDocs.has(doc)) return;
+  boundAgentSelectionDocs.add(doc);
+  doc.addEventListener('click', (event) => {
+    const target = event.target?.closest?.('[data-agent-id]');
+    if (!target) return;
+    const modal = target.closest?.('#paperclip-modal');
+    if (modal?.classList?.contains('hidden')) return;
+    if (modal || !doc.getElementById || doc.getElementById('paperclip-modal')?.contains(target)) {
+      event.preventDefault?.();
+      onSelect(target.dataset.agentId);
+    }
+  }, true);
+}
+
+function selectAgent(agentId) {
+  if (!agentId) return;
+  if (!_floorState.agents.has(agentId)) ensureAgent(_floorState, agentId, { name: agentId });
+  _floorState.selectedAgentId = agentId;
+  renderFloor();
+}
+
+function seedFloorPreview() {
+  if (_floorState.agents.size) return;
+  for (const event of DEMO_EVENTS.slice(0, PREVIEW_SEED_COUNT)) applyFloorEvent(_floorState, event);
+  _demoIndex = PREVIEW_SEED_COUNT;
+}
+
+function advancePreview() {
+  if (_view === 'classic') return;
+  const event = DEMO_EVENTS[_demoIndex % DEMO_EVENTS.length];
+  _demoIndex += 1;
+  applyFloorEvent(_floorState, event);
+  renderFloor();
+}
+
+function startPreviewLoop() {
+  seedFloorPreview();
+  renderFloor();
+  if (_demoTimer) return;
+  _demoTimer = window.setInterval(advancePreview, 2600);
+}
+
+function stopPreviewLoop() {
+  if (_demoTimer) window.clearInterval(_demoTimer);
+  _demoTimer = null;
+}
+
+function parseLiveEvent(raw) {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (_e) {
+    return { type: 'paperclip.raw', payload: { text: String(raw) } };
+  }
+}
+
+function createLiveEventStream({
+  EventSource: EventSourceCtor = typeof window !== 'undefined' ? window.EventSource : undefined,
+  url = '/api/paperclip/stream',
+  onEvent = () => {},
+  onOpen = () => {},
+  onError = () => {},
+} = {}) {
+  if (!EventSourceCtor) {
+    return { state: 'preview', close() {} };
+  }
+  const source = new EventSourceCtor(url, { withCredentials: true });
+  const stream = {
+    state: 'connecting',
+    close() {
+      source.close?.();
+    },
+  };
+  source.onopen = () => {
+    stream.state = 'live';
+    onOpen();
+  };
+  source.onerror = (error) => {
+    stream.state = 'preview';
+    onError(error);
+  };
+  source.onmessage = (message) => {
+    const event = parseLiveEvent(message.data);
+    if (event?.type === 'paperclip.stream.unavailable') {
+      stream.state = 'preview';
+      onError(event);
+      return;
+    }
+    if (event) onEvent(event);
+  };
+  return stream;
+}
+
+function handleLiveEvent(event) {
+  if (_floorState.source !== 'live') {
+    _floorState = createFloorState();
+    _floorState.source = 'live';
+  }
+  applyFloorEvent(_floorState, event);
+  renderFloor();
+}
+
+function startLiveStream() {
+  if (_liveStream || _status?.reachable !== true) return false;
+  _liveStream = createLiveEventStream({
+    onOpen() {
+      stopPreviewLoop();
+      _floorState.source = 'live';
+      renderFloor();
+    },
+    onEvent: handleLiveEvent,
+    onError() {
+      stopLiveStream();
+      _floorState.source = 'preview';
+      startPreviewLoop();
+    },
+  });
+  if (_liveStream.state === 'preview') {
+    _liveStream = null;
+    return false;
+  }
+  return true;
+}
+
+function stopLiveStream() {
+  if (_liveStream) _liveStream.close();
+  _liveStream = null;
+}
+
+function startFloorUpdates() {
+  seedFloorPreview();
+  renderFloor();
+  if (!startLiveStream()) startPreviewLoop();
+}
+
+function stopFloorUpdates() {
+  stopLiveStream();
+  stopPreviewLoop();
+}
 
 function openModal() {
   const modal = $('paperclip-modal');
   if (!modal || !_frameSrc) return;
-  const frame = $('paperclip-frame');
-  // Lazy-load the iframe on first open so a disabled/slow sidecar never blocks
-  // initial page load.
-  if (frame && !frame.getAttribute('src')) frame.setAttribute('src', _frameSrc);
   modal.classList.remove('hidden');
+  setView(_view || 'floor');
+  startFloorUpdates();
 }
 
 function closeModal() {
   const modal = $('paperclip-modal');
   if (modal) modal.classList.add('hidden');
+  stopFloorUpdates();
+}
+
+function loadClassicFrame() {
+  const frame = $('paperclip-frame');
+  if (frame && _frameSrc && !frame.getAttribute('src')) frame.setAttribute('src', _frameSrc);
+}
+
+function setView(view) {
+  _view = view || 'floor';
+  const shell = $('paperclip-live-shell');
+  const floor = $('paperclip-floor-view');
+  const board = $('paperclip-board-view');
+  const classic = $('paperclip-classic-view');
+  if (shell) shell.dataset.view = _view;
+  if (floor) floor.classList.toggle('hidden', _view !== 'floor');
+  if (board) board.classList.toggle('hidden', _view !== 'board');
+  if (classic) classic.classList.toggle('hidden', _view !== 'classic');
+  if (_view === 'classic') loadClassicFrame();
+  document.querySelectorAll('[data-paperclip-view]').forEach((btn) => {
+    const active = btn.dataset.paperclipView === _view;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  });
+  renderFloor();
 }
 
 function applyStatus(status) {
+  _status = status || null;
   const enabled = !!(status && status.enabled);
   _frameSrc = (status && status.browser_url) ? status.browser_url : '';
 
   // Sidebar tool button — hidden unless the sidecar is enabled.
   const btn = $('tool-paperclip-btn');
   if (btn) btn.style.display = enabled ? '' : 'none';
+  const railBtn = $('rail-paperclip');
+  if (railBtn) railBtn.style.display = enabled ? '' : 'none';
 
   // Settings subsection.
   const section = $('set-paperclip-section');
@@ -66,6 +691,9 @@ function init() {
   const btn = $('tool-paperclip-btn');
   if (btn) btn.addEventListener('click', openModal);
 
+  const railBtn = $('rail-paperclip');
+  if (railBtn) railBtn.addEventListener('click', openModal);
+
   const closeBtn = $('close-paperclip-modal');
   if (closeBtn) closeBtn.addEventListener('click', closeModal);
 
@@ -77,6 +705,19 @@ function init() {
     if (_frameSrc) window.open(_frameSrc, 'paperclip', 'noopener,width=1280,height=900');
   });
 
+  document.querySelectorAll('[data-paperclip-view]').forEach((btn) => {
+    btn.addEventListener('click', () => setView(btn.dataset.paperclipView));
+  });
+
+  bindAgentSelection();
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const modal = $('paperclip-modal');
+    if (!modal || modal.classList.contains('hidden')) return;
+    closeModal();
+  });
+
   refreshStatus();
 }
 
@@ -86,4 +727,15 @@ if (document.readyState === 'loading') {
   init();
 }
 
-export { refreshStatus };
+export {
+  applyFloorEvent,
+  applyStatus,
+  bindAgentSelection,
+  computeWorkspaceLayout,
+  createFloorState,
+  createLiveEventStream,
+  refreshStatus,
+  renderLegoAgentHTML,
+  renderWorkspaceHTML,
+  zoneForStatus,
+};

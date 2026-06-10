@@ -43,3 +43,5 @@ qrcode[pil]
 croniter
 pytest
 pytest-asyncio
+# Mandatory web-agent integration for research/source extraction into Markdown.
+crawl4ai

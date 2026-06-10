@@ -48,6 +48,8 @@ _db = _DBStub("core.database")
 _db.get_db_session = _get_db_session
 _db.ApiToken = _ApiToken
 sys.modules["core.database"] = _db  # overwrite any minimal stub from a sibling test
+if "core" in sys.modules:
+    setattr(sys.modules["core"], "database", _db)
 
 for _name, _attrs in {
     "core.auth": {"AuthManager": MagicMock()},
@@ -65,6 +67,14 @@ import companion.pairing as P  # noqa: E402
 import companion.routes as companion_routes  # noqa: E402
 from companion.routes import mint_pairing_token, setup_companion_routes  # noqa: E402
 from core.middleware import require_admin  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _install_database_stub(monkeypatch):
+    monkeypatch.setitem(sys.modules, "core.database", _db)
+    if "core" in sys.modules:
+        monkeypatch.setattr(sys.modules["core"], "database", _db, raising=False)
+    yield
 
 
 # --- token minting: shown once, hashed at rest -----------------------------

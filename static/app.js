@@ -38,6 +38,7 @@ import themeModule from './js/theme.js';
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
 import * as researchPanelModule from './js/research/panel.js';
+import browserPanelModule from './js/browserPanel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
@@ -830,6 +831,13 @@ function initializeEventListeners() {
     });
   }
 
+  const toolBrowserBtn = el('tool-browser-btn');
+  if (toolBrowserBtn) {
+    toolBrowserBtn.addEventListener('click', () => {
+      browserPanelModule.open();
+    });
+  }
+
   // ── Cookbook modal toggle ──
   const toolCookbookBtn = el('tool-cookbook-btn');
   if (toolCookbookBtn) {
@@ -1003,6 +1011,7 @@ function initializeEventListeners() {
       }
     },
     '/calendar': () => calendarModule && calendarModule.openCalendar(),
+    '/browser':  () => document.getElementById('tool-browser-btn')?.click(),
     '/cookbook': () => document.getElementById('tool-cookbook-btn')?.click(),
     '/email':    () => {
       // Collapse the wide sidebar → icon rail (48px) so the user keeps
@@ -1332,6 +1341,7 @@ function initializeEventListeners() {
       const map = {
         web_search:      ['web-toggle-btn'],
         deep_research:   ['research-toggle-btn', 'tool-research-btn', 'overflow-research-btn', 'rail-research'],
+        browser:         ['tool-browser-btn', 'rail-browser'],
         document_editor: ['overflow-doc-btn', 'rail-documents'],
         gallery:         ['tool-gallery-btn', 'rail-gallery'],
       };
@@ -3421,6 +3431,7 @@ function startApolloApp() {
     compareModule.init(API_BASE);
   }
   researchPanelModule.init(API_BASE, markdownModule, sessionModule);
+  browserPanelModule.init();
   // Initialize document editor module
   if (documentModule) {
     documentModule.init(API_BASE);
@@ -3445,6 +3456,7 @@ function startApolloApp() {
 
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
+    'rail-browser':   'tool-browser-btn',
     'rail-compare':   'tool-compare-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',

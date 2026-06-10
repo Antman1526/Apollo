@@ -8,7 +8,12 @@ itself.
 from __future__ import annotations
 
 import asyncio
+import hmac
+import json
 import logging
+import os
+import time
+from collections import deque
 from typing import Callable, Optional
 
 import httpx
@@ -22,8 +27,57 @@ from services.paperclip.proxy import (
     filter_request_headers,
     filter_response_headers,
 )
+from services.paperclip import browser_use_verifier
+from services.integrations import agent_workbench
 
 logger = logging.getLogger(__name__)
+
+# Shared types the Floor UI (static/js/paperclip.js) knows how to render.
+_FLOOR_EVENT_TYPES = {
+    "agent.status",
+    "heartbeat.run.status",
+    "heartbeat.run.log",
+    "heartbeat.run.event",
+    "activity.logged",
+}
+_MAX_INGEST_BATCH = 100
+
+
+class _EventHub:
+    """Fan-out hub feeding /api/paperclip/stream from /api/paperclip/events.
+
+    Keeps a small replay buffer so a Floor view opened after a Ralph loop
+    started still sees recent context. Slow subscribers drop events rather
+    than back-pressuring the ingest path.
+    """
+
+    def __init__(self, history: int = 200):
+        self._subscribers: set[asyncio.Queue] = set()
+        self._recent: deque = deque(maxlen=history)
+
+    def publish(self, events: list[dict]) -> int:
+        accepted = 0
+        for event in events:
+            self._recent.append(event)
+            accepted += 1
+            for queue in list(self._subscribers):
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    pass
+        return accepted
+
+    def subscribe(self) -> asyncio.Queue:
+        queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        self._subscribers.add(queue)
+        return queue
+
+    def unsubscribe(self, queue: asyncio.Queue) -> None:
+        self._subscribers.discard(queue)
+
+    @property
+    def recent(self) -> list[dict]:
+        return list(self._recent)
 
 
 def setup_paperclip_routes(
@@ -33,9 +87,10 @@ def setup_paperclip_routes(
 ) -> APIRouter:
     router = APIRouter(tags=["paperclip"])
     client = http_client or httpx.AsyncClient(timeout=None)
+    hub = _EventHub()
+    events_token = os.environ.get("PAPERCLIP_EVENTS_TOKEN", "")
 
-    @router.get("/api/paperclip/status")
-    async def status():
+    async def build_status(app_base_url: str | None = None):
         # Server-side reachability ping (avoids browser CORS). Uses the
         # Apollo-reachable url, not the browser-facing one.
         reachable = None
@@ -45,14 +100,122 @@ def setup_paperclip_routes(
                 reachable = r.status_code < 500
             except Exception:
                 reachable = False
-        return {
+        browser_use = browser_use_verifier.status(app_base_url)
+        payload = {
             "enabled": cfg.enabled,
             "mode": cfg.mode,
             "url": cfg.url,
             "browser_url": cfg.browser_url,
             "model_endpoint": cfg.model_endpoint,
             "reachable": reachable,
+            "browser_use": browser_use,
         }
+        payload["agent_workbench"] = agent_workbench.status(
+            app_base_url=app_base_url,
+            paperclip_status=payload,
+            browser_use_status=browser_use,
+        )
+        return payload
+
+    @router.get("/api/paperclip/status")
+    async def status(request: Request):
+        return await build_status(str(request.base_url).rstrip("/"))
+
+    @router.post("/api/paperclip/events")
+    async def ingest_events(request: Request):
+        """Ingest agent activity (e.g. the DeeperCode Ralph loop) for the Floor.
+
+        Exempted from session auth in app.py (same pattern as task webhooks):
+        the handler proves identity itself. When PAPERCLIP_EVENTS_TOKEN is set
+        the X-Paperclip-Events-Token header must match; otherwise only
+        loopback clients are accepted.
+        """
+        if events_token:
+            provided = request.headers.get("x-paperclip-events-token", "")
+            if not hmac.compare_digest(provided, events_token):
+                return JSONResponse({"detail": "invalid events token"}, status_code=401)
+        else:
+            # Loopback-only trust is void behind a reverse proxy (client.host
+            # becomes the proxy), so refuse proxied requests in tokenless mode.
+            client_host = request.client.host if request.client else ""
+            if client_host not in ("127.0.0.1", "::1") or request.headers.get("x-forwarded-for"):
+                return JSONResponse(
+                    {"detail": "remote ingest requires PAPERCLIP_EVENTS_TOKEN"},
+                    status_code=401,
+                )
+
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"detail": "invalid JSON"}, status_code=400)
+
+        raw_events = body.get("events") if isinstance(body, dict) else None
+        if raw_events is None and isinstance(body, dict) and "type" in body:
+            raw_events = [body]
+        if not isinstance(raw_events, list) or not raw_events:
+            return JSONResponse({"detail": "expected {events: [...]}"}, status_code=400)
+        if len(raw_events) > _MAX_INGEST_BATCH:
+            return JSONResponse(
+                {"detail": f"batch too large (max {_MAX_INGEST_BATCH})"}, status_code=413
+            )
+
+        valid = []
+        for event in raw_events:
+            if (
+                isinstance(event, dict)
+                and event.get("type") in _FLOOR_EVENT_TYPES
+                and isinstance(event.get("payload"), dict)
+            ):
+                valid.append(
+                    {
+                        "type": event["type"],
+                        "payload": event["payload"],
+                        "received_at": time.time(),
+                    }
+                )
+        accepted = hub.publish(valid)
+        return {"accepted": accepted, "rejected": len(raw_events) - accepted}
+
+    @router.get("/api/paperclip/stream")
+    async def stream():
+        """UI-facing SSE stream for the Apollo-native Paperclip Floor.
+
+        Backed by the ingest hub (/api/paperclip/events). Replays the recent
+        buffer on connect, then streams live events with keepalive comments.
+        When the sidecar is disabled and nothing has been ingested, emits the
+        legacy `paperclip.stream.unavailable` event first so the Floor can
+        fall back to preview mode exactly as before.
+        """
+
+        async def events():
+            recent = hub.recent
+            if not recent:
+                reason = "disabled" if not cfg.enabled else "collector_unavailable"
+                payload = {
+                    "type": "paperclip.stream.unavailable",
+                    "payload": {"reason": reason},
+                }
+                yield f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+                return
+
+            queue = hub.subscribe()
+            try:
+                for event in recent:
+                    yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), timeout=25.0)
+                        yield f"data: {json.dumps(event, separators=(',', ':'))}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            finally:
+                hub.unsubscribe(queue)
+
+        return StreamingResponse(
+            events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
 
     @router.api_route(
         "/paperclip/{path:path}",

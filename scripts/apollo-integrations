@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""apollo-integrations — status for Apollo integration workflows."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+import urllib.error
+import urllib.request
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from scripts._lib.cli import common_parser, emit, run
+from services.integrations import agent_workbench
+from services.paperclip.config import load_config as load_paperclip_config
+
+
+def _paperclip_reachable(url: str, timeout: float) -> bool:
+    try:
+        with urllib.request.urlopen(f"{url.rstrip('/')}/api/health", timeout=timeout) as resp:
+            return int(getattr(resp, "status", 200)) < 500
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+
+
+def _paperclip_status(timeout: float) -> dict:
+    cfg = load_paperclip_config()
+    reachable = None
+    if cfg.enabled:
+        reachable = _paperclip_reachable(cfg.url, timeout)
+    return {
+        "enabled": cfg.enabled,
+        "mode": cfg.mode,
+        "url": cfg.url,
+        "browser_url": cfg.browser_url,
+        "model_endpoint": cfg.model_endpoint,
+        "reachable": reachable,
+    }
+
+
+def cmd_agent_workbench(args) -> None:
+    emit(agent_workbench.status(
+        app_base_url=args.base_url,
+        paperclip_status=_paperclip_status(args.paperclip_timeout),
+        ralph_root=args.ralph_root,
+    ), args)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = common_parser("apollo-integrations", "Inspect Apollo integration workflow readiness.")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p_workbench = sub.add_parser("agent-workbench", parents=parser._common_parents)
+    p_workbench.add_argument("--base-url", default=os.getenv("APOLLO_BASE_URL", "http://127.0.0.1:7000"))
+    p_workbench.add_argument("--paperclip-timeout", type=float, default=float(os.getenv("APOLLO_INTEGRATIONS_PAPERCLIP_TIMEOUT", "2")))
+    p_workbench.add_argument("--ralph-root", default=agent_workbench.ralph_loop.DEFAULT_RALPH_DIR)
+    p_workbench.set_defaults(func=cmd_agent_workbench)
+    return parser
+
+
+if __name__ == "__main__":
+    raise SystemExit(run(build_parser()))

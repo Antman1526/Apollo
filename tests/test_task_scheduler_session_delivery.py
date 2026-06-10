@@ -1,5 +1,6 @@
 """Regression tests for task-result delivery into chat sessions (issue #326)."""
 import asyncio
+import importlib
 import types as _types
 
 import pytest
@@ -11,6 +12,9 @@ if not isinstance(sqlalchemy, _types.ModuleType):
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from tests.real_modules import import_real_module
+
+import_real_module("core.database")
 from core.database import Base, Session as DbSession
 from src.task_scheduler import TaskScheduler
 
@@ -25,6 +29,14 @@ from src.task_scheduler import TaskScheduler
 # Full-suite after this PR:            1 failed, 495 passed, 1 skipped
 if type(Base).__name__ == "MagicMock":
     pytest.skip("core.database is stubbed — run this file in isolation", allow_module_level=True)
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_database_module():
+    real_cdb = importlib.reload(import_real_module("core.database"))
+    globals()["Base"] = real_cdb.Base
+    globals()["DbSession"] = real_cdb.Session
+    yield
 
 
 def _make_db():
