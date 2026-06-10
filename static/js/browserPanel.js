@@ -12,6 +12,19 @@ let historyIndex = -1;
 let eventsTimer = null;
 let lastEventId = 0;
 let initialized = false;
+const LOCALHOST_OUTPUT_SELECTOR = [
+  '.code-runner-output',
+  '.doc-run-output',
+  '.cookbook-output-pre',
+  '.cookbook-output-wrap',
+  '.agent-tool-output pre',
+  '.task-log-row-body pre',
+  '.skills-audit-log',
+  '.skill-test-log',
+  '[data-terminal-output]',
+  '[data-dev-server-output]',
+].join(',');
+const LOCALHOST_SCAN_MAX_CHARS = 8000;
 
 function el(id) {
   return document.getElementById(id);
@@ -206,18 +219,62 @@ function initLocalhostObserver() {
   if (document._apolloBrowserLocalhostObserver) return;
   document._apolloBrowserLocalhostObserver = true;
   const seen = new Set();
+  const observedOutputs = new WeakSet();
+  let pendingScan = new Set();
+  let scanTimer = null;
+
+  const scanOutput = (node) => {
+    if (!node || !node.textContent) return;
+    const text = String(node.textContent).slice(-LOCALHOST_SCAN_MAX_CHARS);
+    if (!/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(text)) return;
+    detectLocalhost(text).forEach((url) => {
+      if (seen.has(url)) return;
+      seen.add(url);
+      if (window.uiModule?.showToast) {
+        window.uiModule.showToast(`Open ${url} from the Browser panel`);
+      }
+    });
+  };
+
+  const scheduleScan = (node) => {
+    if (!node) return;
+    pendingScan.add(node);
+    if (scanTimer) return;
+    scanTimer = window.setTimeout(() => {
+      const allPending = Array.from(pendingScan);
+      const batch = allPending.slice(0, 20);
+      const remaining = allPending.slice(20);
+      pendingScan = new Set();
+      scanTimer = null;
+      batch.forEach(scanOutput);
+      remaining.forEach(scheduleScan);
+    }, 250);
+  };
+
+  const watchOutput = (node) => {
+    if (!node || observedOutputs.has(node)) return;
+    observedOutputs.add(node);
+    scheduleScan(node);
+    new MutationObserver(() => scheduleScan(node)).observe(node, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  };
+
+  const collectOutputs = (node) => {
+    if (!node || node.nodeType !== Node.ELEMENT_NODE) return [];
+    const outputs = [];
+    if (node.matches?.(LOCALHOST_OUTPUT_SELECTOR)) outputs.push(node);
+    node.querySelectorAll?.(LOCALHOST_OUTPUT_SELECTOR).forEach((child) => outputs.push(child));
+    return outputs;
+  };
+
+  document.querySelectorAll(LOCALHOST_OUTPUT_SELECTOR).forEach(watchOutput);
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes || []) {
-        const text = node?.textContent || '';
-        if (!text || !/(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])/i.test(text)) continue;
-        detectLocalhost(text).forEach((url) => {
-          if (seen.has(url)) return;
-          seen.add(url);
-          if (window.uiModule?.showToast) {
-            window.uiModule.showToast(`Open ${url} from the Browser panel`);
-          }
-        });
+        collectOutputs(node).forEach(watchOutput);
       }
     }
   });
