@@ -206,8 +206,10 @@ function applyFloorEvent(state, event) {
     pushLimited(state.activity, activity, 18);
     if (fromId && toId) {
       pushLimited(state.messages, activity, 12);
-      const from = ensureAgent(state, fromId, { name: fromId });
-      const to = ensureAgent(state, toId, { name: toId });
+      // No name override: an unknown agent falls back to its id on creation,
+      // and a known agent keeps its proper display name.
+      const from = ensureAgent(state, fromId, {});
+      const to = ensureAgent(state, toId, {});
       pushLimited(from.messages, `To ${to.name}: ${text}`, 8);
       pushLimited(to.messages, `From ${from.name}: ${text}`, 8);
     }
@@ -282,7 +284,11 @@ function stationPoint(zoneId, index = 0) {
 function workspacePoint(state, agentId, zoneId, index = 0) {
   // Backlog and working agents are at their own desk; everyone else heads to
   // the matching shared corner of the office.
-  if (zoneId === 'working' || zoneId === 'backlog') return deskPointFor(state, agentId);
+  if (zoneId === 'working' || zoneId === 'backlog') {
+    const desk = deskPointFor(state, agentId);
+    // Stand/sit at the chair on the near side of the desk, not inside it.
+    return { x: desk.x, y: clampY(desk.y + 3) };
+  }
   return stationPoint(zoneId, index);
 }
 
@@ -389,10 +395,239 @@ function computeWorkspaceLayout(state = _floorState) {
   };
 }
 
+// ── Isometric stage ──────────────────────────────────────────────────────
+// Logical floor coords are 0-100 on both axes; the renderer projects them
+// onto a fixed 1200x740 stage that renderZones() scales to fit its container.
+const STAGE = { w: 1200, h: 740, originX: 600, originY: 96, sx: 5.5, sy: 3.0 };
+
+function isoProject(x, y) {
+  return {
+    px: STAGE.originX + (x - y) * STAGE.sx,
+    py: STAGE.originY + (x + y) * STAGE.sy,
+  };
+}
+
+function isoPoints(points) {
+  return points.map((p) => `${p.px.toFixed(1)},${p.py.toFixed(1)}`).join(' ');
+}
+
+// An axis-aligned box in iso projection: footprint (w x d) centred on
+// (gx, gy), extruded from hBottom to hTop pixels above the floor.
+function isoBoxSVG(gx, gy, w, d, hBottom, hTop, fill, cls = '') {
+  const corners = [
+    isoProject(gx - w / 2, gy - d / 2),
+    isoProject(gx + w / 2, gy - d / 2),
+    isoProject(gx + w / 2, gy + d / 2),
+    isoProject(gx - w / 2, gy + d / 2),
+  ];
+  const top = corners.map((p) => ({ px: p.px, py: p.py - hTop }));
+  const base = corners.map((p) => ({ px: p.px, py: p.py - hBottom }));
+  return `<g${cls ? ` class="${cls}"` : ''}>` +
+    `<polygon points="${isoPoints([base[3], top[3], top[2], base[2]])}" fill="${fill.left}"/>` +
+    `<polygon points="${isoPoints([base[1], top[1], top[2], base[2]])}" fill="${fill.right}"/>` +
+    `<polygon points="${isoPoints(top)}" fill="${fill.top}"/>` +
+    '</g>';
+}
+
+const PALETTE = {
+  floor: '#ece1cf',
+  grid: 'rgba(70, 50, 30, 0.08)',
+  wallBack: '#7d6a5d',
+  wallSide: '#6e5c50',
+  wood: { top: '#d9b98c', left: '#bd9a68', right: '#a9854f' },
+  woodDark: { top: '#c69a5e', left: '#a87e45', right: '#946c38' },
+  dark: { top: '#2c313a', left: '#232830', right: '#1b1f26' },
+  metal: { top: '#c4c9d1', left: '#a9aeb8', right: '#92979f' },
+  chair: { top: '#a87f9c', left: '#8d6783', right: '#79566f' },
+  sofaPink: { top: '#e88aa0', left: '#cf6f87', right: '#b95a72' },
+  sofaBlue: { top: '#7f9ee8', left: '#6684cb', right: '#5570b2' },
+  plantPot: { top: '#a9683c', left: '#8f5530', right: '#7d4827' },
+  pingpong: { top: '#69c7a2', left: '#52a886', right: '#449070' },
+  vending: { top: '#8d3038', left: '#75272e', right: '#5f1f25' },
+};
+
+function isoLabelSVG(gx, gy, text, dy = 0) {
+  const p = isoProject(gx, gy);
+  return `<text class="paperclip-iso-label" x="${p.px.toFixed(1)}" y="${(p.py + dy).toFixed(1)}" text-anchor="middle">${escapeHTML(text)}</text>`;
+}
+
+function floorSVG() {
+  const corners = [isoProject(0, 0), isoProject(100, 0), isoProject(100, 100), isoProject(0, 100)];
+  const lines = [];
+  for (let i = 10; i <= 90; i += 10) {
+    const a = isoProject(i, 0);
+    const b = isoProject(i, 100);
+    const c = isoProject(0, i);
+    const d = isoProject(100, i);
+    lines.push(`<line x1="${a.px.toFixed(1)}" y1="${a.py.toFixed(1)}" x2="${b.px.toFixed(1)}" y2="${b.py.toFixed(1)}"/>`);
+    lines.push(`<line x1="${c.px.toFixed(1)}" y1="${c.py.toFixed(1)}" x2="${d.px.toFixed(1)}" y2="${d.py.toFixed(1)}"/>`);
+  }
+  return `<polygon class="paperclip-iso-floor" points="${isoPoints(corners)}" fill="${PALETTE.floor}"/>` +
+    `<g stroke="${PALETTE.grid}" stroke-width="1">${lines.join('')}</g>`;
+}
+
+function wallsSVG() {
+  const H = 96;
+  const o = isoProject(0, 0);
+  const r = isoProject(100, 0);
+  const l = isoProject(0, 100);
+  const wall = (a, b, fill) => `<polygon class="paperclip-iso-wall" points="${isoPoints([
+    { px: a.px, py: a.py - H }, { px: b.px, py: b.py - H }, b, a,
+  ])}" fill="${fill}"/>`;
+  return wall(o, r, PALETTE.wallBack) + wall(l, o, PALETTE.wallSide);
+}
+
+// A flat panel hung on the back wall between gx1..gx2 — its top edge hTop px
+// above the floor line, hSize px tall. stickies: [color, gx, h] kanban notes.
+function wallPanelSVG(gx1, gx2, hTop, hSize, fill, stickies = []) {
+  const quadAt = (xa, xb, top, size) => {
+    const a = isoProject(xa, 0);
+    const b = isoProject(xb, 0);
+    return isoPoints([
+      { px: a.px, py: a.py - top }, { px: b.px, py: b.py - top },
+      { px: b.px, py: b.py - top + size }, { px: a.px, py: a.py - top + size },
+    ]);
+  };
+  const notes = stickies.map(([color, gx, h]) =>
+    `<polygon points="${quadAt(gx, gx + 1.8, h, 9)}" fill="${color}"/>`).join('');
+  return `<polygon points="${quadAt(gx1, gx2, hTop, hSize)}" fill="${fill}"/>${notes}`;
+}
+
+function wallDecorSVG() {
+  return [
+    // Kanban board with sticky notes.
+    wallPanelSVG(26, 46, 80, 38, '#23272f', [
+      ['#e06c75', 28, 76], ['#e5c07b', 31, 64], ['#98c379', 35, 74],
+      ['#61afef', 38, 62], ['#c678dd', 42, 72],
+    ]),
+    // Picture frames.
+    wallPanelSVG(8, 15, 72, 22, '#46506b'),
+    wallPanelSVG(88, 95, 74, 20, '#3a3f4a'),
+  ].join('');
+}
+
+function screenSVG(gx, gy, w, hBottom, hTop, active) {
+  const a = isoProject(gx - w / 2 + 0.4, gy + 0.32);
+  const b = isoProject(gx + w / 2 - 0.4, gy + 0.32);
+  return `<polygon class="paperclip-desk-screen${active ? '' : ' idle'}" points="${isoPoints([
+    { px: a.px, py: a.py - hTop + 2 }, { px: b.px, py: b.py - hTop + 2 },
+    { px: b.px, py: b.py - hBottom - 2 }, { px: a.px, py: a.py - hBottom - 2 },
+  ])}" fill="#7fd4a3"/>`;
+}
+
+function deskSVG(desk) {
+  const { x, y } = desk;
+  const parts = [];
+  for (const [lx, ly] of [[-3.6, -1.6], [3.6, -1.6], [-3.6, 1.6], [3.6, 1.6]]) {
+    parts.push(isoBoxSVG(x + lx, y + ly, 0.7, 0.7, 0, 26, PALETTE.woodDark));
+  }
+  parts.push(isoBoxSVG(x, y, 9, 4.6, 26, 33, PALETTE.wood));
+  // Chair tucked on the near side; the agent sits here when working.
+  parts.push(isoBoxSVG(x, y + 3.8, 0.6, 0.6, 0, 12, PALETTE.dark, 'paperclip-desk-chair'));
+  parts.push(isoBoxSVG(x, y + 3.8, 3.2, 3.2, 12, 17, PALETTE.chair));
+  parts.push(isoBoxSVG(x, y + 5.2, 3.2, 0.7, 17, 34, PALETTE.chair));
+  // Monitor on the far edge, facing the chair.
+  parts.push(isoBoxSVG(x + 1, y - 1.2, 1, 0.6, 33, 37, PALETTE.dark));
+  parts.push(isoBoxSVG(x + 1, y - 1.3, 4.2, 0.6, 37, 56, PALETTE.dark));
+  parts.push(screenSVG(x + 1, y - 1.3, 4.2, 37, 56, desk.active));
+  parts.push(isoBoxSVG(x - 0.8, y + 0.6, 3, 1.2, 33, 34, PALETTE.metal));
+  const np = isoProject(x - 2.6, y + 3.4);
+  const classes = [
+    'paperclip-agent-desk',
+    desk.active ? 'active' : '',
+    desk.occupied ? 'occupied' : 'empty',
+  ].filter(Boolean).join(' ');
+  return `<g class="${classes}">${parts.join('')}` +
+    `<text class="paperclip-desk-nameplate" x="${np.px.toFixed(1)}" y="${(np.py + 4).toFixed(1)}" text-anchor="middle">${escapeHTML(desk.ownerName)}</text>` +
+    '</g>';
+}
+
+function meetingTableSVG(station) {
+  const c = isoProject(station.x, station.y);
+  const parts = [isoBoxSVG(station.x, station.y, 2.6, 2.6, 0, 16, PALETTE.woodDark)];
+  parts.push(`<ellipse cx="${c.px.toFixed(1)}" cy="${(c.py - 16).toFixed(1)}" rx="64" ry="30" fill="${PALETTE.woodDark.left}"/>`);
+  parts.push(`<ellipse cx="${c.px.toFixed(1)}" cy="${(c.py - 20).toFixed(1)}" rx="64" ry="30" fill="${PALETTE.wood.top}"/>`);
+  for (const [dx, dy] of [[-10, 4], [-1, 10], [9, 3]]) {
+    parts.push(isoBoxSVG(station.x + dx, station.y + dy, 3, 3, 8, 13, PALETTE.chair));
+    parts.push(isoBoxSVG(station.x + dx, station.y + dy + 1.3, 3, 0.7, 13, 26, PALETTE.chair));
+  }
+  return `<g class="paperclip-iso-station station-review">${parts.join('')}${isoLabelSVG(station.x, station.y, station.label, -64)}</g>`;
+}
+
+function kitchenSVG(station) {
+  const parts = [
+    isoBoxSVG(station.x - 1, station.y, 6, 16, 0, 30, PALETTE.metal),
+    isoBoxSVG(station.x - 1.4, station.y - 4.4, 3, 3, 30, 48, PALETTE.dark),
+    isoBoxSVG(station.x - 1, station.y + 0.8, 2, 1.4, 30, 33, PALETTE.sofaPink),
+    isoBoxSVG(station.x - 1, station.y + 4.8, 2.4, 2, 30, 36, PALETTE.plantPot),
+  ];
+  return `<g class="paperclip-iso-station station-blocked">${parts.join('')}${isoLabelSVG(station.x + 10, station.y + 2, station.label, -70)}</g>`;
+}
+
+function plantSVG(gx, gy) {
+  const p = isoProject(gx, gy);
+  return isoBoxSVG(gx, gy, 2.2, 2.2, 0, 9, PALETTE.plantPot) +
+    `<circle cx="${(p.px - 4).toFixed(1)}" cy="${(p.py - 16).toFixed(1)}" r="7" fill="#3f9d63"/>` +
+    `<circle cx="${(p.px + 5).toFixed(1)}" cy="${(p.py - 18).toFixed(1)}" r="6" fill="#2f8a52"/>` +
+    `<circle cx="${p.px.toFixed(1)}" cy="${(p.py - 23).toFixed(1)}" r="6" fill="#46b173"/>`;
+}
+
+function loungeSVG(station) {
+  const rug = [
+    isoProject(station.x - 13, station.y), isoProject(station.x, station.y - 9),
+    isoProject(station.x + 13, station.y), isoProject(station.x, station.y + 9),
+  ];
+  const parts = [
+    `<polygon points="${isoPoints(rug)}" fill="rgba(172, 138, 106, 0.4)"/>`,
+    isoBoxSVG(station.x - 6, station.y - 4, 9, 3.4, 4, 13, PALETTE.sofaPink),
+    isoBoxSVG(station.x - 6, station.y - 5.6, 9, 1, 13, 24, PALETTE.sofaPink),
+    isoBoxSVG(station.x + 6, station.y + 3, 3.4, 7, 4, 13, PALETTE.sofaBlue),
+    isoBoxSVG(station.x + 7.6, station.y + 3, 1, 7, 13, 24, PALETTE.sofaBlue),
+    isoBoxSVG(station.x - 1, station.y + 2.6, 5, 2.4, 0, 12, PALETTE.woodDark),
+    plantSVG(station.x + 11, station.y - 7),
+  ];
+  return `<g class="paperclip-iso-station station-done">${parts.join('')}${isoLabelSVG(station.x, station.y, station.label, -58)}</g>`;
+}
+
+function stationSVG(station) {
+  if (station.id === 'review') return meetingTableSVG(station);
+  if (station.id === 'blocked') return kitchenSVG(station);
+  if (station.id === 'done') return loungeSVG(station);
+  return '';
+}
+
+function decorSVG() {
+  return [
+    { depth: 80, svg: isoBoxSVG(76, 4, 5, 3, 0, 56, PALETTE.vending) },
+    { depth: 16, svg: isoBoxSVG(12, 4, 8, 3, 0, 52, PALETTE.wood) },
+    { depth: 14, svg: plantSVG(4, 10) },
+    { depth: 104, svg: plantSVG(96, 8) },
+    {
+      depth: 131,
+      svg: isoBoxSVG(45, 86, 12, 6, 14, 17, PALETTE.pingpong) +
+        isoBoxSVG(45, 86, 12, 0.4, 17, 22, { top: '#f4f7f4', left: '#dfe5df', right: '#cdd4cd' }),
+    },
+  ];
+}
+
+function renderInteractionArcs(layout) {
+  if (!layout.interactions.length) return '';
+  return `<g class="paperclip-interaction-layer">${layout.interactions.map((interaction) => {
+    const a = isoProject(interaction.from.x, interaction.from.y);
+    const b = isoProject(interaction.to.x, interaction.to.y);
+    const midX = (a.px + b.px) / 2;
+    const midY = Math.min(a.py, b.py) - 80;
+    return `<path class="paperclip-interaction-arc" d="M ${a.px.toFixed(1)} ${(a.py - 40).toFixed(1)} Q ${midX.toFixed(1)} ${midY.toFixed(1)} ${b.px.toFixed(1)} ${(b.py - 40).toFixed(1)}" />`;
+  }).join('')}</g>`;
+}
+
 function renderWorkspaceAgentHTML(agent, selected = false) {
   const roleKey = normalizeRole(agent.role);
   const zoneKey = normalizeZone(agent.zone);
   const role = ROLE_LABELS[roleKey] || ROLE_LABELS.coding;
+  const p = isoProject(agent.x, agent.y);
+  const f = isoProject(agent.fromX, agent.fromY);
+  const depth = 10 + Math.round(agent.x + agent.y);
   const classes = [
     'paperclip-roaming-agent',
     selected ? 'selected' : '',
@@ -405,8 +640,8 @@ function renderWorkspaceAgentHTML(agent, selected = false) {
   ].filter(Boolean).join(' ');
   return `
     <button type="button" class="${classes}" data-agent-id="${escapeHTML(agent.id)}"
-      title="${escapeHTML(`${agent.name}: ${agent.task || agent.zone}`)}"
-      style="--agent-x:${agent.x}%;--agent-y:${agent.y}%;--from-x:${agent.fromX}%;--from-y:${agent.fromY}%;">
+      title="${escapeHTML(`${agent.name} · ${role} · ${agent.task || zoneKey}`)}"
+      style="--agent-x:${p.px.toFixed(1)}px;--agent-y:${p.py.toFixed(1)}px;--from-x:${f.px.toFixed(1)}px;--from-y:${f.py.toFixed(1)}px;z-index:${depth};">
       <span class="paperclip-walk-path" aria-hidden="true"></span>
       <span class="paperclip-lego-agent" aria-hidden="true">
         <span class="paperclip-lego-head"><span class="paperclip-lego-face"></span></span>
@@ -418,62 +653,32 @@ function renderWorkspaceAgentHTML(agent, selected = false) {
         <span class="paperclip-lego-legs"><span></span><span></span></span>
       </span>
       ${agent.talking ? '<span class="paperclip-speech-burst" aria-hidden="true"><span></span><span></span><span></span></span>' : ''}
-      <span class="paperclip-roaming-label">
-        <strong>${escapeHTML(agent.name)}</strong>
-        <small>${escapeHTML(role)} / ${escapeHTML(zoneKey)}</small>
-        ${agent.workingAtDesk ? `<em>${escapeHTML(agent.task || 'Working')}</em>` : ''}
-      </span>
       <span class="paperclip-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span class="paperclip-iso-name">${escapeHTML(agent.name)}</span>
     </button>
-  `;
-}
-
-function renderInteractionArcs(layout) {
-  if (!layout.interactions.length) return '';
-  return `
-    <svg class="paperclip-interaction-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-      ${layout.interactions.map((interaction) => {
-        const midX = (interaction.from.x + interaction.to.x) / 2;
-        const midY = Math.min(interaction.from.y, interaction.to.y) - 10;
-        return `<path class="paperclip-interaction-arc" d="M ${interaction.from.x} ${interaction.from.y} Q ${midX} ${midY} ${interaction.to.x} ${interaction.to.y}" />`;
-      }).join('')}
-    </svg>
-  `;
-}
-
-function renderDeskHTML(desk) {
-  const classes = [
-    'paperclip-agent-desk',
-    desk.active ? 'active' : '',
-    desk.occupied ? 'occupied' : 'empty',
-  ].filter(Boolean).join(' ');
-  return `
-    <div class="${classes}" style="--desk-x:${desk.x}%;--desk-y:${desk.y}%;" aria-hidden="true">
-      <span class="paperclip-desk-chair"></span>
-      <span class="paperclip-desk-screen"></span>
-      <span class="paperclip-desk-keyboard"></span>
-      <span class="paperclip-desk-nameplate">${escapeHTML(desk.ownerName)}</span>
-    </div>
   `;
 }
 
 function renderConversationHTML(layout) {
   const bubbles = [];
   for (const conversation of layout.conversations) {
+    const fp = isoProject(conversation.from.x, conversation.from.y);
+    const tp = isoProject(conversation.to.x, conversation.to.y);
     bubbles.push(`
-      <div class="paperclip-chat-bubble from-bubble" style="--bubble-x:${conversation.from.x}%;--bubble-y:${conversation.from.y}%;">
+      <div class="paperclip-chat-bubble from-bubble" style="--bubble-x:${fp.px.toFixed(1)}px;--bubble-y:${fp.py.toFixed(1)}px;">
         <strong>${escapeHTML(conversation.from.name)}</strong>${escapeHTML(conversation.fromText)}
       </div>
     `);
     bubbles.push(`
-      <div class="paperclip-chat-bubble to-bubble" style="--bubble-x:${conversation.to.x}%;--bubble-y:${conversation.to.y}%;">
+      <div class="paperclip-chat-bubble to-bubble" style="--bubble-x:${tp.px.toFixed(1)}px;--bubble-y:${tp.py.toFixed(1)}px;">
         <strong>${escapeHTML(conversation.to.name)}</strong>${escapeHTML(conversation.toText)}
       </div>
     `);
   }
   for (const murmur of layout.murmurs) {
+    const p = isoProject(murmur.x, murmur.y);
     bubbles.push(`
-      <div class="paperclip-murmur-bubble" style="--bubble-x:${murmur.x}%;--bubble-y:${murmur.y}%;">
+      <div class="paperclip-murmur-bubble" style="--bubble-x:${p.px.toFixed(1)}px;--bubble-y:${p.py.toFixed(1)}px;">
         ${escapeHTML(murmur.text)}
       </div>
     `);
@@ -483,18 +688,25 @@ function renderConversationHTML(layout) {
 
 function renderWorkspaceHTML(state = _floorState) {
   const layout = computeWorkspaceLayout(state);
+  const furniture = [
+    ...layout.desks.map((desk) => ({ depth: desk.x + desk.y, svg: deskSVG(desk) })),
+    ...layout.stations.map((station) => ({ depth: station.x + station.y, svg: stationSVG(station) })),
+    ...decorSVG(),
+  ].sort((a, b) => a.depth - b.depth);
+  const agentsHTML = [...layout.agents]
+    .sort((a, b) => (a.x + a.y) - (b.x + b.y))
+    .map((agent) => renderWorkspaceAgentHTML(agent, agent.id === state.selectedAgentId))
+    .join('');
   return `
     <div class="paperclip-workspace-map">
-      <div class="paperclip-workspace-grid" aria-hidden="true"></div>
-      <div class="paperclip-office-plant" aria-hidden="true"></div>
-      ${layout.stations.map((station) => `
-        <div class="paperclip-workstation station-${station.id}" style="--station-x:${station.x}%;--station-y:${station.y}%;">
-          <span>${escapeHTML(station.label)}</span>
-        </div>
-      `).join('')}
-      ${layout.desks.map((desk) => renderDeskHTML(desk)).join('')}
-      ${renderInteractionArcs(layout)}
-      ${layout.agents.map((agent) => renderWorkspaceAgentHTML(agent, agent.id === state.selectedAgentId)).join('')}
+      <svg class="paperclip-iso-scene" viewBox="0 0 ${STAGE.w} ${STAGE.h}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+        ${floorSVG()}
+        ${wallsSVG()}
+        ${wallDecorSVG()}
+        ${furniture.map((piece) => piece.svg).join('')}
+        ${renderInteractionArcs(layout)}
+      </svg>
+      ${agentsHTML}
       ${renderConversationHTML(layout)}
     </div>
   `;
@@ -547,6 +759,20 @@ function renderZones(state = _floorState) {
   const zoneGrid = $('paperclip-zone-grid');
   if (!zoneGrid) return;
   zoneGrid.innerHTML = renderWorkspaceHTML(state);
+  scaleWorkspaceStage();
+}
+
+function scaleWorkspaceStage() {
+  const zoneGrid = $('paperclip-zone-grid');
+  const stage = zoneGrid?.querySelector?.('.paperclip-workspace-map');
+  if (!stage || !zoneGrid.clientWidth) return;
+  const scale = Math.min(
+    zoneGrid.clientWidth / STAGE.w,
+    Math.max(zoneGrid.clientHeight, 420) / STAGE.h,
+  );
+  const clamped = Math.max(0.35, Math.min(1.5, scale));
+  stage.style.transform = `scale(${clamped})`;
+  stage.style.marginLeft = `${Math.max(0, (zoneGrid.clientWidth - STAGE.w * clamped) / 2)}px`;
 }
 
 function renderBoard(state = _floorState) {
@@ -876,6 +1102,10 @@ function init() {
 
   bindAgentSelection();
 
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', scaleWorkspaceStage);
+  }
+
   document.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     const modal = $('paperclip-modal');
@@ -899,6 +1129,7 @@ export {
   computeWorkspaceLayout,
   createFloorState,
   createLiveEventStream,
+  isoProject,
   refreshStatus,
   renderLegoAgentHTML,
   renderWorkspaceHTML,

@@ -212,6 +212,25 @@ test('conversations pair the sender message with a task-based reply', () => {
   assert.match(html, /Ship desk view/);
 });
 
+test('conversations do not overwrite display names with agent ids', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'lead', name: 'Lead', status: 'review' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'dev', name: 'Dev', status: 'running' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'activity.logged',
+    payload: { fromAgentId: 'lead', toAgentId: 'dev', message: 'Ping' },
+  });
+
+  assert.equal(state.agents.get('lead').name, 'Lead');
+  assert.equal(state.agents.get('dev').name, 'Dev');
+});
+
 test('the sender walks over to the receiver for the newest conversation', () => {
   const state = paperclip.createFloorState();
   paperclip.applyFloorEvent(state, {
@@ -250,6 +269,56 @@ test('busy agents murmur their current work when not in a conversation', () => {
   const html = paperclip.renderWorkspaceHTML(state);
   assert.match(html, /paperclip-murmur-bubble/);
   assert.match(html, /Refactor hub/);
+});
+
+test('renders an isometric office scene with furniture', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'running', task: 'Build the scene' },
+  });
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-iso-scene/);
+  assert.match(html, /viewBox="0 0 1200 740"/);
+  assert.match(html, /paperclip-iso-floor/);
+  assert.match(html, /paperclip-iso-wall/);
+  assert.match(html, /paperclip-agent-desk/);
+  assert.match(html, /station-review/);
+  assert.match(html, /station-blocked/);
+  assert.match(html, /station-done/);
+  assert.match(html, /paperclip-iso-name/);
+});
+
+test('projects logical floor coords onto the isometric stage', () => {
+  const origin = paperclip.isoProject(0, 0);
+  const right = paperclip.isoProject(100, 0);
+  const down = paperclip.isoProject(0, 100);
+  // +x heads right-and-down, +y heads left-and-down — classic 2:1-ish iso.
+  assert.ok(right.px > origin.px && right.py > origin.py);
+  assert.ok(down.px < origin.px && down.py > origin.py);
+  // The far corner is the deepest point on screen.
+  const far = paperclip.isoProject(100, 100);
+  assert.ok(far.py > right.py && far.py > down.py);
+});
+
+test('depth-sorts agents so nearer agents render above farther ones', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'near', name: 'Near', status: 'done' }, // lounge, deep corner
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'far', name: 'Farr', status: 'running' }, // desk row, higher up
+  });
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  const zIndexes = {};
+  for (const match of html.matchAll(/data-agent-id="([^"]+)"[^>]*z-index:\s*(\d+)/g)) {
+    zIndexes[match[1]] = Number(match[2]);
+  }
+  assert.ok(zIndexes.near > zIndexes.far, `lounge agent should stack above desk agent (${JSON.stringify(zIndexes)})`);
 });
 
 test('tolerates transient stream errors while EventSource reconnects', () => {
