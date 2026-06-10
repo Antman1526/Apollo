@@ -203,7 +203,9 @@ class SessionManager:
         db = SessionLocal()
         try:
             msg_id = str(uuid.uuid4())
-            msg_time = datetime.utcnow()
+            # Aware UTC, matching last_accessed/last_message_at written below
+            # in the same transaction.
+            msg_time = datetime.now(timezone.utc)
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))

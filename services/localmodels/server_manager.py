@@ -155,7 +155,12 @@ class LocalModelServer:
         log_path = os.path.join(tempfile.gettempdir(), f"apollo-llama-{port}.log")
         logf = open(log_path, "w")
         logger.info("Starting llama-server: %s", " ".join(cmd))
-        proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, text=True)
+        try:
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, text=True)
+        finally:
+            # The child owns its own copy of the descriptor; keeping the
+            # parent's open leaks one fd per model launch.
+            logf.close()
         base_url = f"http://{self._host}:{port}"
         try:
             self._wait_health(base_url, proc, log_path)
