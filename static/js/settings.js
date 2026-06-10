@@ -7,6 +7,7 @@ import { makeWindowDraggable } from './windowDrag.js';
 import { clearDockSide } from './modalSnap.js';
 import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
+import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 
 let initialized = false;
 let modalEl = null;
@@ -3511,44 +3512,7 @@ async function initUnifiedIntegrations() {
   }
 
   function renderSystemStatusCard(systemStatus) {
-    if (!systemStatus || !systemStatus.components) return '';
-    const components = systemStatus.components || {};
-    const order = [
-      ['storage', 'Storage'],
-      ['memory', 'Memory'],
-      ['tool_servers', 'Tool Servers'],
-      ['terminal', 'Terminal'],
-      ['background', 'Background'],
-    ];
-    const nextSteps = order
-      .map(([key, label]) => {
-        const item = components[key] || {};
-        if (item.ready || !item.next_step) return '';
-        return `<div style="font-size:11px;opacity:0.65;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(label)}: ${esc(item.next_step)}</div>`;
-      })
-      .filter(Boolean)
-      .join('');
-    return `
-      <div class="intg-card system-status-card" data-intg-type="system-status" style="padding:10px;border:1px solid var(--border);border-radius:6px;margin-bottom:10px;">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-          <span style="opacity:0.7"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg></span>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px">System Status ${renderStatePill(systemStatus.ok ? 'ready' : 'degraded')}</div>
-            <div style="font-size:11px;opacity:0.55">${Number(systemStatus.ready_count || 0)}/${Number(systemStatus.total || 0)} systems ready</div>
-          </div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px;margin-bottom:${nextSteps ? '8px' : '0'};">
-          ${order.map(([key, label]) => {
-            const item = components[key] || {};
-            return `<div style="border:1px solid color-mix(in srgb, var(--border) 70%, transparent);border-radius:5px;padding:6px;min-width:0;" title="${esc(item.summary || '')}">
-              <div style="font-size:11px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(label)}</div>
-              <div style="margin-top:4px">${renderStatePill(item.state || 'unknown')}</div>
-            </div>`;
-          }).join('')}
-        </div>
-        ${nextSteps ? `<div style="display:grid;gap:3px">${nextSteps}</div>` : ''}
-      </div>
-    `;
+    return renderSystemStatusCardHTML(systemStatus, { escapeHTML: esc, renderStatePill });
   }
 
   function renderCard(item) {

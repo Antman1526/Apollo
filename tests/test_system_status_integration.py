@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from routes.system_status_routes import setup_system_status_routes
-from services.system_status import build_system_status
+from services.system_status import auth_status, build_system_status, search_status
 
 
 def _route(router, path: str, method: str):
@@ -58,21 +58,41 @@ def test_build_system_status_reports_core_subsystems(monkeypatch):
         "summary": "ok",
         "metrics": {},
     })
+    for name in ("email_status", "documents_status", "model_endpoint_status"):
+        monkeypatch.setattr("services.system_status." + name, lambda name=name: {
+            "label": name,
+            "ready": True,
+            "state": "ready",
+            "summary": "ok",
+            "metrics": {},
+        })
+    monkeypatch.setattr("services.system_status.background_status", lambda task_scheduler=None: {
+        "label": "Background Work",
+        "ready": True,
+        "state": "ready",
+        "summary": "ok",
+        "metrics": {"executing": len(getattr(task_scheduler, "_executing", set()) or set())},
+    })
 
     out = build_system_status(
         memory_manager=FakeMemory(),
         memory_vector=FakeVector(),
         mcp_manager=FakeMcp(),
         task_scheduler=SimpleNamespace(_running=True, _task=None, _executing={"task-1"}, _concurrency_cap=1),
+        auth_manager=SimpleNamespace(users={"admin": {"is_admin": True}}, is_configured=True, signup_enabled=False, _sessions={}),
+        rag_manager=SimpleNamespace(get_stats=lambda: {"chunks": 2}),
+        personal_docs_mgr=SimpleNamespace(get_stats=lambda: {"total_documents": 1}),
         readiness_provider=_ready_report,
     )
 
-    assert out["total"] == 5
-    assert out["ready_count"] == 4
+    assert out["total"] == 10
+    assert out["ready_count"] == 9
     assert out["ok"] is False
     assert out["components"]["storage"]["ready"] is True
+    assert out["components"]["auth"]["ready"] is True
     assert out["components"]["memory"]["metrics"]["entries"] == 2
     assert out["components"]["memory"]["metrics"]["vector_entries"] == 2
+    assert out["components"]["search"]["ready"] is True
     assert out["components"]["tool_servers"]["state"] == "degraded"
     assert out["components"]["tool_servers"]["metrics"]["errors"] == 1
     assert out["components"]["background"]["metrics"]["executing"] == 1
@@ -86,12 +106,30 @@ def test_build_system_status_degrades_when_memory_vector_missing(monkeypatch):
         "summary": "ok",
         "metrics": {},
     })
+    for name in ("email_status", "documents_status", "model_endpoint_status"):
+        monkeypatch.setattr("services.system_status." + name, lambda name=name: {
+            "label": name,
+            "ready": True,
+            "state": "ready",
+            "summary": "ok",
+            "metrics": {},
+        })
+    monkeypatch.setattr("services.system_status.background_status", lambda task_scheduler=None: {
+        "label": "Background Work",
+        "ready": True,
+        "state": "ready",
+        "summary": "ok",
+        "metrics": {},
+    })
 
     out = build_system_status(
         memory_manager=FakeMemory(),
         memory_vector=None,
         mcp_manager=None,
         task_scheduler=SimpleNamespace(_running=True, _task=None, _executing=set(), _concurrency_cap=1),
+        auth_manager=SimpleNamespace(users={}, is_configured=False, signup_enabled=False, _sessions={}),
+        rag_manager=SimpleNamespace(get_stats=lambda: {}),
+        personal_docs_mgr=SimpleNamespace(get_stats=lambda: {}),
         readiness_provider=_ready_report,
     )
 
@@ -100,6 +138,33 @@ def test_build_system_status_degrades_when_memory_vector_missing(monkeypatch):
     assert memory["state"] == "degraded"
     assert memory["metrics"]["entries"] == 2
     assert memory["metrics"]["vector_attached"] is False
+
+
+def test_auth_status_blocks_configured_auth_without_admin():
+    out = auth_status(SimpleNamespace(
+        users={"alice": {"is_admin": False}},
+        is_configured=True,
+        signup_enabled=True,
+        _sessions={"token": {"username": "alice"}},
+    ))
+
+    assert out["ready"] is False
+    assert out["state"] == "blocked"
+    assert out["metrics"]["users"] == 1
+    assert out["metrics"]["admins"] == 0
+    assert out["metrics"]["active_sessions"] == 1
+
+
+def test_search_status_reports_partial_index_failure():
+    out = search_status(
+        rag_manager=SimpleNamespace(get_stats=lambda: {"chunks": 4}),
+        personal_docs_mgr=SimpleNamespace(get_stats=lambda: (_ for _ in ()).throw(RuntimeError("bad index"))),
+    )
+
+    assert out["ready"] is False
+    assert out["state"] == "degraded"
+    assert out["metrics"]["global_index"]["available"] is True
+    assert out["metrics"]["personal_docs"]["available"] is False
 
 
 def test_system_status_route_is_admin_gated(monkeypatch):

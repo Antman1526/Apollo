@@ -16,6 +16,9 @@ def setup_system_status_routes(
     memory_vector: Any = None,
     mcp_manager: Any = None,
     task_scheduler: Any = None,
+    auth_manager: Any = None,
+    rag_manager: Any = None,
+    personal_docs_mgr: Any = None,
 ) -> APIRouter:
     router = APIRouter(tags=["system-status"])
 
@@ -27,6 +30,9 @@ def setup_system_status_routes(
             memory_vector=memory_vector,
             mcp_manager=mcp_manager,
             task_scheduler=task_scheduler,
+            auth_manager=auth_manager,
+            rag_manager=rag_manager,
+            personal_docs_mgr=personal_docs_mgr,
         )
 
     return router

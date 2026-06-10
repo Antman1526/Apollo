@@ -64,6 +64,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from services.app_startup import build_and_include_router, include_router_checked
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -540,107 +541,107 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 # ========= INCLUDE ROUTERS =========
 
 # Auth
-auth_router = setup_auth_routes(auth_manager)
-app.include_router(auth_router)
+auth_router = build_and_include_router(app, "Auth", setup_auth_routes, auth_manager, logger=logger)
 
 # Uploads
 from routes.upload_routes import setup_upload_routes
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
-app.include_router(upload_router)
+include_router_checked(app, upload_router, "Uploads", logger=logger)
 upload_cleanup_task = None
 
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
-app.include_router(setup_emoji_routes())
+build_and_include_router(app, "Emoji", setup_emoji_routes, logger=logger)
 
 # Sessions
 from routes.session_routes import setup_session_routes
 session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
+build_and_include_router(app, "Sessions", setup_session_routes, session_manager, session_config, webhook_manager=webhook_manager, logger=logger)
 
 # Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
-app.include_router(setup_admin_wipe_routes(session_manager))
+build_and_include_router(app, "Admin wipe", setup_admin_wipe_routes, session_manager, logger=logger)
 
 # Memory
 from routes.memory_routes import setup_memory_routes
-app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector))
+build_and_include_router(app, "Memory", setup_memory_routes, memory_manager, session_manager, memory_vector=memory_vector, logger=logger)
 from routes.skills_routes import setup_skills_routes
-app.include_router(setup_skills_routes(skills_manager))
+build_and_include_router(app, "Skills", setup_skills_routes, skills_manager, logger=logger)
 
 # Chat
 from routes.chat_routes import setup_chat_routes
-app.include_router(setup_chat_routes(
+build_and_include_router(app, "Chat", setup_chat_routes,
     session_manager, chat_handler, chat_processor,
     memory_manager, research_handler, upload_handler,
     memory_vector=memory_vector,
     webhook_manager=webhook_manager,
     skills_manager=skills_manager,
-))
+    logger=logger,
+)
 
 # Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
-app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
+build_and_include_router(app, "Research", setup_research_routes, research_handler, session_manager=session_manager, logger=logger)
 
 # History
 from routes.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager))
+build_and_include_router(app, "History", setup_history_routes, session_manager, logger=logger)
 
 # Search
 from routes.search_routes import setup_search_routes
-app.include_router(setup_search_routes(config))
+build_and_include_router(app, "Search", setup_search_routes, config, logger=logger)
 
 # Presets
 from routes.preset_routes import setup_preset_routes
-app.include_router(setup_preset_routes(preset_manager))
+build_and_include_router(app, "Presets", setup_preset_routes, preset_manager, logger=logger)
 
 # Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
+build_and_include_router(app, "Diagnostics", setup_diagnostics_routes, rag_manager, rag_available, research_handler, logger=logger)
 
 # Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
-app.include_router(setup_cleanup_routes(session_manager))
+build_and_include_router(app, "Cleanup", setup_cleanup_routes, session_manager, logger=logger)
 
 # Personal docs
 from routes.personal_routes import setup_personal_routes
-app.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
+build_and_include_router(app, "Personal docs", setup_personal_routes, personal_docs_mgr, rag_manager, rag_available, logger=logger)
 
 # Embedding model management
 from routes.embedding_routes import setup_embedding_routes
-app.include_router(setup_embedding_routes())
+build_and_include_router(app, "Embedding", setup_embedding_routes, logger=logger)
 
 # Models
 from routes.model_routes import setup_model_routes
-app.include_router(setup_model_routes(model_discovery))
+build_and_include_router(app, "Models", setup_model_routes, model_discovery, logger=logger)
 
 # TTS
 from routes.tts_routes import setup_tts_routes
-app.include_router(setup_tts_routes(tts_service))
+build_and_include_router(app, "TTS", setup_tts_routes, tts_service, logger=logger)
 
 # STT
 from services.stt import get_stt_service
 stt_service = get_stt_service()
 from routes.stt_routes import setup_stt_routes
-app.include_router(setup_stt_routes(stt_service))
+build_and_include_router(app, "STT", setup_stt_routes, stt_service, logger=logger)
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
 from routes.document_routes import setup_document_routes
-app.include_router(setup_document_routes(session_manager, upload_handler))
+build_and_include_router(app, "Documents", setup_document_routes, session_manager, upload_handler, logger=logger)
 
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
-app.include_router(setup_signature_routes())
+build_and_include_router(app, "Signatures", setup_signature_routes, logger=logger)
 
 # Gallery (image library)
 from routes.gallery_routes import setup_gallery_routes
-app.include_router(setup_gallery_routes())
+build_and_include_router(app, "Gallery", setup_gallery_routes, logger=logger)
 
 # Persisted image-editor drafts (server-backed projects)
 from routes.editor_draft_routes import setup_editor_draft_routes
-app.include_router(setup_editor_draft_routes())
+build_and_include_router(app, "Editor drafts", setup_editor_draft_routes, logger=logger)
 
 # Scheduled tasks + event bus
 from src.task_scheduler import TaskScheduler
@@ -648,45 +649,45 @@ task_scheduler = TaskScheduler(session_manager)
 from src.event_bus import set_task_scheduler
 set_task_scheduler(task_scheduler)
 from routes.task_routes import setup_task_routes
-app.include_router(setup_task_routes(task_scheduler))
+build_and_include_router(app, "Tasks", setup_task_routes, task_scheduler, logger=logger)
 
 from routes.assistant_routes import setup_assistant_routes
-app.include_router(setup_assistant_routes(task_scheduler))
+build_and_include_router(app, "Assistants", setup_assistant_routes, task_scheduler, logger=logger)
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-app.include_router(setup_calendar_routes())
+build_and_include_router(app, "Calendar", setup_calendar_routes, logger=logger)
 
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
-app.include_router(setup_shell_routes())
+build_and_include_router(app, "Shell", setup_shell_routes, logger=logger)
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
-app.include_router(setup_cookbook_routes())
+build_and_include_router(app, "Cookbook", setup_cookbook_routes, logger=logger)
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
-app.include_router(setup_hwfit_routes())
+build_and_include_router(app, "Hardware fit", setup_hwfit_routes, logger=logger)
 
 # Local GGUF models (scan, serve, manage)
 from routes.localmodels_routes import setup_localmodels_routes
-app.include_router(setup_localmodels_routes())
+build_and_include_router(app, "Local models", setup_localmodels_routes, logger=logger)
 
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
-app.include_router(setup_compare_routes(session_manager))
+build_and_include_router(app, "Compare", setup_compare_routes, session_manager, logger=logger)
 
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
-app.include_router(setup_prefs_routes())
+build_and_include_router(app, "Preferences", setup_prefs_routes, logger=logger)
 
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
-app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
+build_and_include_router(app, "Backup", setup_backup_routes, memory_manager, preset_manager, skills_manager, logger=logger)
 
 from routes.font_routes import setup_font_routes
-app.include_router(setup_font_routes())
+build_and_include_router(app, "Fonts", setup_font_routes, logger=logger)
 
 
 # MCP (Model Context Protocol)
@@ -696,7 +697,7 @@ from routes.mcp_routes import setup_mcp_routes
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
-app.include_router(setup_mcp_routes(mcp_manager))
+build_and_include_router(app, "MCP", setup_mcp_routes, mcp_manager, logger=logger)
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
@@ -708,31 +709,31 @@ logger.info("AI interaction tools initialized (session, memory, RAG, UI control)
 
 # Webhooks
 from routes.webhook_routes import setup_webhook_routes
-app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
+build_and_include_router(app, "Webhooks", setup_webhook_routes, webhook_manager, auth_manager, session_manager, api_key_manager, logger=logger)
 
 # API Tokens
 from routes.api_token_routes import setup_api_token_routes
-app.include_router(setup_api_token_routes())
+build_and_include_router(app, "API tokens", setup_api_token_routes, logger=logger)
 
 logger.info("Webhook & API token routes initialized")
 
 # Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler))
+build_and_include_router(app, "Notes", setup_note_routes, task_scheduler, logger=logger)
 
 # Email
 from routes.email_routes import setup_email_routes
-app.include_router(setup_email_routes())
+build_and_include_router(app, "Email", setup_email_routes, logger=logger)
 
 from routes.vault_routes import setup_vault_routes
-app.include_router(setup_vault_routes())
+build_and_include_router(app, "Vault", setup_vault_routes, logger=logger)
 
 # Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
-app.include_router(setup_contacts_routes())
+build_and_include_router(app, "Contacts", setup_contacts_routes, logger=logger)
 
 from companion import setup_companion_routes
-app.include_router(setup_companion_routes())
+build_and_include_router(app, "Companion", setup_companion_routes, logger=logger)
 
 # Paperclip sidecar reverse proxy (bundled agent-management UI). HTTP traffic to
 # /paperclip/* is gated by the global AuthMiddleware; websockets bypass that
@@ -740,10 +741,14 @@ app.include_router(setup_companion_routes())
 from routes.paperclip_routes import setup_paperclip_routes
 from services.paperclip.config import load_config as _load_paperclip_config, resolve_proxy_token as _paperclip_proxy_token
 _paperclip_cfg = _load_paperclip_config()
-app.include_router(setup_paperclip_routes(
+build_and_include_router(
+    app,
+    "Sidecar proxy",
+    setup_paperclip_routes,
     _paperclip_cfg,
     ws_validate=lambda token: auth_manager.validate_token(token),
-))
+    logger=logger,
+)
 
 
 async def _paperclip_status_for_integrations():
@@ -767,18 +772,22 @@ async def _paperclip_status_for_integrations():
 
 
 from routes.integration_routes import setup_integration_routes
-app.include_router(setup_integration_routes(_paperclip_status_for_integrations))
+build_and_include_router(app, "Integration status", setup_integration_routes, _paperclip_status_for_integrations, logger=logger)
 
 from routes.system_status_routes import setup_system_status_routes
-app.include_router(setup_system_status_routes(
+build_and_include_router(app, "System status", setup_system_status_routes,
     memory_manager=memory_manager,
     memory_vector=memory_vector,
     mcp_manager=mcp_manager,
     task_scheduler=task_scheduler,
-))
+    auth_manager=auth_manager,
+    rag_manager=rag_manager,
+    personal_docs_mgr=personal_docs_mgr,
+    logger=logger,
+)
 
 from routes.browser_routes import setup_browser_routes
-app.include_router(setup_browser_routes())
+build_and_include_router(app, "Browser", setup_browser_routes, logger=logger)
 
 # Local-model OpenAI proxy: a stable localhost endpoint Paperclip's opencode
 # agents use, forwarding to whichever GGUF model Apollo currently has warm.
@@ -796,10 +805,11 @@ def _warm_chat_base_url():
     return None
 
 
-app.include_router(setup_lmproxy_routes(
+build_and_include_router(app, "Local model proxy", setup_lmproxy_routes,
     token_provider=_paperclip_proxy_token,
     warm_url_provider=_warm_chat_base_url,
-))
+    logger=logger,
+)
 
 # Native lifecycle: when running as the installed desktop app (PAPERCLIP_MODE=
 # native), Apollo spawns and supervises `paperclipai run`, pointing its agents
