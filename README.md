@@ -110,16 +110,19 @@ starts and no secret is required.
 
 Open it from the **Paperclip** sidebar tab. Apollo shows three views:
 
-- **Floor** — the Apollo-native animated workspace. Agents appear as small
-  Lego-like people walking between stations, talking, sitting at desks, and
-  showing current tasks/transcripts.
+- **Floor** — the Apollo-native animated workspace: an isometric office where
+  agents appear as Lego-like minifigs with their own desks, walking between
+  stations, sitting down to work, and holding task-based conversations. See
+  [docs/paperclip-floor.md](docs/paperclip-floor.md) for a tour and the event
+  ingest API.
 - **Board** — the same agent state as a Kanban-style work board.
 - **Classic** — Paperclip's own UI loaded from `PAPERCLIP_BROWSER_URL`.
 
-The Floor first tries Apollo's `/api/paperclip/stream` SSE endpoint. Until the
-Phase 3 collector is connected to Paperclip's authenticated live-events
-websocket, that endpoint returns an explicit `paperclip.stream.unavailable`
-event and the UI falls back to preview animation instead of failing with a 404.
+The Floor renders live data from Apollo's `/api/paperclip/stream` SSE endpoint
+(fed by `POST /api/paperclip/events`). While no events have been ingested it
+plays a demo preview and keeps the stream open in a waiting state, switching
+to live automatically when agent activity starts; when the sidecar is disabled
+it falls back to the preview entirely.
 
 #### Apollo Ralph loop (optional)
 

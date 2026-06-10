@@ -316,7 +316,7 @@ html {
   z-index: 400;
   max-width: 170px;
   padding: 6px 8px;
-  transform: translate(28px, -158px);
+  transform: translate(26px, -132px);
   border: 1px solid color-mix(in srgb, var(--green) 66%, var(--border));
   border-radius: 8px 8px 8px 2px;
   color: var(--fg);
@@ -339,7 +339,7 @@ html {
 }
 
 .paperclip-chat-bubble.from-bubble {
-  transform: translate(calc(-100% - 24px), -168px);
+  transform: translate(calc(-100% - 22px), -142px);
   border-radius: 8px 8px 2px 8px;
 }
 
@@ -355,7 +355,7 @@ html {
   z-index: 380;
   max-width: 150px;
   padding: 4px 7px;
-  transform: translate(-50%, -148px);
+  transform: translate(-50%, -118px);
   border: 1px dashed color-mix(in srgb, var(--fg) 36%, transparent);
   border-radius: 8px;
   color: color-mix(in srgb, var(--fg) 76%, transparent);
@@ -429,159 +429,151 @@ html {
   outline-offset: 3px;
 }
 
-.paperclip-roaming-agent {
-  position: absolute;
-  left: var(--agent-x);
-  top: var(--agent-y);
-  width: 54px;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  transform: translate(-50%, -96%);
-  border: 0;
-  background: none;
-  color: var(--fg);
-  font: inherit;
+/* ── SVG minifigs (drawn inside the iso scene for true occlusion) ── */
+g.paperclip-roaming-agent {
   cursor: pointer;
-  transition: filter 160ms ease;
+  pointer-events: auto;
+  outline: none;
+  transform: translate(var(--agent-x), var(--agent-y));
 }
 
-/* Soft ground shadow under the minifig's feet. */
-.paperclip-roaming-agent::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: -3px;
-  width: 44px;
-  height: 12px;
-  transform: translateX(-50%);
-  border-radius: 50%;
-  background: rgba(30, 20, 12, 0.28);
-  pointer-events: none;
-}
-
-.paperclip-roaming-agent:hover,
-.paperclip-roaming-agent.selected {
-  z-index: 300 !important;
-  filter: brightness(1.12) drop-shadow(0 0 8px rgba(80, 250, 123, 0.35));
-}
-
-.paperclip-roaming-agent.selected::before {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 75%, transparent);
-}
-
-.paperclip-roaming-agent.walking {
+g.paperclip-roaming-agent.walking {
   animation: paperclip-agent-walk 1.25s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
-.paperclip-roaming-agent.pose-standing:not(.walking) .paperclip-lego-agent {
-  animation: paperclip-idle-bob 3.4s ease-in-out infinite;
+g.paperclip-roaming-agent:hover .paperclip-fig,
+g.paperclip-roaming-agent:focus-visible .paperclip-fig,
+g.paperclip-roaming-agent.selected .paperclip-fig {
+  filter: brightness(1.14) drop-shadow(0 0 6px rgba(80, 250, 123, 0.45));
 }
 
-.paperclip-iso-name {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 50%;
-  max-width: 130px;
-  padding: 1px 8px;
-  overflow: hidden;
-  transform: translateX(-50%);
-  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel) 90%, var(--bg));
-  color: var(--fg);
-  font-size: 9px;
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+.paperclip-agent-shadow { fill: rgba(30, 20, 12, 0.3); }
+
+.paperclip-select-ring {
+  fill: none;
+  stroke: color-mix(in srgb, var(--green) 80%, transparent);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
 }
 
-.paperclip-roaming-agent .paperclip-lego-agent {
-  transform-origin: 50% 90%;
+.paperclip-fig,
+.paperclip-fig-body,
+.paperclip-fig-headgroup,
+.paperclip-fig-legs,
+.paperclip-fig-leg {
+  transform-box: fill-box;
 }
 
-.paperclip-roaming-agent.pose-sitting .paperclip-lego-agent,
-.paperclip-roaming-agent.working-at-desk:not(.walking) .paperclip-lego-agent {
-  transform: translateY(8px) scaleY(0.94);
+.paperclip-fig { transform-origin: 50% 100%; }
+.paperclip-fig-headgroup { transform-origin: 50% 80%; }
+.paperclip-fig-legs { transform-origin: 50% 100%; }
+.paperclip-fig-leg { transform-origin: 50% 0%; }
+
+.paperclip-fig-head,
+.paperclip-fig-arm,
+.paperclip-fig-hand {
+  fill: #f4c542;
+  stroke: rgba(0, 0, 0, 0.32);
+  stroke-width: 1.5;
 }
 
-.paperclip-roaming-agent.pose-sitting .paperclip-lego-legs,
-.paperclip-roaming-agent.working-at-desk:not(.walking) .paperclip-lego-legs {
-  transform: translateY(-7px) scaleY(0.62);
+.paperclip-fig-stud {
+  fill: #d6a72d;
+  stroke: rgba(0, 0, 0, 0.28);
+  stroke-width: 1.5;
 }
 
-.paperclip-roaming-agent.pose-talking .paperclip-lego-head {
+.paperclip-fig-eye { fill: #1b1b1b; }
+
+.paperclip-fig-smile {
+  fill: none;
+  stroke: #1b1b1b;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.paperclip-fig-leg,
+.paperclip-fig-hip {
+  fill: #2f3a52;
+  stroke: rgba(0, 0, 0, 0.34);
+  stroke-width: 1.5;
+}
+
+.paperclip-fig-torso {
+  fill: #3b82f6;
+  stroke: rgba(0, 0, 0, 0.32);
+  stroke-width: 1.5;
+}
+
+/* Minifig "uniforms": torso color follows the agent's role. */
+g.role-research .paperclip-fig-torso { fill: #20b486; }
+g.role-coding .paperclip-fig-torso { fill: #3b82f6; }
+g.role-review .paperclip-fig-torso { fill: #c678dd; }
+g.role-ops .paperclip-fig-torso { fill: #e06c75; }
+
+/* Poses. */
+g.pose-sitting .paperclip-fig-legs { transform: translateY(8px) scaleY(0.45); }
+g.pose-sitting .paperclip-fig-body,
+g.pose-sitting .paperclip-fig-headgroup { transform: translateY(9px); }
+
+g.pose-talking .paperclip-fig-headgroup {
   animation: paperclip-lego-nod 820ms ease-in-out infinite;
 }
 
-.paperclip-roaming-agent.walking .paperclip-lego-agent {
+g.pose-standing:not(.walking) .paperclip-fig {
+  animation: paperclip-idle-bob 3.4s ease-in-out infinite;
+}
+
+g.paperclip-roaming-agent.walking .paperclip-fig {
   animation: paperclip-lego-stride 440ms ease-in-out 3;
 }
 
-.paperclip-roaming-agent.walking .paperclip-lego-legs span:first-child {
+g.paperclip-roaming-agent.walking .paperclip-fig-leg.left {
   animation: paperclip-lego-step-left 440ms ease-in-out 3;
 }
 
-.paperclip-roaming-agent.walking .paperclip-lego-legs span:last-child {
+g.paperclip-roaming-agent.walking .paperclip-fig-leg.right {
   animation: paperclip-lego-step-right 440ms ease-in-out 3;
 }
 
-.paperclip-walk-path {
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: -6px;
-  height: 2px;
+/* Name chip, speech and thinking indicators. */
+.paperclip-iso-chip rect {
+  fill: rgba(12, 14, 18, 0.84);
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.paperclip-iso-name {
+  font-size: 9px;
+  font-weight: 600;
+  fill: var(--fg);
+}
+
+g.paperclip-speech-burst rect {
+  fill: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  stroke: color-mix(in srgb, var(--green) 60%, var(--border));
+}
+
+g.paperclip-speech-burst circle,
+g.paperclip-iso-thinking circle {
+  fill: var(--green);
+  animation: paperclip-svg-dot 820ms ease-in-out infinite;
+}
+
+g.paperclip-speech-burst circle:nth-of-type(2),
+g.paperclip-iso-thinking circle:nth-of-type(2) { animation-delay: 120ms; }
+
+g.paperclip-speech-burst circle:nth-of-type(3),
+g.paperclip-iso-thinking circle:nth-of-type(3) { animation-delay: 240ms; }
+
+/* Trail left behind a walking minifig (drawn in the scene SVG). */
+line.paperclip-walk-path {
+  stroke: var(--green);
+  stroke-width: 2;
+  stroke-dasharray: 6 8;
+  stroke-linecap: round;
   opacity: 0;
-  background: repeating-linear-gradient(90deg, var(--green) 0 6px, transparent 6px 12px);
-  transform-origin: left center;
-  pointer-events: none;
+  animation: paperclip-trail-fade 1.25s ease-out;
 }
-
-.paperclip-roaming-agent.walking .paperclip-walk-path {
-  opacity: 0.62;
-  animation: paperclip-path-fade 1.25s ease-out;
-}
-
-.paperclip-speech-burst {
-  position: absolute;
-  left: 34px;
-  top: -12px;
-  z-index: 4;
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px 6px;
-  border: 1px solid color-mix(in srgb, var(--green) 58%, var(--border));
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--panel) 90%, var(--bg));
-  pointer-events: none;
-}
-
-.paperclip-speech-burst::after {
-  content: "";
-  position: absolute;
-  left: 10px;
-  bottom: -5px;
-  width: 8px;
-  height: 8px;
-  border-right: 1px solid color-mix(in srgb, var(--green) 58%, var(--border));
-  border-bottom: 1px solid color-mix(in srgb, var(--green) 58%, var(--border));
-  background: color-mix(in srgb, var(--panel) 90%, var(--bg));
-  transform: rotate(45deg);
-}
-
-.paperclip-speech-burst span {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--green);
-  animation: paperclip-speech-dot 760ms ease-in-out infinite;
-}
-
-.paperclip-speech-burst span:nth-child(2) { animation-delay: 110ms; }
-.paperclip-speech-burst span:nth-child(3) { animation-delay: 220ms; }
 
 .paperclip-agent-tile:hover,
 .paperclip-agent-tile.selected,
@@ -731,25 +723,26 @@ html {
 .role-ops .paperclip-lego-torso { background: #e06c75; }
 
 .paperclip-agent-tile.thinking .paperclip-lego-agent,
-.paperclip-roaming-agent.thinking .paperclip-lego-agent {
-  animation: paperclip-lego-work 920ms ease-in-out infinite;
+/* Typing wiggle while a seated minifig works. */
+g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
+  animation: paperclip-lego-arm 680ms ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 10%;
 }
 
-.paperclip-agent-tile.thinking .paperclip-lego-arm.right,
-.paperclip-roaming-agent.thinking .paperclip-lego-arm.right {
+.paperclip-agent-tile.thinking .paperclip-lego-arm.right {
   animation: paperclip-lego-arm 680ms ease-in-out infinite;
 }
 
 .paperclip-thinking-dots {
   position: absolute;
-  right: -12px;
-  top: -8px;
+  right: 8px;
+  top: 8px;
   display: none;
   gap: 3px;
 }
 
-.paperclip-agent-tile.thinking .paperclip-thinking-dots,
-.paperclip-roaming-agent.thinking .paperclip-thinking-dots {
+.paperclip-agent-tile.thinking .paperclip-thinking-dots {
   display: inline-flex;
 }
 
@@ -893,16 +886,19 @@ html {
 }
 
 @keyframes paperclip-agent-walk {
-  0% {
-    left: var(--from-x);
-    top: var(--from-y);
-    transform: translate(-50%, -96%);
-  }
-  100% {
-    left: var(--agent-x);
-    top: var(--agent-y);
-    transform: translate(-50%, -96%);
-  }
+  0% { transform: translate(var(--from-x), var(--from-y)); }
+  100% { transform: translate(var(--agent-x), var(--agent-y)); }
+}
+
+@keyframes paperclip-trail-fade {
+  0% { opacity: 0; }
+  25% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+@keyframes paperclip-svg-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
 }
 
 @keyframes paperclip-idle-bob {
@@ -1026,14 +1022,17 @@ html {
 @media (prefers-reduced-motion: reduce) {
   #paperclip-modal .paperclip-roaming-agent,
   #paperclip-modal .paperclip-roaming-agent.walking,
-  #paperclip-modal .paperclip-roaming-agent .paperclip-lego-agent,
+  #paperclip-modal .paperclip-fig,
+  #paperclip-modal .paperclip-fig-headgroup,
+  #paperclip-modal .paperclip-fig-arm,
+  #paperclip-modal .paperclip-fig-leg,
+  #paperclip-modal .paperclip-speech-burst circle,
+  #paperclip-modal .paperclip-iso-thinking circle,
   #paperclip-modal .paperclip-lego-agent,
   #paperclip-modal .paperclip-lego-head,
   #paperclip-modal .paperclip-lego-arm,
   #paperclip-modal .paperclip-lego-legs span,
   #paperclip-modal .paperclip-thinking-dots span,
-  #paperclip-modal .paperclip-speech-burst,
-  #paperclip-modal .paperclip-speech-burst span,
   #paperclip-modal .paperclip-desk-screen,
   #paperclip-modal .paperclip-agent-desk.active .paperclip-desk-screen,
   #paperclip-modal .paperclip-interaction-arc,

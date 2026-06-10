@@ -621,13 +621,14 @@ function renderInteractionArcs(layout) {
   }).join('')}</g>`;
 }
 
-function renderWorkspaceAgentHTML(agent, selected = false) {
+// The minifig is drawn directly into the scene SVG (anchored at its feet at
+// the group origin) so depth-sorted furniture can occlude it correctly.
+function renderWorkspaceAgentSVG(agent, selected = false) {
   const roleKey = normalizeRole(agent.role);
   const zoneKey = normalizeZone(agent.zone);
   const role = ROLE_LABELS[roleKey] || ROLE_LABELS.coding;
   const p = isoProject(agent.x, agent.y);
   const f = isoProject(agent.fromX, agent.fromY);
-  const depth = 10 + Math.round(agent.x + agent.y);
   const classes = [
     'paperclip-roaming-agent',
     selected ? 'selected' : '',
@@ -638,24 +639,57 @@ function renderWorkspaceAgentHTML(agent, selected = false) {
     `pose-${agent.pose || 'standing'}`,
     `role-${roleKey}`,
   ].filter(Boolean).join(' ');
-  return `
-    <button type="button" class="${classes}" data-agent-id="${escapeHTML(agent.id)}"
-      title="${escapeHTML(`${agent.name} · ${role} · ${agent.task || zoneKey}`)}"
-      style="--agent-x:${p.px.toFixed(1)}px;--agent-y:${p.py.toFixed(1)}px;--from-x:${f.px.toFixed(1)}px;--from-y:${f.py.toFixed(1)}px;z-index:${depth};">
-      <span class="paperclip-walk-path" aria-hidden="true"></span>
-      <span class="paperclip-lego-agent" aria-hidden="true">
-        <span class="paperclip-lego-head"><span class="paperclip-lego-face"></span></span>
-        <span class="paperclip-lego-body">
-          <span class="paperclip-lego-arm left"></span>
-          <span class="paperclip-lego-torso"></span>
-          <span class="paperclip-lego-arm right"></span>
-        </span>
-        <span class="paperclip-lego-legs"><span></span><span></span></span>
-      </span>
-      ${agent.talking ? '<span class="paperclip-speech-burst" aria-hidden="true"><span></span><span></span><span></span></span>' : ''}
-      <span class="paperclip-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-      <span class="paperclip-iso-name">${escapeHTML(agent.name)}</span>
-    </button>
+  const chipWidth = Math.min(132, agent.name.length * 5.8 + 18);
+  const trail = agent.moving
+    ? `<line class="paperclip-walk-path" x1="${f.px.toFixed(1)}" y1="${f.py.toFixed(1)}" x2="${p.px.toFixed(1)}" y2="${p.py.toFixed(1)}"/>`
+    : '';
+  return `${trail}
+    <g class="${classes}" data-agent-id="${escapeHTML(agent.id)}" role="button" tabindex="0"
+      style="--agent-x:${p.px.toFixed(1)}px;--agent-y:${p.py.toFixed(1)}px;--from-x:${f.px.toFixed(1)}px;--from-y:${f.py.toFixed(1)}px;">
+      <title>${escapeHTML(`${agent.name} · ${role} · ${agent.task || zoneKey}`)}</title>
+      <ellipse class="paperclip-agent-shadow" cx="0" cy="2" rx="19" ry="6"/>
+      ${selected ? '<ellipse class="paperclip-select-ring" cx="0" cy="2" rx="24" ry="8"/>' : ''}
+      <g class="paperclip-fig">
+        <g class="paperclip-fig-legs">
+          <rect class="paperclip-fig-leg left" x="-9" y="-16" width="8" height="16" rx="2"/>
+          <rect class="paperclip-fig-leg right" x="1" y="-16" width="8" height="16" rx="2"/>
+          <rect class="paperclip-fig-hip" x="-10" y="-20" width="20" height="5" rx="2"/>
+        </g>
+        <g class="paperclip-fig-body">
+          <rect class="paperclip-fig-torso" x="-13" y="-42" width="26" height="23" rx="4"/>
+          <rect class="paperclip-fig-arm" x="-19" y="-40" width="7" height="17" rx="3.5"/>
+          <rect class="paperclip-fig-arm" x="12" y="-40" width="7" height="17" rx="3.5"/>
+          <circle class="paperclip-fig-hand" cx="-15.5" cy="-21" r="3"/>
+          <circle class="paperclip-fig-hand" cx="15.5" cy="-21" r="3"/>
+        </g>
+        <g class="paperclip-fig-headgroup">
+          <rect class="paperclip-fig-stud" x="-5" y="-68" width="10" height="6" rx="2"/>
+          <rect class="paperclip-fig-head" x="-10" y="-63" width="20" height="20" rx="6"/>
+          <circle class="paperclip-fig-eye" cx="-4.5" cy="-55" r="1.7"/>
+          <circle class="paperclip-fig-eye" cx="4.5" cy="-55" r="1.7"/>
+          <path class="paperclip-fig-smile" d="M -4.5 -50.5 Q 0 -46.5 4.5 -50.5"/>
+        </g>
+      </g>
+      ${agent.talking ? `
+        <g class="paperclip-speech-burst">
+          <rect x="13" y="-88" width="34" height="16" rx="8"/>
+          <circle cx="22" cy="-80" r="2"/>
+          <circle cx="30" cy="-80" r="2"/>
+          <circle cx="38" cy="-80" r="2"/>
+        </g>
+      ` : ''}
+      ${agent.thinking && !agent.talking ? `
+        <g class="paperclip-iso-thinking">
+          <circle cx="-8" cy="-76" r="2.4"/>
+          <circle cx="0" cy="-79" r="2.4"/>
+          <circle cx="8" cy="-76" r="2.4"/>
+        </g>
+      ` : ''}
+      <g class="paperclip-iso-chip">
+        <rect x="${(-chipWidth / 2).toFixed(1)}" y="7" width="${chipWidth.toFixed(1)}" height="14" rx="7"/>
+        <text class="paperclip-iso-name" x="0" y="17" text-anchor="middle">${escapeHTML(agent.name)}</text>
+      </g>
+    </g>
   `;
 }
 
@@ -688,25 +722,28 @@ function renderConversationHTML(layout) {
 
 function renderWorkspaceHTML(state = _floorState) {
   const layout = computeWorkspaceLayout(state);
-  const furniture = [
-    ...layout.desks.map((desk) => ({ depth: desk.x + desk.y, svg: deskSVG(desk) })),
-    ...layout.stations.map((station) => ({ depth: station.x + station.y, svg: stationSVG(station) })),
-    ...decorSVG(),
-  ].sort((a, b) => a.depth - b.depth);
-  const agentsHTML = [...layout.agents]
-    .sort((a, b) => (a.x + a.y) - (b.x + b.y))
-    .map((agent) => renderWorkspaceAgentHTML(agent, agent.id === state.selectedAgentId))
-    .join('');
+  // Furniture and agents share one depth-sorted paint list so anything nearer
+  // the viewer genuinely occludes what stands behind it. Ties paint agents
+  // after furniture (kind 1 > 0) so a seated agent shows in front of their desk.
+  const items = [
+    ...layout.desks.map((desk) => ({ depth: desk.x + desk.y, kind: 0, svg: deskSVG(desk) })),
+    ...layout.stations.map((station) => ({ depth: station.x + station.y, kind: 0, svg: stationSVG(station) })),
+    ...decorSVG().map((piece) => ({ ...piece, kind: 0 })),
+    ...layout.agents.map((agent) => ({
+      depth: agent.x + agent.y,
+      kind: 1,
+      svg: renderWorkspaceAgentSVG(agent, agent.id === state.selectedAgentId),
+    })),
+  ].sort((a, b) => (a.depth - b.depth) || (a.kind - b.kind));
   return `
     <div class="paperclip-workspace-map">
-      <svg class="paperclip-iso-scene" viewBox="0 0 ${STAGE.w} ${STAGE.h}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+      <svg class="paperclip-iso-scene" viewBox="0 0 ${STAGE.w} ${STAGE.h}" preserveAspectRatio="xMidYMid meet">
         ${floorSVG()}
         ${wallsSVG()}
         ${wallDecorSVG()}
-        ${furniture.map((piece) => piece.svg).join('')}
+        ${items.map((piece) => piece.svg).join('')}
         ${renderInteractionArcs(layout)}
       </svg>
-      ${agentsHTML}
       ${renderConversationHTML(layout)}
     </div>
   `;

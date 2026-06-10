@@ -302,7 +302,7 @@ test('projects logical floor coords onto the isometric stage', () => {
   assert.ok(far.py > right.py && far.py > down.py);
 });
 
-test('depth-sorts agents so nearer agents render above farther ones', () => {
+test('depth-sorts agents and furniture together so the scene occludes correctly', () => {
   const state = paperclip.createFloorState();
   paperclip.applyFloorEvent(state, {
     type: 'agent.status',
@@ -314,11 +314,32 @@ test('depth-sorts agents so nearer agents render above farther ones', () => {
   });
 
   const html = paperclip.renderWorkspaceHTML(state);
-  const zIndexes = {};
-  for (const match of html.matchAll(/data-agent-id="([^"]+)"[^>]*z-index:\s*(\d+)/g)) {
-    zIndexes[match[1]] = Number(match[2]);
-  }
-  assert.ok(zIndexes.near > zIndexes.far, `lounge agent should stack above desk agent (${JSON.stringify(zIndexes)})`);
+  const farAt = html.indexOf('data-agent-id="far"');
+  const nearAt = html.indexOf('data-agent-id="near"');
+  const loungeAt = html.indexOf('station-done');
+  assert.ok(farAt !== -1 && nearAt !== -1 && loungeAt !== -1);
+  // SVG paints in document order: the desk agent is deeper into the room than
+  // the lounge, so it must be drawn before the lounge furniture, while the
+  // agent standing at the lounge draws after it.
+  assert.ok(farAt < loungeAt, 'desk agent should render behind lounge furniture');
+  assert.ok(nearAt > loungeAt, 'lounge agent should render in front of lounge furniture');
+});
+
+test('agents render inside the SVG scene so furniture can occlude them', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'running', task: 'Occlusion pass' },
+  });
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  const svgEnd = html.indexOf('</svg>');
+  const agentAt = html.indexOf('data-agent-id="a1"');
+  assert.ok(svgEnd !== -1 && agentAt !== -1);
+  assert.ok(agentAt < svgEnd, 'agent markup must live inside the scene SVG');
+  // Interactive semantics survive the move out of <button>.
+  assert.match(html, /role="button"/);
+  assert.match(html, /tabindex="0"/);
 });
 
 test('tolerates transient stream errors while EventSource reconnects', () => {
