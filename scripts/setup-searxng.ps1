@@ -51,12 +51,14 @@ if (-not (Test-Path $gitDir)) {
 }
 $prevLoc = Get-Location
 Set-Location $SRC
-git fetch --quiet origin $REF --depth 1
+# Prefer the local object (offline re-runs); fetch only when it's missing.
+git checkout --quiet $REF 2>$null
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "(fetch failed -- using existing objects)"
+    git fetch --quiet origin $REF --depth 1
+    if ($LASTEXITCODE -ne 0) { Set-Location $prevLoc; Fail "git fetch of pinned ref failed." }
+    git checkout --quiet FETCH_HEAD
+    if ($LASTEXITCODE -ne 0) { Set-Location $prevLoc; Fail "git checkout of pinned ref failed." }
 }
-git checkout --quiet FETCH_HEAD
-if ($LASTEXITCODE -ne 0) { Fail "git checkout of pinned ref failed." }
 Set-Location $prevLoc
 
 # --- Locate a suitable Python interpreter ---

@@ -29,8 +29,11 @@ echo "==> Fetching SearXNG source (pinned: ${REF:0:9})"
 if [ ! -d "$SRC/.git" ]; then
   git clone https://github.com/searxng/searxng "$SRC"
 fi
-git -C "$SRC" fetch --quiet origin "$REF" --depth 1 || echo "(fetch failed -- using existing objects)"
-git -C "$SRC" checkout --quiet FETCH_HEAD
+# Prefer the local object (offline re-runs); fetch only when it's missing.
+if ! git -C "$SRC" checkout --quiet "$REF" 2>/dev/null; then
+  git -C "$SRC" fetch --quiet origin "$REF" --depth 1
+  git -C "$SRC" checkout --quiet FETCH_HEAD
+fi
 
 echo "==> Creating venv"
 if [ ! -x "$VENV/bin/python" ]; then
