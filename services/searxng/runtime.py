@@ -114,6 +114,14 @@ class SearxngRuntime:
             # never grows without bound.  _LOG_PATH is module-level for
             # easy monkeypatching in tests.
             try:
+                # A watchdog restart can reach here with a stale handle from
+                # the crashed run — close it before opening a fresh one.
+                if self._log_fh is not None:
+                    try:
+                        self._log_fh.close()
+                    except Exception:
+                        pass
+                    self._log_fh = None
                 log_path = _LOG_PATH
                 os.makedirs(os.path.dirname(log_path), exist_ok=True)
                 if os.path.exists(log_path) and os.path.getsize(log_path) > _LOG_MAX_BYTES:

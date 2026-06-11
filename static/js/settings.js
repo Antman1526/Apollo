@@ -1684,11 +1684,17 @@ async function initSearchSettings() {
       }
       // Install log: show while installing or on failure
       if (logPre) {
+        // log_tail / runtime_log_tail arrive as ARRAYS of lines from the API.
+        var _joinLog = function(v) {
+          if (Array.isArray(v)) return v.join('\n');
+          return v ? String(v) : '';
+        };
         var logText = '';
-        if (nowInstalling && s.log_tail) {
-          logText = s.log_tail;
+        if (nowInstalling && s.log_tail && s.log_tail.length) {
+          logText = _joinLog(s.log_tail);
         } else if (!nowInstalling && s.install_ok === false) {
-          logText = (s.log_tail || '') + (s.runtime_log_tail ? '\n--- runtime ---\n' + s.runtime_log_tail : '');
+          var _rt = _joinLog(s.runtime_log_tail);
+          logText = _joinLog(s.log_tail) + (_rt ? '\n--- runtime ---\n' + _rt : '');
         }
         if (logText) {
           logPre.textContent = logText;

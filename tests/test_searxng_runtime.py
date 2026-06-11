@@ -3,9 +3,17 @@ import os
 import threading
 import time
 
+import pytest
+
 import services.searxng.runtime as _runtime_mod
 from services.searxng.config import SearxngConfig
 from services.searxng.runtime import SearxngRuntime
+
+
+@pytest.fixture(autouse=True)
+def _isolated_log_path(tmp_path, monkeypatch):
+    """Every start() opens _LOG_PATH — keep tests out of the repo's logs/."""
+    monkeypatch.setattr(_runtime_mod, "_LOG_PATH", str(tmp_path / "searxng-test.log"))
 
 
 def _cfg(tmp_path, enabled=True, installed=True, port=9001):
