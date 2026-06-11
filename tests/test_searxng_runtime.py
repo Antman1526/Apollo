@@ -1,5 +1,7 @@
 """SearxngRuntime lifecycle with fake spawn/health."""
 import os
+import threading
+import time
 
 from services.searxng.config import SearxngConfig
 from services.searxng.runtime import SearxngRuntime
@@ -109,3 +111,74 @@ def test_is_serving_caches_health(tmp_path):
     assert rt.is_serving() is True
     assert rt.is_serving() is True
     assert len(calls) == 1  # second call within TTL served from cache
+
+
+def test_stop_interrupts_boot_wait(tmp_path):
+    """stop() must return quickly (< 1 s wall-clock) while start() is in the
+    boot-wait loop, and must not block waiting for the loop to finish."""
+    spawned = []
+
+    def spawn(*a, **kw):
+        p = FakeProc(*a, **kw)
+        spawned.append(p)
+        return p
+
+    # health_check always returns False after spawn, so start() will enter the
+    # full 30-iteration wait loop — unless stop() interrupts it.
+    health_calls = {"n": 0}
+
+    def check(u, t=2.0):
+        health_calls["n"] += 1
+        # First call: pre-spawn reuse check — return False so we spawn.
+        # Subsequent calls: boot-wait loop — always False.
+        return False
+
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path),
+                        spawn=spawn,
+                        health_check=check)
+
+    start_result = []
+    start_exc = []
+
+    def run_start():
+        try:
+            start_result.append(rt.start())
+        except Exception as e:  # pragma: no cover
+            start_exc.append(e)
+
+    t = threading.Thread(target=run_start, daemon=True)
+    t.start()
+
+    # Give start() just enough time to spawn and enter the boot-wait loop.
+    time.sleep(0.15)
+
+    t0 = time.monotonic()
+    rt.stop()
+    elapsed = time.monotonic() - t0
+
+    # stop() itself must return quickly — well under 1 s.
+    assert elapsed < 1.0, f"stop() took {elapsed:.2f}s; expected < 1s"
+
+    # Join the start thread (should exit promptly once stop event fires).
+    t.join(timeout=2.0)
+    assert not t.is_alive(), "start() thread did not exit within 2 s after stop()"
+
+    # The spawned proc should have been killed/terminated.
+    assert spawned and spawned[0].killed is True
+
+
+def test_proc_exits_during_boot(tmp_path):
+    """If the spawned process exits immediately (poll() returns non-None right
+    after spawn), start() should return False and status() should be 'failed'."""
+
+    class ImmediateExitProc(FakeProc):
+        """Simulates a process that dies as soon as it is polled."""
+        def poll(self):
+            return 1  # non-zero exit right away
+
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path),
+                        spawn=lambda *a, **kw: ImmediateExitProc(*a, **kw),
+                        health_check=lambda u, t=2.0: False)
+    result = rt.start()
+    assert result is False
+    assert rt.status() == "failed"

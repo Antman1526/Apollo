@@ -41,6 +41,7 @@ class SearxngRuntime:
         self._failed = False
         self._lock = threading.Lock()
         self._health_cache: tuple[float, bool] | None = None
+        self._stopping = threading.Event()
 
     @property
     def url(self) -> str:
@@ -71,7 +72,12 @@ class SearxngRuntime:
         return "stopped"
 
     def start(self) -> bool:
-        """Start the sidecar if enabled+installed. True when serving."""
+        """Start the sidecar if enabled+installed. True when serving.
+
+        The lock is held only for the config/reuse check and the spawn itself.
+        The up-to-30s health-wait loop runs *outside* the lock so that stop()
+        can interrupt it promptly via the _stopping event.
+        """
         with self._lock:
             cfg = self._cfg_provider()
             if not cfg.enabled or not cfg.installed:
@@ -94,34 +100,51 @@ class SearxngRuntime:
                 logger.warning("SearXNG sidecar failed to spawn: %s", e)
                 self._failed = True
                 return False
-            # Wait briefly for boot; callers can also poll status().
-            for _ in range(30):
-                self._health_cache = None
-                if self.is_serving():
-                    logger.info("SearXNG sidecar serving at %s", cfg.url)
-                    self._failed = False
-                    return True
-                if self._proc.poll() is not None:
-                    logger.warning("SearXNG sidecar exited during boot")
-                    self._failed = True
-                    return False
-                time.sleep(1)
-            self._failed = True
-            return False
+            proc = self._proc
+
+        # Boot-wait loop — lock is NOT held here so stop() can run concurrently.
+        # _stopping.wait(1) blocks for up to 1 s but wakes immediately when
+        # stop() calls _stopping.set(), keeping shutdown latency near zero.
+        for _ in range(30):
+            if self._stopping.is_set():
+                logger.info("SearXNG boot-wait interrupted by stop()")
+                self._failed = False
+                return False
+            self._health_cache = None
+            if self.is_serving():
+                logger.info("SearXNG sidecar serving at %s", cfg.url)
+                self._failed = False
+                return True
+            if proc.poll() is not None:
+                logger.warning("SearXNG sidecar exited during boot")
+                self._failed = True
+                return False
+            self._stopping.wait(1)
+        self._failed = True
+        return False
 
     def stop(self):
+        # Signal the boot-wait loop to exit without waiting for the next
+        # sleep tick (mirrors paperclip runtime's pattern of releasing the
+        # lock before any blocking syscall).
+        self._stopping.set()
         with self._lock:
-            self._health_cache = None
-            if self._proc and self._proc.poll() is None:
-                try:
-                    self._proc.terminate()
-                    self._proc.wait(timeout=10)
-                except Exception:
-                    try:
-                        self._proc.kill()
-                    except Exception:
-                        pass
+            proc = self._proc
             self._proc = None
+            self._health_cache = None
+        # Terminate/wait/kill *outside* the lock so we never hold it across
+        # a blocking wait (terminate+wait can block up to 10 s).
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            proc.terminate()
+            proc.wait(timeout=10)
+        except Exception:
+            try:
+                proc.kill()
+                proc.wait(timeout=5)
+            except Exception:
+                pass
 
 
 _runtime: SearxngRuntime | None = None
