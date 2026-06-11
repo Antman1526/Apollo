@@ -30,6 +30,13 @@ class TimestampMixin:
 # Get database URL from environment, default to SQLite
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
 
+# A fresh checkout (CI, new clone) has no data/ directory — SQLite cannot
+# create the DB file when its parent directory is missing.
+if DATABASE_URL.startswith("sqlite:///"):
+    _db_dir = os.path.dirname(os.path.abspath(DATABASE_URL[len("sqlite:///"):]))
+    if _db_dir:
+        os.makedirs(_db_dir, exist_ok=True)
+
 # Create engine
 engine = create_engine(
     DATABASE_URL,
