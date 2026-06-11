@@ -310,3 +310,56 @@ def test_sidecar_stdout_points_at_log_file(tmp_path, monkeypatch):
     # stop() must close the handle
     rt.stop()
     assert stdout_arg.closed, "log file handle should be closed after stop()"
+
+
+# ── Task 13: _http_ok requires a SearXNG OK body ──────────────────────────
+
+class _FakeResponse:
+    """Minimal urllib response context-manager stub."""
+    def __init__(self, status=200, body=b""):
+        self.status = status
+        self._body = body
+
+    def read(self, n):
+        return self._body[:n]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        pass
+
+
+def test_http_ok_returns_true_for_ok_body(monkeypatch):
+    """_http_ok returns True when the body starts with b'OK'."""
+    from services.searxng.runtime import _http_ok
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda url, timeout=2.0: _FakeResponse(200, b"OK"))
+    assert _http_ok("http://localhost:9001/healthz") is True
+
+
+def test_http_ok_returns_false_for_html_body(monkeypatch):
+    """_http_ok returns False when the body starts with HTML (foreign service)."""
+    from services.searxng.runtime import _http_ok
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda url, timeout=2.0: _FakeResponse(200, b"<html>nginx"))
+    assert _http_ok("http://localhost:9001/healthz") is False
+
+
+def test_http_ok_returns_false_on_exception(monkeypatch):
+    """_http_ok returns False when urlopen raises (connection refused, etc.)."""
+    from services.searxng.runtime import _http_ok
+
+    def _raise(url, timeout=2.0):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", _raise)
+    assert _http_ok("http://localhost:9001/healthz") is False
+
+
+def test_http_ok_ok_with_trailing_newline(monkeypatch):
+    """SearXNG sometimes sends 'OK\\n'; still accepted."""
+    from services.searxng.runtime import _http_ok
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda url, timeout=2.0: _FakeResponse(200, b"OK\n"))
+    assert _http_ok("http://localhost:9001/healthz") is True

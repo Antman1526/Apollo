@@ -28,9 +28,15 @@ _LOG_PATH: str = os.path.join(BASE_DIR, "logs", "searxng.log")
 
 
 def _http_ok(url: str, timeout: float = 2.0) -> bool:
+    """Return True only when the response body starts with b'OK'.
+
+    Fail closed: a foreign service listening on the same port (e.g. nginx
+    returning HTML) reads as not-serving so the search chain skips it fast.
+    SearXNG's /healthz returns exactly "OK" (verified live).
+    """
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
-            return r.status < 500
+            return r.read(16).startswith(b"OK")
     except Exception:
         return False
 
