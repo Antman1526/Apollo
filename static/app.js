@@ -1559,7 +1559,6 @@ function initializeEventListeners() {
   // Mode-affected tools: default ON in Agent mode, default OFF in Chat mode,
   // but the user's explicit per-mode override is persisted and honored.
   const MODE_TOOLS = [
-    { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
     { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
   ];
 
@@ -1576,6 +1575,38 @@ function initializeEventListeners() {
     const state = loadToggleState();
     state[_modeKey(stateKey, mode)] = value;
     saveToggleState(state);
+  }
+
+  // ── Tri-state web access (off → auto → always) ──
+  const WEB_MODES = ['off', 'auto', 'always'];
+
+  function loadWebMode(mode) {
+    const state = loadToggleState();
+    const key = 'webmode_' + mode;
+    if (WEB_MODES.includes(state[key])) return state[key];
+    // Migrate legacy boolean web_<mode> prefs: true→always, false→off
+    const legacyKey = 'web_' + mode;
+    if (Object.prototype.hasOwnProperty.call(state, legacyKey)) {
+      return state[legacyKey] ? 'always' : 'off';
+    }
+    return 'auto'; // new default: let the server decide per message
+  }
+
+  function saveWebMode(mode, value) {
+    const state = loadToggleState();
+    state['webmode_' + mode] = value;
+    saveToggleState(state);
+  }
+
+  function applyWebModeToButton(webMode) {
+    const btn = el('web-toggle-btn');
+    const chk = el('web-toggle');
+    if (!btn) return;
+    btn.classList.toggle('active', webMode !== 'off');
+    btn.classList.toggle('web-auto', webMode === 'auto');
+    btn.setAttribute('aria-pressed', String(webMode !== 'off'));
+    btn.title = 'Web search: ' + webMode;
+    if (chk) chk.checked = webMode !== 'off'; // compat: compare mode, slash cmds
   }
 
   const TOOL_TOGGLE_TOAST_LABELS = {
@@ -1597,6 +1628,7 @@ function initializeEventListeners() {
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
     });
+    applyWebModeToButton(loadWebMode(mode));
   }
 
   // ── Agent / Chat mode toggle ──
@@ -1692,7 +1724,26 @@ function initializeEventListeners() {
       }
     });
   }
-  setupToggle('web-toggle-btn', 'web-toggle', 'web');
+  // Web toggle cycles off → auto → always (not a plain checkbox toggle).
+  (function setupWebToggle() {
+    const btn = el('web-toggle-btn');
+    if (!btn) return;
+    const mode = (loadToggleState().mode) || 'chat';
+    applyWebModeToButton(loadWebMode(mode));
+    btn.addEventListener('click', () => {
+      const curMode = (loadToggleState().mode) || 'chat';
+      const cur = loadWebMode(curMode);
+      const next = WEB_MODES[(WEB_MODES.indexOf(cur) + 1) % WEB_MODES.length];
+      saveWebMode(curMode, next);
+      applyWebModeToButton(next);
+      if (uiModule?.showToast) uiModule.showToast('Web search: ' + next, 1800);
+      if (next !== 'off') _showToolSplash('web');
+      if (next !== 'off') {
+        const resChk = el('research-toggle');
+        if (resChk && resChk.checked) _syncResearchIndicator(false);
+      }
+    });
+  })();
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
 
   // Document editor toggle (special: uses module panel, not a checkbox)

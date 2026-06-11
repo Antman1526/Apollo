@@ -749,12 +749,19 @@ import createResearchSynapse from './researchSynapse.js';
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
-      if (el('web-toggle').checked) {
-        if (isAgentMode) {
-          fd.append('allow_web_search', 'true');
-        } else {
-          fd.append('use_web', 'true');
-        }
+      const _webMode = (() => {
+        const st = Storage.loadToggleState();
+        const key = 'webmode_' + (isAgentMode ? 'agent' : 'chat');
+        if (['off', 'auto', 'always'].includes(st[key])) return st[key];
+        const legacy = st['web_' + (isAgentMode ? 'agent' : 'chat')];
+        if (legacy !== undefined) return legacy ? 'always' : 'off';
+        return 'auto';
+      })();
+      fd.append('web_access', _webMode);
+      if (_webMode === 'always') {
+        // Keep legacy flags so older server code paths behave identically.
+        if (isAgentMode) fd.append('allow_web_search', 'true');
+        else fd.append('use_web', 'true');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
@@ -806,7 +813,7 @@ import createResearchSynapse from './researchSynapse.js';
 
       let loadingText = 'Initializing...';
 
-      if (el('web-toggle').checked && !_isAgent) {
+      if (_webMode === 'always' && !_isAgent) {
         const _searchLabel = searchModule ? searchModule.getProviderLabel() : 'web';
         loadingText = `Searching via ${_searchLabel}...<br>
                        <span style="font-size: 0.9em; opacity: 0.8;">
@@ -834,7 +841,7 @@ import createResearchSynapse from './researchSynapse.js';
       spinner.start();
       
       // Update spinner message based on mode
-      if (el('web-toggle').checked && !_isAgent) {
+      if (_webMode === 'always' && !_isAgent) {
         spinner.updateMessage('Searching web with ' + (searchModule ? searchModule.getProviderLabel() : 'SearXNG'));
         setTimeout(() => spinner.updateMessage('Processing results'), 1500);
       } else if (el('research-toggle').checked) {

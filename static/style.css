@@ -3107,6 +3107,16 @@ body.bg-pattern-sparkles {
     .tool-indicator:hover .tool-indicator-x {
       opacity: 1;
     }
+    /* Web toggle in 'auto': lit but with a small A badge to distinguish from always-on */
+    #web-toggle-btn.web-auto { opacity: 0.85; position: relative; }
+    #web-toggle-btn.web-auto::after {
+      content: 'A';
+      position: absolute;
+      font-size: 8px;
+      font-weight: 700;
+      bottom: 1px;
+      right: 2px;
+    }
     /* Character indicator — hide name text below 768px, icon always visible */
     @media (max-width: 768px) {
       #character-indicator-name { display: none !important; }
