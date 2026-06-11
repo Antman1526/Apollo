@@ -7,6 +7,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOME_DIR="$ROOT/data/searxng"
 SRC="$HOME_DIR/src"
 VENV="$HOME_DIR/venv"
+# NOTE: SEARXNG_PORT only takes effect on first install (settings.yml is not
+# overwritten on re-runs). To change the port later: delete
+# data/searxng/settings.yml, re-run this script, and update searxng_port in
+# Apollo's Settings to match.
 PORT="${SEARXNG_PORT:-8893}"
 
 mkdir -p "$HOME_DIR"
