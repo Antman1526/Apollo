@@ -290,8 +290,25 @@ def setup_chat_routes(
         # NOTE: no apply_incognito here — ChatRequest has no incognito field;
         # incognito chats only flow through /api/chat_stream. If incognito is
         # ever added to ChatRequest, wire apply_incognito like the stream path.
+        #
+        # Same history-ordering guarantee as the streaming path: add_user_message
+        # is inside build_chat_context, which runs AFTER this block, so history's
+        # last user entry is the previous turn.
+        _prev_user_msg_ns = ""
+        try:
+            for _m in reversed(getattr(sess, "history", []) or []):
+                if getattr(_m, "role", "") == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        _c = next((i.get("text", "") for i in _c
+                                   if isinstance(i, dict) and i.get("type") == "text"), "")
+                    _prev_user_msg_ns = str(_c)[:500]
+                    break
+        except Exception:
+            pass
         use_web, _ignored_allow_ws, _web_decision = await resolve_web_access(
             chat_request.web_access, "chat", message, use_web, None,
+            prev_message=_prev_user_msg_ns,
         )
         if _web_decision:
             logger.info("web_access decision=%s session=%s", _web_decision, session)
@@ -484,10 +501,29 @@ def setup_chat_routes(
         # Tri-state web access (off/auto/always). 'auto' runs the decider for
         # chat mode and enables web tools for agent mode. Legacy clients that
         # don't send web_access keep the old use_web/allow_web_search behavior.
+        #
+        # Extract the previous user message from history for the follow-up
+        # heuristic.  add_user_message is called inside build_chat_context
+        # (chat_helpers.py ~line 471), which runs AFTER this block, so
+        # sess.history's last user-role entry is the *previous* turn — exactly
+        # what the follow-up decider needs.
+        _prev_user_msg = ""
+        try:
+            for _m in reversed(getattr(sess, "history", []) or []):
+                if getattr(_m, "role", "") == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        _c = next((i.get("text", "") for i in _c
+                                   if isinstance(i, dict) and i.get("type") == "text"), "")
+                    _prev_user_msg = str(_c)[:500]
+                    break
+        except Exception:
+            pass
         from src.web_decider import resolve_web_access, apply_incognito
         use_web, allow_web_search, _web_decision = await resolve_web_access(
             web_access, chat_mode, message if isinstance(message, str) else "",
             use_web, allow_web_search,
+            prev_message=_prev_user_msg,
         )
         use_web, _web_decision = apply_incognito(incognito, use_web, _web_decision)
         if _web_decision:

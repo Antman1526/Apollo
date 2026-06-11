@@ -71,6 +71,22 @@ def _is_question_shaped(msg: str) -> bool:
     )
 
 
+# Short follow-up cues — messages starting with these words/phrases are
+# considered continuations of the previous turn rather than standalone queries.
+_FOLLOW_UP_RE = re.compile(
+    r"^(and|what about|how about|also|but|then|ok(ay)?|same|now|more|any update)\b", re.I)
+
+
+def _is_short_follow_up(message: str) -> bool:
+    """Return True if message looks like a short continuation of the previous turn.
+
+    Criteria: fewer than 120 characters AND starts with a continuation cue
+    word/phrase (and, what about, how about, also, …).
+    """
+    msg = (message or "").strip()
+    return bool(msg) and len(msg) < 120 and bool(_FOLLOW_UP_RE.match(msg))
+
+
 def _has_recency_signal(msg: str) -> bool:
     """Return True if msg has a strong recency word or a weak noun with co-signal/question."""
     if _STRONG_RECENCY_RE.search(msg):
@@ -190,7 +206,7 @@ async def _ask_utility_model(message: str) -> Optional[bool]:
         return None
 
 
-async def decide_use_web(message: str) -> bool:
+async def decide_use_web(message: str, prev_message: str = "") -> bool:
     """Return True if the message likely needs a live web search.
 
     Heuristics give a clear yes/no when possible.  For ambiguous questions
@@ -198,14 +214,38 @@ async def decide_use_web(message: str) -> bool:
     ``_ask_utility_model`` self-guards against running without an explicitly
     configured utility endpoint; the cheap pre-check here avoids an unnecessary
     async call when the setting is clearly absent.
+
+    If the message looks like a short follow-up and the standalone verdict is
+    'no', re-classify the combined "prev_message + newline + message" — a 'yes'
+    there upgrades to True so the current turn inherits the prior turn's web
+    context (e.g. "weather in Stockholm today" → "and what about tomorrow?").
     """
     verdict = heuristic_decision(message)
     if verdict == "yes":
         return True
+
+    # Follow-up check: when the standalone verdict is 'no' or 'ambiguous' and
+    # the message looks like a short continuation, re-classify the combined
+    # "prev_message + newline + message" to inherit web context from prior turn.
+    if prev_message and _is_short_follow_up(message):
+        combined = f"{prev_message}\n{message}"
+        combined_verdict = heuristic_decision(combined)
+        if combined_verdict == "yes":
+            return True
+        # combined-ambiguous → tie-break on the combined text
+        if combined_verdict == "ambiguous":
+            from src.settings import load_settings
+            if (load_settings().get("utility_endpoint_id") or "").strip():
+                answer = await _ask_utility_model(combined)
+                if answer is not None:
+                    return answer
+            return False
+
     if verdict == "no":
         return False
-    # ambiguous — quick pre-check avoids an async call when setting is absent;
-    # _ask_utility_model also guards this internally.
+
+    # ambiguous (standalone, no prev_message context) — quick pre-check avoids
+    # an async call when setting is absent; _ask_utility_model also guards internally.
     from src.settings import load_settings
     if (load_settings().get("utility_endpoint_id") or "").strip():
         answer = await _ask_utility_model(message)
@@ -231,6 +271,7 @@ async def resolve_web_access(
     message: Optional[str],
     use_web,
     allow_web_search,
+    prev_message: str = "",
 ) -> Tuple:
     """Map the tri-state web_access onto (use_web, allow_web_search, decision).
 
@@ -241,6 +282,10 @@ async def resolve_web_access(
         use_web:    Legacy flag from the chat pipeline (passed through when
                     mode is manual).
         allow_web_search: Legacy flag from the chat pipeline (likewise).
+        prev_message: The last user message from session history (used to
+                    detect follow-up questions and inherit web context from
+                    the previous turn). Defaults to ""; existing positional
+                    callers are unaffected.
 
     Returns:
         (use_web, allow_web_search, decision) where decision is None when
@@ -271,5 +316,5 @@ async def resolve_web_access(
         # Tools are available; the model decides per call. No forced pre-search.
         return use_web, "true", "auto-tools"
 
-    needed = await decide_use_web(message or "")
+    needed = await decide_use_web(message or "", prev_message=prev_message)
     return needed, allow_web_search, ("auto-search" if needed else "auto-skip")
