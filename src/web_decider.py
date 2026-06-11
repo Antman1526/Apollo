@@ -60,13 +60,41 @@ def heuristic_decision(message: Optional[str]) -> str:
     return "no"
 
 
+def _extract_reply_text(data: dict) -> str:
+    """Pull the assistant text out of OpenAI / Ollama / Anthropic chat responses."""
+    try:
+        choices = data.get("choices")
+        if choices:  # OpenAI-compatible
+            return choices[0].get("message", {}).get("content") or ""
+        msg = data.get("message")
+        if isinstance(msg, dict):  # Ollama native /api/chat
+            return msg.get("content") or ""
+        content = data.get("content")
+        if isinstance(content, list):  # Anthropic /v1/messages
+            return "".join(b.get("text", "") for b in content
+                           if isinstance(b, dict) and b.get("type") == "text")
+    except Exception:
+        pass
+    return ""
+
+
 async def _ask_utility_model(message: str) -> Optional[bool]:
     """One-token YES/NO from the utility model. None on any failure.
 
-    Only called when utility_endpoint_id is explicitly set — that endpoint is
-    always-on (e.g. Ollama) and separate from the single warm llama.cpp slot,
-    so this never forces a local model swap.
+    Refuses to run unless ``utility_endpoint_id`` is explicitly set in
+    settings.  This is a self-protection measure: ``resolve_endpoint("utility")``
+    silently falls back to the default chat endpoint when no utility endpoint is
+    configured, which would steal the single warm llama.cpp slot.  Callers
+    (``decide_use_web``) also guard this, but the check here ensures the
+    function is safe to call directly.
+
+    Note: if the user deliberately points ``utility_endpoint_id`` at the same
+    endpoint as the default chat model that is their choice and is not detected.
     """
+    from src.settings import load_settings
+    if not (load_settings().get("utility_endpoint_id") or "").strip():
+        return None
+
     try:
         import httpx
         from src.endpoint_resolver import resolve_endpoint
@@ -94,7 +122,7 @@ async def _ask_utility_model(message: str) -> Optional[bool]:
         async with httpx.AsyncClient(timeout=6.0) as client:
             r = await client.post(url, json=payload, headers=headers or {})
             r.raise_for_status()
-            text = (r.json()["choices"][0]["message"]["content"] or "").strip().upper()
+            text = _extract_reply_text(r.json()).strip().upper()
         if text.startswith("YES"):
             return True
         if text.startswith("NO"):
@@ -109,16 +137,18 @@ async def decide_use_web(message: str) -> bool:
     """Return True if the message likely needs a live web search.
 
     Heuristics give a clear yes/no when possible.  For ambiguous questions
-    (fact-seeking, named-entity lookups) the utility model is consulted — but
-    ONLY when ``utility_endpoint_id`` is explicitly set so we never force a
-    local model swap on the single warm llama.cpp slot.
+    (fact-seeking, named-entity lookups) the utility model is consulted.
+    ``_ask_utility_model`` self-guards against running without an explicitly
+    configured utility endpoint; the cheap pre-check here avoids an unnecessary
+    async call when the setting is clearly absent.
     """
     verdict = heuristic_decision(message)
     if verdict == "yes":
         return True
     if verdict == "no":
         return False
-    # ambiguous — tie-break with the utility model when one is configured
+    # ambiguous — quick pre-check avoids an async call when setting is absent;
+    # _ask_utility_model also guards this internally.
     from src.settings import load_settings
     if (load_settings().get("utility_endpoint_id") or "").strip():
         answer = await _ask_utility_model(message)

@@ -1,9 +1,9 @@
 """resolve_web_access maps tri-state mode onto use_web/allow_web_search."""
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.web_decider import decide_use_web, resolve_web_access
+from src.web_decider import _ask_utility_model, decide_use_web, resolve_web_access
 
 
 @pytest.mark.asyncio
@@ -98,3 +98,91 @@ async def test_decide_ambiguous_defaults_no_without_utility(monkeypatch):
     monkeypatch.setattr("src.settings.load_settings",
                         lambda: {"utility_endpoint_id": ""})
     assert await decide_use_web("Who is the CEO of Anthropic?") is False
+
+
+# ---------------------------------------------------------------------------
+# _ask_utility_model — self-protection + shape-tolerant parsing
+# ---------------------------------------------------------------------------
+
+def _make_http_mock(json_body: dict):
+    """Build an AsyncMock httpx.AsyncClient whose .post() returns json_body."""
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json = MagicMock(return_value=json_body)
+
+    post_mock = AsyncMock(return_value=response)
+    client_instance = MagicMock()
+    client_instance.__aenter__ = AsyncMock(return_value=client_instance)
+    client_instance.__aexit__ = AsyncMock(return_value=False)
+    client_instance.post = post_mock
+
+    client_class = MagicMock(return_value=client_instance)
+    return client_class, post_mock
+
+
+@pytest.mark.asyncio
+async def test_ask_utility_no_endpoint_returns_none_no_http(monkeypatch):
+    """Self-guard: missing utility_endpoint_id → None without any HTTP call."""
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"utility_endpoint_id": ""})
+    client_class, post_mock = _make_http_mock({})
+    with patch("httpx.AsyncClient", client_class):
+        result = await _ask_utility_model("Who is the CEO of Anthropic?")
+    assert result is None
+    post_mock.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_ask_utility_openai_shape_yes(monkeypatch):
+    """OpenAI-shaped response → True."""
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"utility_endpoint_id": "ep1"})
+    body = {"choices": [{"message": {"content": "YES"}}]}
+    client_class, _ = _make_http_mock(body)
+    with patch("httpx.AsyncClient", client_class), \
+         patch("src.endpoint_resolver.resolve_endpoint",
+               return_value=("http://fake/v1/chat/completions", "gpt-4o-mini", {})):
+        result = await _ask_utility_model("Who is the CEO of Anthropic?")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_ask_utility_ollama_shape_no(monkeypatch):
+    """Ollama-shaped response {"message": {"content": "NO"}} → False."""
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"utility_endpoint_id": "ep1"})
+    body = {"message": {"content": "NO"}}
+    client_class, _ = _make_http_mock(body)
+    with patch("httpx.AsyncClient", client_class), \
+         patch("src.endpoint_resolver.resolve_endpoint",
+               return_value=("http://fake/api/chat", "llama3", {})):
+        result = await _ask_utility_model("Who is the CEO of Anthropic?")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_ask_utility_anthropic_shape_yes(monkeypatch):
+    """Anthropic-shaped response {"content":[{"type":"text","text":"YES"}]} → True."""
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"utility_endpoint_id": "ep1"})
+    body = {"content": [{"type": "text", "text": "YES"}]}
+    client_class, _ = _make_http_mock(body)
+    with patch("httpx.AsyncClient", client_class), \
+         patch("src.endpoint_resolver.resolve_endpoint",
+               return_value=("http://fake/v1/messages", "claude-haiku-4-5", {})):
+        result = await _ask_utility_model("Who is the CEO of Anthropic?")
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_ask_utility_garbage_body_returns_none(monkeypatch):
+    """Unrecognised response shape → None (not an exception)."""
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"utility_endpoint_id": "ep1"})
+    body = {}
+    client_class, _ = _make_http_mock(body)
+    with patch("httpx.AsyncClient", client_class), \
+         patch("src.endpoint_resolver.resolve_endpoint",
+               return_value=("http://fake/v1/chat/completions", "m", {})):
+        result = await _ask_utility_model("Who is the CEO of Anthropic?")
+    assert result is None
