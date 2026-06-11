@@ -137,6 +137,7 @@ def setup_search_routes(config) -> APIRouter:
         _install_state.update(running=True, log=[], ok=None)
 
         def _run():
+            from services.searxng.runtime import get_runtime
             if os.name == "nt":
                 script = os.path.join(BASE_DIR, "scripts", "setup-searxng.ps1")
                 cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]
@@ -144,6 +145,8 @@ def setup_search_routes(config) -> APIRouter:
                 script = os.path.join(BASE_DIR, "scripts", "setup-searxng.sh")
                 cmd = ["bash", script]
             try:
+                logger.info("searxng install: stopping sidecar for update")
+                get_runtime().stop()
                 proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
@@ -153,7 +156,7 @@ def setup_search_routes(config) -> APIRouter:
                 ok = proc.wait() == 0
                 _install_state["ok"] = ok
                 if ok:
-                    from services.searxng.runtime import get_runtime
+                    logger.info("searxng install: script succeeded — starting updated sidecar")
                     get_runtime().start()
             except Exception as e:
                 _install_state["log"].append(f"install failed: {e}")
