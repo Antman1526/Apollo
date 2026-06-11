@@ -51,3 +51,20 @@ def test_runtime_errors_fail_open():
          patch("services.searxng.runtime.get_runtime", side_effect=RuntimeError("boom")):
         chain = _build_provider_chain("searxng")
     assert chain[0] == "searxng"
+
+
+def test_instance_url_prefers_managed_sidecar():
+    from services.search.providers import _get_search_instance
+    with patch("services.search.providers._get_search_settings",
+               return_value=_settings()), \
+         patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.url = "http://127.0.0.1:8893"
+        assert _get_search_instance() == "http://127.0.0.1:8893"
+
+
+def test_instance_url_falls_back_to_env_on_runtime_error():
+    from services.search.providers import _get_search_instance, SEARXNG_INSTANCE
+    with patch("services.search.providers._get_search_settings",
+               return_value=_settings()), \
+         patch("services.searxng.runtime.get_runtime", side_effect=RuntimeError("boom")):
+        assert _get_search_instance() == SEARXNG_INSTANCE
