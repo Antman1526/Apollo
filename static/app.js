@@ -1583,15 +1583,7 @@ function initializeEventListeners() {
   const WEB_MODES = ['off', 'auto', 'always'];
 
   function loadWebMode(mode) {
-    const state = loadToggleState();
-    const key = 'webmode_' + mode;
-    if (WEB_MODES.includes(state[key])) return state[key];
-    // Migrate legacy boolean web_<mode> prefs: true→always, false→off
-    const legacyKey = 'web_' + mode;
-    if (Object.prototype.hasOwnProperty.call(state, legacyKey)) {
-      return state[legacyKey] ? 'always' : 'off';
-    }
-    return 'auto'; // new default: let the server decide per message
+    return Storage.getWebMode(mode);
   }
 
   function saveWebMode(mode, value) {
@@ -1607,6 +1599,7 @@ function initializeEventListeners() {
     btn.classList.toggle('active', webMode !== 'off');
     btn.classList.toggle('web-auto', webMode === 'auto');
     btn.setAttribute('aria-pressed', String(webMode !== 'off'));
+    btn.setAttribute('aria-label', 'Web search: ' + webMode);
     btn.title = 'Web search: ' + webMode;
     if (chk) chk.checked = webMode !== 'off'; // compat: compare mode, slash cmds
   }

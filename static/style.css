@@ -9197,6 +9197,13 @@ body.hide-thinking .thinking-section { display: none !important; }
   flex-direction: column;
   gap: 4px;
 }
+/* Muted badge shown when web sources came from a fallback provider (not SearXNG) */
+.sources-provider-badge {
+  font-size: 0.75em;
+  font-weight: 400;
+  opacity: 0.55;
+  margin-left: 6px;
+}
 .source-link {
   display: flex;
   align-items: center;

@@ -107,6 +107,23 @@ export function setToggle(name, value) {
   saveToggleState(state);
 }
 
+/**
+ * Resolve the tri-state web-access mode ('off'|'auto'|'always') for a given
+ * UI mode ('chat' or 'agent').  Single source of truth — replaces the
+ * duplicated IIFE in chat.js and the local function in app.js.
+ *
+ * @param {string} uiMode  'chat' or 'agent'
+ * @returns {'off'|'auto'|'always'}
+ */
+export function getWebMode(uiMode) {
+  const state = loadToggleState();
+  const key = 'webmode_' + uiMode;
+  if (['off', 'auto', 'always'].includes(state[key])) return state[key];
+  const legacy = state['web_' + uiMode];
+  if (legacy !== undefined) return legacy ? 'always' : 'off';
+  return 'auto';
+}
+
 const Storage = {
   KEYS,
   getJSON,
@@ -117,7 +134,8 @@ const Storage = {
   loadToggleState,
   saveToggleState,
   getToggle,
-  setToggle
+  setToggle,
+  getWebMode
 };
 
 export default Storage;

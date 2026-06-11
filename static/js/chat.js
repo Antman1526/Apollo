@@ -749,14 +749,7 @@ import createResearchSynapse from './researchSynapse.js';
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
-      let _webMode = (() => {
-        const st = Storage.loadToggleState();
-        const key = 'webmode_' + (isAgentMode ? 'agent' : 'chat');
-        if (['off', 'auto', 'always'].includes(st[key])) return st[key];
-        const legacy = st['web_' + (isAgentMode ? 'agent' : 'chat')];
-        if (legacy !== undefined) return legacy ? 'always' : 'off';
-        return 'auto';
-      })();
+      let _webMode = Storage.getWebMode(isAgentMode ? 'agent' : 'chat');
       // Transient overrides (/search slash command, server-driven UI toggle,
       // compare mode) check the hidden checkbox directly without writing the
       // webmode_* storage keys — honor them for this message.
@@ -812,6 +805,7 @@ import createResearchSynapse from './researchSynapse.js';
       // Track holder globally so stop button can access it
       currentHolder = holder;
       holder._researchQuery = msg; // Store query for notification text
+      holder._webMode = _webMode;  // For auto-search feedback in web_sources handler
       
       const modelName = sessionModule.getCurrentModel() || null;
 
@@ -1759,6 +1753,10 @@ import createResearchSynapse from './researchSynapse.js';
                 if (json.data && json.data.length > 0) {
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
+                  // Auto-search feedback: let the user know the server decided to search.
+                  if (holder._webMode === 'auto' && spinner && spinner.updateMessage) {
+                    spinner.updateMessage('Searched the web');
+                  }
                 }
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
