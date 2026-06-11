@@ -86,6 +86,10 @@ class SearxngRuntime:
             # (e.g. after install) doesn't abort its own boot wait.
             self._stopping.clear()
             self._health_cache = None
+            if self._proc is not None and self._proc.poll() is None:
+                # Another caller spawned between its lock release and ours;
+                # don't double-spawn onto the same port.
+                return True
             if self.is_serving():
                 logger.info("SearXNG already serving at %s — reusing", cfg.url)
                 return True
