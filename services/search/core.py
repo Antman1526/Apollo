@@ -196,7 +196,12 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
                 if results:
                     logger.info(f"{provider_name} search succeeded with {len(results)} results")
                     break
-            except (NetworkError, ParseError, RateLimitError) as e:
+            except RateLimitError as e:
+                # An instant retry of a 429 is counterproductive — log and
+                # break immediately so the chain falls through to the next provider.
+                error_logger.error(f"{provider_name} rate-limited (attempt {attempt + 1}): {e}")
+                break
+            except (NetworkError, ParseError) as e:
                 error_logger.error(f"{provider_name} search error (attempt {attempt + 1}): {e}")
             except Exception as e:
                 error_logger.error(f"Unexpected error during {provider_name} search (attempt {attempt + 1}): {e}")
@@ -305,6 +310,14 @@ def comprehensive_web_search(
                     logger.info(f"Comprehensive search: {provider_name} returned {len(search_results)} results")
                     break
                 empty = True
+            except RateLimitError as e:
+                # An instant retry of a 429 is counterproductive — break
+                # immediately so the chain falls through to the next provider.
+                last_err = e
+                logger.warning(
+                    f"Comprehensive search: {provider_name} rate-limited (attempt {attempt + 1}): {e}"
+                )
+                break
             except Exception as e:
                 last_err = e
                 logger.warning(f"Comprehensive search: {provider_name} attempt {attempt + 1} failed: {e}")
