@@ -10,6 +10,8 @@ is injectable.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 import platform
@@ -84,6 +86,40 @@ def pick_lts(index: List[dict]) -> Optional[str]:
     return best_str
 
 
+def _sha256_of(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _expected_sha256(shasums_text: str, filename: str) -> Optional[str]:
+    """Find the checksum for filename in a nodejs.org SHASUMS256.txt body."""
+    for line in shasums_text.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1].lstrip("*").lstrip("./") == filename:
+            return parts[0].lower()
+    return None
+
+
+def _verify_download(url: str, path: str) -> None:
+    """Check the downloaded artifact against nodejs.org's SHASUMS256.txt.
+
+    The runtime auto-downloads Node on first desktop launch, so a tampered or
+    truncated archive must never be extracted.
+    """
+    base, _, filename = url.rpartition("/")
+    with urllib.request.urlopen(f"{base}/SHASUMS256.txt", timeout=30) as resp:
+        text = resp.read().decode("utf-8", errors="replace")
+    expected = _expected_sha256(text, filename)
+    if not expected:
+        raise RuntimeError(f"no SHASUMS256 entry for {filename}")
+    actual = _sha256_of(path)
+    if not hmac.compare_digest(actual, expected):
+        raise RuntimeError(f"Node download checksum mismatch for {filename}")
+
+
 def _default_download_extract(url: str, dest_parent: str) -> None:
     os.makedirs(dest_parent, exist_ok=True)
     tmp = os.path.join(dest_parent, "_node_download.tmp")
@@ -93,12 +129,13 @@ def _default_download_extract(url: str, dest_parent: str) -> None:
     with urllib.request.urlopen(url, timeout=60) as resp, open(tmp, "wb") as out:
         shutil.copyfileobj(resp, out)
     try:
+        _verify_download(url, tmp)
         if url.endswith(".zip"):
             with zipfile.ZipFile(tmp) as z:
                 z.extractall(dest_parent)
         else:
             with tarfile.open(tmp) as t:
-                t.extractall(dest_parent)
+                t.extractall(dest_parent, filter="data")
     finally:
         try:
             os.remove(tmp)

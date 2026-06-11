@@ -313,6 +313,8 @@ function computeWorkspaceLayout(state = _floorState) {
     };
   });
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  // Old chatter ages out — both the arcs and the speech bubbles.
+  const now = Date.now();
   const interactions = state.messages
     .map((message) => ({
       ...message,
@@ -320,13 +322,12 @@ function computeWorkspaceLayout(state = _floorState) {
       to: byId.get(message.toId),
     }))
     .filter((message) => message.from && message.to)
+    .filter((message) => !message.at || now - message.at <= CONVERSATION_WINDOW_MS)
     .slice(0, 6);
 
   // Recent messages become live conversations: the sender's words plus a
   // reply the receiver derives from their own task.
-  const now = Date.now();
   const conversations = interactions
-    .filter((interaction) => !interaction.at || now - interaction.at <= CONVERSATION_WINDOW_MS)
     .slice(0, 2)
     .map((interaction) => ({
       ...interaction,
@@ -938,7 +939,7 @@ function liveStateLabel() {
 function bindAgentSelection(doc = document, onSelect = selectAgent) {
   if (!doc || boundAgentSelectionDocs.has(doc)) return;
   boundAgentSelectionDocs.add(doc);
-  doc.addEventListener('click', (event) => {
+  const activate = (event) => {
     const target = event.target?.closest?.('[data-agent-id]');
     if (!target) return;
     const modal = target.closest?.('#paperclip-modal');
@@ -947,6 +948,12 @@ function bindAgentSelection(doc = document, onSelect = selectAgent) {
       event.preventDefault?.();
       onSelect(target.dataset.agentId);
     }
+  };
+  doc.addEventListener('click', activate, true);
+  // SVG agent figures carry role="button"/tabindex="0"; honor keyboard too.
+  doc.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    activate(event);
   }, true);
 }
 

@@ -82,3 +82,75 @@ def test_ensure_node_reuses_installed_without_network(tmp_path):
                          fetch_index=_boom,
                          download_extract=lambda u, d: (_ for _ in ()).throw(AssertionError("no dl")))
     assert got == (str(home / "bin" / "node"), str(home / "bin" / "npx"))
+
+
+def test_expected_sha256_parses_shasums_lines():
+    text = (
+        "abc123  node-v22.13.0-darwin-arm64.tar.gz\n"
+        "def456 *node-v22.13.0-win-x64.zip\n"
+        "ignored line\n"
+    )
+    assert nb._expected_sha256(text, "node-v22.13.0-darwin-arm64.tar.gz") == "abc123"
+    assert nb._expected_sha256(text, "node-v22.13.0-win-x64.zip") == "def456"
+    assert nb._expected_sha256(text, "node-v0.0.0-none.tar.gz") is None
+
+
+def test_verify_download_accepts_matching_checksum(tmp_path, monkeypatch):
+    artifact = tmp_path / "node-v22.13.0-darwin-arm64.tar.gz"
+    artifact.write_bytes(b"node bits")
+    good = nb._sha256_of(str(artifact))
+
+    class _Resp:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(url, timeout=None):
+        assert url.endswith("/SHASUMS256.txt")
+        return _Resp(f"{good}  node-v22.13.0-darwin-arm64.tar.gz\n".encode())
+
+    monkeypatch.setattr(nb.urllib.request, "urlopen", fake_urlopen)
+    nb._verify_download("https://nodejs.org/dist/v22.13.0/node-v22.13.0-darwin-arm64.tar.gz",
+                        str(artifact))
+
+
+def test_verify_download_rejects_mismatch_and_missing_entry(tmp_path, monkeypatch):
+    import pytest
+
+    artifact = tmp_path / "node-v22.13.0-darwin-arm64.tar.gz"
+    artifact.write_bytes(b"tampered bits")
+
+    class _Resp:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(
+        nb.urllib.request, "urlopen",
+        lambda url, timeout=None: _Resp(b"0" * 64 + b"  node-v22.13.0-darwin-arm64.tar.gz\n"))
+    with pytest.raises(RuntimeError, match="checksum mismatch"):
+        nb._verify_download("https://nodejs.org/dist/v22.13.0/node-v22.13.0-darwin-arm64.tar.gz",
+                            str(artifact))
+
+    monkeypatch.setattr(
+        nb.urllib.request, "urlopen",
+        lambda url, timeout=None: _Resp(b"unrelated  other-file.tar.gz\n"))
+    with pytest.raises(RuntimeError, match="no SHASUMS256 entry"):
+        nb._verify_download("https://nodejs.org/dist/v22.13.0/node-v22.13.0-darwin-arm64.tar.gz",
+                            str(artifact))

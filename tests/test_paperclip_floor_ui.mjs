@@ -505,6 +505,60 @@ test('agent selection uses one delegated click handler per document', () => {
   assert.deepEqual(calls, ['coder']);
 });
 
+test('agents can be selected with Enter or Space', () => {
+  let keyHandler = null;
+  const fakeDocument = {
+    addEventListener(type, handler) {
+      if (type === 'keydown') keyHandler = handler;
+    },
+  };
+  const calls = [];
+  paperclip.bindAgentSelection(fakeDocument, (agentId) => calls.push(agentId));
+  assert.equal(typeof keyHandler, 'function');
+
+  const fakeTarget = {
+    closest(selector) {
+      if (selector === '[data-agent-id]') {
+        return {
+          dataset: { agentId: 'coder' },
+          closest() { return { classList: { contains: () => false } }; },
+        };
+      }
+      return null;
+    },
+  };
+  keyHandler({ key: 'Enter', target: fakeTarget, preventDefault() {} });
+  keyHandler({ key: ' ', target: fakeTarget, preventDefault() {} });
+  keyHandler({ key: 'x', target: fakeTarget, preventDefault() {} });
+  assert.deepEqual(calls, ['coder', 'coder']);
+});
+
+test('interaction arcs age out with the conversation window', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'lead', name: 'Lead', status: 'review' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'dev', name: 'Dev', status: 'running' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'activity.logged',
+    payload: { fromAgentId: 'lead', toAgentId: 'dev', message: 'Old news' },
+  });
+
+  // Fresh message: arc + conversation render.
+  let layout = paperclip.computeWorkspaceLayout(state);
+  assert.equal(layout.interactions.length, 1);
+
+  // Same message a minute later: both expire.
+  state.messages[0].at = Date.now() - 60000;
+  layout = paperclip.computeWorkspaceLayout(state);
+  assert.equal(layout.interactions.length, 0);
+  assert.equal(layout.conversations.length, 0);
+});
+
 test('starts a live Paperclip event stream when EventSource is available', () => {
   assert.equal(typeof paperclip.createLiveEventStream, 'function');
 
