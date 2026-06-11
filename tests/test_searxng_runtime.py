@@ -182,3 +182,24 @@ def test_proc_exits_during_boot(tmp_path):
     result = rt.start()
     assert result is False
     assert rt.status() == "failed"
+
+
+def test_start_after_stop_clears_stop_signal(tmp_path):
+    """A stop() followed by start() must not abort its own boot wait."""
+    spawned = []
+
+    def spawn(*a, **kw):
+        p = FakeProc(*a, **kw)
+        spawned.append(p)
+        return p
+
+    calls = {"n": 0}
+
+    def check(u, t=2.0):
+        calls["n"] += 1
+        return calls["n"] > 1  # unhealthy pre-spawn, healthy after
+
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path), spawn=spawn, health_check=check)
+    rt.stop()  # sets the stopping event with nothing running
+    assert rt.start() is True  # must clear the event and boot normally
+    assert spawned, "start() should have spawned after a prior stop()"

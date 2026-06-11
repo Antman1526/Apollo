@@ -82,6 +82,9 @@ class SearxngRuntime:
             cfg = self._cfg_provider()
             if not cfg.enabled or not cfg.installed:
                 return False
+            # A previous stop() leaves the event set; clear it so a restart
+            # (e.g. after install) doesn't abort its own boot wait.
+            self._stopping.clear()
             self._health_cache = None
             if self.is_serving():
                 logger.info("SearXNG already serving at %s — reusing", cfg.url)
