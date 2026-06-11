@@ -47,6 +47,10 @@ class SearxngRuntime:
     def url(self) -> str:
         return self._cfg_provider().url
 
+    @property
+    def installed(self) -> bool:
+        return self._cfg_provider().installed
+
     def _health_url(self) -> str:
         return self._cfg_provider().url.rstrip("/") + "/healthz"
 

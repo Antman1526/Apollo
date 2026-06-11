@@ -18,6 +18,7 @@ def _settings(**over):
 def test_skips_searxng_when_sidecar_down():
     with patch("services.search.core._get_search_settings", return_value=_settings()), \
          patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.installed = True
         rt.return_value.is_serving.return_value = False
         chain = _build_provider_chain("searxng")
     assert chain == ["duckduckgo"]
@@ -26,6 +27,7 @@ def test_skips_searxng_when_sidecar_down():
 def test_keeps_searxng_when_sidecar_running():
     with patch("services.search.core._get_search_settings", return_value=_settings()), \
          patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.installed = True
         rt.return_value.is_serving.return_value = True
         chain = _build_provider_chain("searxng")
     assert chain == ["searxng", "duckduckgo"]
@@ -58,6 +60,7 @@ def test_instance_url_prefers_managed_sidecar():
     with patch("services.search.providers._get_search_settings",
                return_value=_settings()), \
          patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.installed = True
         rt.return_value.url = "http://127.0.0.1:8893"
         assert _get_search_instance() == "http://127.0.0.1:8893"
 
@@ -67,4 +70,32 @@ def test_instance_url_falls_back_to_env_on_runtime_error():
     with patch("services.search.providers._get_search_settings",
                return_value=_settings()), \
          patch("services.searxng.runtime.get_runtime", side_effect=RuntimeError("boom")):
+        assert _get_search_instance() == SEARXNG_INSTANCE
+
+
+def test_explicit_env_beats_managed_sidecar(monkeypatch):
+    """Docker sets SEARXNG_INSTANCE; the managed sidecar must not shadow it."""
+    from services.search.providers import _get_search_instance
+    monkeypatch.setenv("SEARXNG_INSTANCE", "http://searxng:8080")
+    with patch("services.search.providers._get_search_settings",
+               return_value=_settings()):
+        assert _get_search_instance() == "http://searxng:8080"
+
+
+def test_explicit_env_prevents_chain_skip(monkeypatch):
+    """With an explicit env instance, never skip searxng on the sidecar's behalf."""
+    monkeypatch.setenv("SEARXNG_INSTANCE", "http://searxng:8080")
+    with patch("services.search.core._get_search_settings", return_value=_settings()):
+        chain = _build_provider_chain("searxng")
+    assert chain[0] == "searxng"
+
+
+def test_managed_but_not_installed_falls_to_env_default(monkeypatch):
+    """No env, managed on, sidecar NOT installed -> constant default, not 8893."""
+    from services.search.providers import _get_search_instance, SEARXNG_INSTANCE
+    monkeypatch.delenv("SEARXNG_INSTANCE", raising=False)
+    with patch("services.search.providers._get_search_settings",
+               return_value=_settings()), \
+         patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.installed = False
         assert _get_search_instance() == SEARXNG_INSTANCE

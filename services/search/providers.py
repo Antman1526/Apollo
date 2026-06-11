@@ -41,15 +41,25 @@ def _get_search_settings() -> dict:
 
 
 def _get_search_instance() -> str:
-    """Return the active search API URL: explicit setting > managed sidecar > env."""
+    """Active search API URL.
+
+    Precedence: explicit search_url setting > explicit SEARXNG_INSTANCE env
+    (deployment-level, e.g. Docker compose) > managed sidecar when actually
+    installed > built-in default constant.
+    """
     settings = _get_search_settings()
     url = (settings.get("search_url") or "").strip()
     if url:
         return url.rstrip("/")
+    env_url = (os.environ.get("SEARXNG_INSTANCE") or "").strip()
+    if env_url:
+        return env_url.rstrip("/")
     if settings.get("searxng_managed", True):
         try:
             from services.searxng.runtime import get_runtime
-            return get_runtime().url
+            rt = get_runtime()
+            if rt.installed:
+                return rt.url
         except Exception:
             pass
     return SEARXNG_INSTANCE

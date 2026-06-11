@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Set
@@ -95,17 +96,23 @@ _FALLBACK_ORDER = ["duckduckgo"]
 def _searxng_definitely_down() -> bool:
     """True only when the MANAGED sidecar is the target and it isn't serving.
 
-    Never true for a custom search_url (external instance) or when the
-    managed sidecar is disabled — those cases let the request itself decide.
+    Never true for a custom search_url (external instance), an explicit
+    SEARXNG_INSTANCE env var (e.g. Docker compose), or when the managed
+    sidecar is disabled — those cases let the HTTP call decide.
     """
     settings = _get_search_settings()
     if (settings.get("search_url") or "").strip():
         return False
+    if (os.environ.get("SEARXNG_INSTANCE") or "").strip():
+        return False  # explicit deployment instance (e.g. Docker) — let HTTP decide
     if not settings.get("searxng_managed", True):
         return False
     try:
         from services.searxng.runtime import get_runtime
-        return not get_runtime().is_serving()
+        rt = get_runtime()
+        if not rt.installed:
+            return True   # managed-but-absent: skip with no probe at all
+        return not rt.is_serving()
     except Exception:
         return False  # fail open — let the HTTP call decide
 
