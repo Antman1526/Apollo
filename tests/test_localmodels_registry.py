@@ -87,3 +87,33 @@ def test_updates_existing_endpoint(monkeypatch):
     assert sess.added == []
     assert existing.is_enabled is True
     assert "nomic-embed" in existing.cached_models
+
+
+def test_sync_dedupes_same_model_on_two_drives(monkeypatch):
+    """The same GGUF in two configured dirs must list once in the picker."""
+    import json
+
+    def _m(name, directory, kind="chat"):
+        return LocalModel(id=f"lm_{directory}_{name}", name=name,
+                          path=f"{directory}/{name}.gguf", quant="Q4_K_M",
+                          kind=kind, size_bytes=1, directory=directory)
+
+    models = [
+        _m("Llama-3.2-3B-Instruct-Q4_K_M", "/volumes"),
+        _m("gemma-4-12b-it-Q4_K_M", "/desktop"),
+        _m("Llama-3.2-3B-Instruct-Q4_K_M", "/desktop"),
+        _m("nomic-embed-text-v1.5.f16", "/volumes", kind="embedding"),
+        _m("nomic-embed-text-v1.5.f16", "/desktop", kind="embedding"),
+    ]
+    existing = _FakeEP(base_url=registry.LOCAL_BASE_URL, cached_models="[]",
+                       is_enabled=True)
+    sess = _FakeSession(rows=[existing])
+    monkeypatch.setattr(registry, "SessionLocal", lambda: sess)
+    monkeypatch.setattr(registry, "ModelEndpoint", _FakeEP)
+    registry.sync_managed_endpoint(models)
+    names = json.loads(existing.cached_models)
+    assert names == [
+        "Llama-3.2-3B-Instruct-Q4_K_M",
+        "gemma-4-12b-it-Q4_K_M",
+        "nomic-embed-text-v1.5.f16",
+    ]

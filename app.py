@@ -64,6 +64,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from services.app_startup import RouterSpec, build_and_include_router, include_router_checked, register_router_specs
 from starlette.responses import RedirectResponse
 
 # ========= LOGGING =========
@@ -154,6 +155,24 @@ LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 if LOCALHOST_BYPASS:
     logger.warning("LOCALHOST_BYPASS is enabled, loopback requests bypass authentication. Do not expose this instance to a network.")
 
+
+def _bypass_user() -> str:
+    """Identity that loopback-bypass requests act as.
+
+    LOCALHOST_BYPASS skips the login flow, but many routes attribute data to a
+    real owner (sessions, documents) and 403 when no user is present. To make
+    the no-login desktop experience fully work, treat the loopback caller as a
+    real account: prefer an admin, else the first user, else "" (anonymous).
+    """
+    try:
+        users = auth_manager.users or {}
+    except Exception:
+        users = {}
+    for name, data in users.items():
+        if isinstance(data, dict) and data.get("is_admin"):
+            return name
+    return next(iter(users), "")
+
 if AUTH_ENABLED:
     AUTH_EXEMPT_EXACT = {
         "/api/auth/setup",
@@ -167,8 +186,17 @@ if AUTH_ENABLED:
         "/api/health",
         "/api/version",
         "/login",
+        # Agent-activity ingest for the Paperclip Floor. The handler in
+        # routes/paperclip_routes.py authenticates itself (shared token via
+        # PAPERCLIP_EVENTS_TOKEN, or loopback-only when unset) — same
+        # self-authenticating pattern as the task webhook routes below.
+        "/api/paperclip/events",
     }
-    AUTH_EXEMPT_PREFIXES = ["/static"]
+    # /lmproxy is the local-model OpenAI proxy consumed by Paperclip's agents
+    # (a same-host child process with no Apollo session). It is guarded by its
+    # own bearer token in routes/lmproxy_routes.py, so it is exempt from the
+    # session-cookie middleware here.
+    AUTH_EXEMPT_PREFIXES = ["/static", "/lmproxy"]
     # Dynamic paths whose own handler proves identity via a path-embedded
     # secret instead of the session/bearer auth. The route handler at
     # routes/task_routes.py validates the per-task `webhook_token` itself
@@ -271,14 +299,19 @@ if AUTH_ENABLED:
                         request.state.current_user = "internal-tool"
                     request.state.api_token = False
                     return await call_next(request)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Internal tool loopback auth check failed: %s", e, exc_info=True)
             # Allow DIRECT localhost requests (internal service calls from
             # heartbeats etc.). Tunnel/proxy-forwarded requests are excluded by
             # _is_trusted_loopback so LOCALHOST_BYPASS can't be abused over a
             # Cloudflare tunnel / reverse proxy. Keep LOCALHOST_BYPASS=false for
             # network-exposed deployments regardless.
             if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+                # Act as a real user so ownership-based routes (sessions,
+                # documents) work without a login instead of 403-ing on an
+                # empty identity.
+                request.state.current_user = _bypass_user()
+                request.state.api_token = False
                 return await call_next(request)
             if not auth_manager.is_configured:
                 # No users yet — redirect to login for first-time setup
@@ -325,8 +358,8 @@ if AUTH_ENABLED:
                                     _db.close()
                             try:
                                 await _asyncio.to_thread(_do)
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                logger.debug("API token last-used update failed for token id %s: %s", tid, e, exc_info=True)
                         _asyncio.create_task(_touch_last_used(matched_id))
                         # Keep bearer-token callers out of normal cookie/user
                         # routes. API-aware routes can read api_token_owner.
@@ -410,8 +443,8 @@ async def serve_generated_image(filename: str, request: Request):
                 _db.close()
     except HTTPException:
         raise
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Gallery ownership check skipped for %s: %s", filename, e, exc_info=True)
     ext = filename.rsplit('.', 1)[-1].lower()
     mime = {
         "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
@@ -508,107 +541,82 @@ webhook_manager = WebhookManager(api_key_manager=api_key_manager)
 # ========= INCLUDE ROUTERS =========
 
 # Auth
-auth_router = setup_auth_routes(auth_manager)
-app.include_router(auth_router)
+build_and_include_router(app, "Auth", setup_auth_routes, auth_manager, logger=logger)
 
 # Uploads
 from routes.upload_routes import setup_upload_routes
 upload_router, upload_cleanup_func = setup_upload_routes(upload_handler)
-app.include_router(upload_router)
+include_router_checked(app, upload_router, "Uploads", logger=logger)
 upload_cleanup_task = None
 
 # Emoji SVG proxy (same-origin, lazy-cached Twemoji) — lets the chat render
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
-app.include_router(setup_emoji_routes())
-
-# Sessions
 from routes.session_routes import setup_session_routes
-session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
-app.include_router(setup_session_routes(session_manager, session_config, webhook_manager=webhook_manager))
-
-# Admin Danger Zone wipes (Settings → System → Danger Zone)
 from routes.admin_wipe_routes import setup_admin_wipe_routes
-app.include_router(setup_admin_wipe_routes(session_manager))
-
-# Memory
 from routes.memory_routes import setup_memory_routes
-app.include_router(setup_memory_routes(memory_manager, session_manager, memory_vector=memory_vector))
 from routes.skills_routes import setup_skills_routes
-app.include_router(setup_skills_routes(skills_manager))
-
-# Chat
 from routes.chat_routes import setup_chat_routes
-app.include_router(setup_chat_routes(
-    session_manager, chat_handler, chat_processor,
-    memory_manager, research_handler, upload_handler,
-    memory_vector=memory_vector,
-    webhook_manager=webhook_manager,
-    skills_manager=skills_manager,
-))
-
-# Research (background deep-research tasks)
 from routes.research_routes import setup_research_routes
-app.include_router(setup_research_routes(research_handler, session_manager=session_manager))
-
-# History
 from routes.history_routes import setup_history_routes
-app.include_router(setup_history_routes(session_manager))
-
-# Search
 from routes.search_routes import setup_search_routes
-app.include_router(setup_search_routes(config))
-
-# Presets
 from routes.preset_routes import setup_preset_routes
-app.include_router(setup_preset_routes(preset_manager))
-
-# Diagnostics
 from routes.diagnostics_routes import setup_diagnostics_routes
-app.include_router(setup_diagnostics_routes(rag_manager, rag_available, research_handler))
-
-# Cleanup
 from routes.cleanup_routes import setup_cleanup_routes
-app.include_router(setup_cleanup_routes(session_manager))
-
-# Personal docs
 from routes.personal_routes import setup_personal_routes
-app.include_router(setup_personal_routes(personal_docs_mgr, rag_manager, rag_available))
-
-# Embedding model management
 from routes.embedding_routes import setup_embedding_routes
-app.include_router(setup_embedding_routes())
-
-# Models
 from routes.model_routes import setup_model_routes
-app.include_router(setup_model_routes(model_discovery))
-
-# TTS
 from routes.tts_routes import setup_tts_routes
-app.include_router(setup_tts_routes(tts_service))
+
+session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_API_KEY, "SESSIONS_FILE": SESSIONS_FILE}
+register_router_specs(app, [
+    RouterSpec("Emoji", setup_emoji_routes),
+    RouterSpec("Sessions", setup_session_routes, args=(session_manager, session_config), kwargs={"webhook_manager": webhook_manager}),
+    RouterSpec("Admin wipe", setup_admin_wipe_routes, args=(session_manager,)),
+    RouterSpec("Memory", setup_memory_routes, args=(memory_manager, session_manager), kwargs={"memory_vector": memory_vector}),
+    RouterSpec("Skills", setup_skills_routes, args=(skills_manager,)),
+    RouterSpec("Chat", setup_chat_routes, args=(
+        session_manager, chat_handler, chat_processor,
+        memory_manager, research_handler, upload_handler,
+    ), kwargs={
+        "memory_vector": memory_vector,
+        "webhook_manager": webhook_manager,
+        "skills_manager": skills_manager,
+    }),
+    RouterSpec("Research", setup_research_routes, args=(research_handler,), kwargs={"session_manager": session_manager}),
+    RouterSpec("History", setup_history_routes, args=(session_manager,)),
+    RouterSpec("Search", setup_search_routes, args=(config,)),
+    RouterSpec("Presets", setup_preset_routes, args=(preset_manager,)),
+    RouterSpec("Diagnostics", setup_diagnostics_routes, args=(rag_manager, rag_available, research_handler)),
+    RouterSpec("Cleanup", setup_cleanup_routes, args=(session_manager,)),
+    RouterSpec("Personal docs", setup_personal_routes, args=(personal_docs_mgr, rag_manager, rag_available)),
+    RouterSpec("Embedding", setup_embedding_routes),
+    RouterSpec("Models", setup_model_routes, args=(model_discovery,)),
+    RouterSpec("TTS", setup_tts_routes, args=(tts_service,)),
+], logger=logger)
 
 # STT
 from services.stt import get_stt_service
 stt_service = get_stt_service()
 from routes.stt_routes import setup_stt_routes
-app.include_router(setup_stt_routes(stt_service))
+build_and_include_router(app, "STT", setup_stt_routes, stt_service, logger=logger)
 logger.info("STT service initialized (provider managed via settings)")
 
 # Documents (artifacts/canvas)
 from routes.document_routes import setup_document_routes
-app.include_router(setup_document_routes(session_manager, upload_handler))
+build_and_include_router(app, "Documents", setup_document_routes, session_manager, upload_handler, logger=logger)
 
 # Signatures (reusable image stamps)
 from routes.signature_routes import setup_signature_routes
-app.include_router(setup_signature_routes())
+build_and_include_router(app, "Signatures", setup_signature_routes, logger=logger)
 
 # Gallery (image library)
 from routes.gallery_routes import setup_gallery_routes
-app.include_router(setup_gallery_routes())
+build_and_include_router(app, "Gallery", setup_gallery_routes, logger=logger)
 
 # Persisted image-editor drafts (server-backed projects)
 from routes.editor_draft_routes import setup_editor_draft_routes
-app.include_router(setup_editor_draft_routes())
+build_and_include_router(app, "Editor drafts", setup_editor_draft_routes, logger=logger)
 
 # Scheduled tasks + event bus
 from src.task_scheduler import TaskScheduler
@@ -616,45 +624,45 @@ task_scheduler = TaskScheduler(session_manager)
 from src.event_bus import set_task_scheduler
 set_task_scheduler(task_scheduler)
 from routes.task_routes import setup_task_routes
-app.include_router(setup_task_routes(task_scheduler))
+build_and_include_router(app, "Tasks", setup_task_routes, task_scheduler, logger=logger)
 
 from routes.assistant_routes import setup_assistant_routes
-app.include_router(setup_assistant_routes(task_scheduler))
+build_and_include_router(app, "Assistants", setup_assistant_routes, task_scheduler, logger=logger)
 
 # Calendar (CalDAV)
 from routes.calendar_routes import setup_calendar_routes
-app.include_router(setup_calendar_routes())
+build_and_include_router(app, "Calendar", setup_calendar_routes, logger=logger)
 
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
-app.include_router(setup_shell_routes())
+build_and_include_router(app, "Shell", setup_shell_routes, logger=logger)
 
 # Cookbook (model download/serve/cache, cookbook state sync)
 from routes.cookbook_routes import setup_cookbook_routes
-app.include_router(setup_cookbook_routes())
+build_and_include_router(app, "Cookbook", setup_cookbook_routes, logger=logger)
 
 # Hardware model fitting (cookbook "What Fits?" tab)
 from routes.hwfit_routes import setup_hwfit_routes
-app.include_router(setup_hwfit_routes())
+build_and_include_router(app, "Hardware fit", setup_hwfit_routes, logger=logger)
 
 # Local GGUF models (scan, serve, manage)
 from routes.localmodels_routes import setup_localmodels_routes
-app.include_router(setup_localmodels_routes())
+build_and_include_router(app, "Local models", setup_localmodels_routes, logger=logger)
 
 # Model A/B Comparison
 from routes.compare_routes import setup_compare_routes
-app.include_router(setup_compare_routes(session_manager))
+build_and_include_router(app, "Compare", setup_compare_routes, session_manager, logger=logger)
 
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
-app.include_router(setup_prefs_routes())
+build_and_include_router(app, "Preferences", setup_prefs_routes, logger=logger)
 
 # Backup (export/import user data)
 from routes.backup_routes import setup_backup_routes
-app.include_router(setup_backup_routes(memory_manager, preset_manager, skills_manager))
+build_and_include_router(app, "Backup", setup_backup_routes, memory_manager, preset_manager, skills_manager, logger=logger)
 
 from routes.font_routes import setup_font_routes
-app.include_router(setup_font_routes())
+build_and_include_router(app, "Fonts", setup_font_routes, logger=logger)
 
 
 # MCP (Model Context Protocol)
@@ -664,7 +672,7 @@ from routes.mcp_routes import setup_mcp_routes
 
 mcp_manager = McpManager()
 set_mcp_manager(mcp_manager)
-app.include_router(setup_mcp_routes(mcp_manager))
+build_and_include_router(app, "MCP", setup_mcp_routes, mcp_manager, logger=logger)
 logger.info("MCP routes initialized")
 
 # AI Interaction tools (debates, pipelines, self-managing AI, UI control)
@@ -676,37 +684,206 @@ logger.info("AI interaction tools initialized (session, memory, RAG, UI control)
 
 # Webhooks
 from routes.webhook_routes import setup_webhook_routes
-app.include_router(setup_webhook_routes(webhook_manager, auth_manager, session_manager, api_key_manager))
-
-# API Tokens
 from routes.api_token_routes import setup_api_token_routes
-app.include_router(setup_api_token_routes())
-
-logger.info("Webhook & API token routes initialized")
-
-# Notes (Google Keep-style notes/todos)
 from routes.note_routes import setup_note_routes
-app.include_router(setup_note_routes(task_scheduler))
-
-# Email
 from routes.email_routes import setup_email_routes
-app.include_router(setup_email_routes())
-
 from routes.vault_routes import setup_vault_routes
-app.include_router(setup_vault_routes())
-
-# Contacts (CardDAV)
 from routes.contacts_routes import setup_contacts_routes
-app.include_router(setup_contacts_routes())
-
 from companion import setup_companion_routes
-app.include_router(setup_companion_routes())
+
+register_router_specs(app, [
+    RouterSpec("Webhooks", setup_webhook_routes, args=(webhook_manager, auth_manager, session_manager, api_key_manager)),
+    RouterSpec("API tokens", setup_api_token_routes),
+    RouterSpec("Notes", setup_note_routes, args=(task_scheduler,)),
+    RouterSpec("Email", setup_email_routes),
+    RouterSpec("Vault", setup_vault_routes),
+    RouterSpec("Contacts", setup_contacts_routes),
+    RouterSpec("Companion", setup_companion_routes),
+], logger=logger)
+logger.info("Communication and integration routes initialized")
+
+# Paperclip sidecar reverse proxy (bundled agent-management UI). HTTP traffic to
+# /paperclip/* is gated by the global AuthMiddleware; websockets bypass that
+# middleware, so the WS handler validates the session cookie via auth_manager.
+from routes.paperclip_routes import setup_paperclip_routes
+from services.paperclip.config import load_config as _load_paperclip_config, resolve_proxy_token as _paperclip_proxy_token
+from services.paperclip.events import EventHub as _PaperclipEventHub
+_paperclip_cfg = _load_paperclip_config()
+# Shared hub: fed by HTTP ingest and the live-events collector, drained by
+# /api/paperclip/stream. The collector bridges Paperclip's realtime websocket
+# onto the Floor; tokenless works in Paperclip's default local_trusted mode,
+# authenticated deployments set PAPERCLIP_COLLECTOR_TOKEN (+ company id).
+_paperclip_hub = _PaperclipEventHub()
+from services.paperclip.agent_tokens import AgentTokenRegistry as _PaperclipAgentTokens
+from services.paperclip.collector import PaperclipCollector as _PaperclipCollector
+
+_paperclip_agent_tokens = _PaperclipAgentTokens()
+
+_paperclip_collector = _PaperclipCollector(
+    _paperclip_cfg,
+    _paperclip_hub.publish,
+    token=os.getenv("PAPERCLIP_COLLECTOR_TOKEN", ""),
+    company_id=os.getenv("PAPERCLIP_COMPANY_ID", ""),
+)
+app.state.paperclip_collector = _paperclip_collector
+build_and_include_router(
+    app,
+    "Sidecar proxy",
+    setup_paperclip_routes,
+    _paperclip_cfg,
+    ws_validate=lambda token: auth_manager.validate_token(token),
+    hub=_paperclip_hub,
+    collector_status=_paperclip_collector.status,
+    agent_tokens=_paperclip_agent_tokens,
+    logger=logger,
+)
+
+
+async def _paperclip_status_for_integrations():
+    reachable = None
+    if _paperclip_cfg.enabled:
+        try:
+            import httpx as _httpx
+            async with _httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(f"{_paperclip_cfg.url}/api/health")
+                reachable = r.status_code < 500
+        except Exception:
+            reachable = False
+    return {
+        "enabled": _paperclip_cfg.enabled,
+        "mode": _paperclip_cfg.mode,
+        "url": _paperclip_cfg.url,
+        "browser_url": _paperclip_cfg.browser_url,
+        "model_endpoint": _paperclip_cfg.model_endpoint,
+        "reachable": reachable,
+    }
+
+
+from routes.integration_routes import setup_integration_routes
+build_and_include_router(app, "Integration status", setup_integration_routes, _paperclip_status_for_integrations, logger=logger)
+
+from routes.system_status_routes import setup_system_status_routes
+build_and_include_router(app, "System status", setup_system_status_routes,
+    memory_manager=memory_manager,
+    memory_vector=memory_vector,
+    mcp_manager=mcp_manager,
+    task_scheduler=task_scheduler,
+    auth_manager=auth_manager,
+    rag_manager=rag_manager,
+    personal_docs_mgr=personal_docs_mgr,
+    logger=logger,
+)
+
+from routes.browser_routes import setup_browser_routes
+build_and_include_router(app, "Browser", setup_browser_routes, logger=logger)
+
+# Local-model OpenAI proxy: a stable localhost endpoint Paperclip's opencode
+# agents use, forwarding to whichever GGUF model Apollo currently has warm.
+from routes.lmproxy_routes import setup_lmproxy_routes
+
+
+def _warm_chat_base_url():
+    try:
+        from services.localmodels.server_manager import get_server
+        for slot in get_server().status().values():
+            if slot.get("kind") == "chat" and slot.get("running"):
+                return slot.get("base_url")
+    except Exception as e:
+        logger.debug("Warm chat base URL detection failed: %s", e, exc_info=True)
+    return None
+
+
+build_and_include_router(app, "Local model proxy", setup_lmproxy_routes,
+    token_provider=_paperclip_proxy_token,
+    warm_url_provider=_warm_chat_base_url,
+    # Per-agent tokens (Phase 3.4): attribute agent LLM calls and pulse the
+    # Floor while an agent is generating.
+    agent_lookup=_paperclip_agent_tokens.lookup,
+    publish_activity=_paperclip_hub.publish,
+    logger=logger,
+)
+
+# Native lifecycle: when running as the installed desktop app (PAPERCLIP_MODE=
+# native), Apollo spawns and supervises `paperclipai run`, pointing its agents
+# at the local-model proxy above. No-op for docker/external modes.
+from services.paperclip.runtime import PaperclipRuntime as _PaperclipRuntime
+
+_paperclip_runtime = _PaperclipRuntime(
+    _paperclip_cfg,
+    proxy_token_provider=_paperclip_proxy_token,
+    proxy_base_provider=lambda: os.getenv(
+        "PAPERCLIP_PROXY_BASE_URL",
+        f"http://localhost:{os.getenv('APP_PORT', '7000')}/lmproxy/v1"),
+)
+app.state.paperclip_runtime = _paperclip_runtime
+
+
+@app.on_event("startup")
+async def _start_paperclip_runtime():
+    if _paperclip_cfg.enabled and _paperclip_cfg.mode == "native":
+        def _boot():
+            # Reuse an already-running Paperclip (the user's own instance, or a
+            # prior launch) — skip the Node download entirely in that case.
+            if not _paperclip_runtime._already_serving():
+                # Auto-provision a pinned Node into ~/.apollo/.node so a fresh
+                # Mac/Windows install needs no Node prerequisite. Falls back to a
+                # system Node if the download fails.
+                try:
+                    import json as _json
+                    import urllib.request as _urlreq
+                    from services.paperclip.node_bootstrap import ensure_node, INDEX_URL
+
+                    def _fetch_index():
+                        with _urlreq.urlopen(INDEX_URL, timeout=15) as r:
+                            return _json.load(r)
+
+                    paths = ensure_node(os.path.expanduser("~/.apollo"), fetch_index=_fetch_index)
+                    if paths:
+                        os.environ.setdefault("PAPERCLIP_NODE_BIN", paths[0])
+                        os.environ.setdefault("PAPERCLIP_NPX_BIN", paths[1])
+                except Exception as e:
+                    logging.getLogger("app").warning("Paperclip Node bootstrap skipped: %s", e)
+            if _paperclip_runtime.start():
+                _paperclip_runtime.wait_healthy(timeout=90)
+        threading.Thread(target=_boot, name="paperclip-runtime", daemon=True).start()
+    if _paperclip_cfg.enabled and os.getenv(
+            "PAPERCLIP_COLLECTOR_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on"):
+        _paperclip_collector.start()
+
+
+@app.on_event("shutdown")
+async def _stop_paperclip_runtime():
+    await _paperclip_collector.stop()
+    _paperclip_runtime.stop()
 
 # Kick off a non-blocking local model directory scan so the catalog is warm
 # on first request without delaying app startup.
 import threading
 from services.localmodels.lifecycle import startup_scan
 threading.Thread(target=startup_scan, name="local-models-scan", daemon=True).start()
+
+# Managed SearXNG sidecar (no Docker): start if installed+enabled; reuse an
+# already-running instance. Skipped entirely when not installed — search then
+# falls back to DuckDuckGo via the provider chain.
+from services.searxng.runtime import get_runtime as _get_searxng_runtime
+
+
+@app.on_event("startup")
+async def _start_searxng_runtime():
+    def _boot():
+        try:
+            _get_searxng_runtime().start()
+        except Exception as e:
+            logger.warning("SearXNG sidecar startup failed (non-critical): %s", e)
+    threading.Thread(target=_boot, name="searxng-runtime", daemon=True).start()
+
+
+@app.on_event("shutdown")
+async def _stop_searxng_runtime():
+    try:
+        _get_searxng_runtime().stop()
+    except Exception:
+        pass
 
 # ========= ROUTES (kept in app.py) =========
 
@@ -1052,8 +1229,8 @@ async def shutdown_event():
     # Stop task scheduler (no-op if it never started under the gate)
     try:
         await task_scheduler.stop()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Task scheduler shutdown error: %s", e, exc_info=True)
     # Close webhook manager
     try:
         await webhook_manager.close()

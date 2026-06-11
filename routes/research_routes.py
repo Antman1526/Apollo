@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import _auth_disabled, get_current_user
+from services.research import crawl4ai_adapter
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
 
@@ -81,6 +83,81 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
         except Exception:
             return False
+
+    class Crawl4AIRequest(BaseModel):
+        url: str
+        word_count_threshold: int = Field(default=10, ge=1, le=1000)
+        timeout_seconds: float = Field(default=90, ge=5, le=600)
+        save: bool = True
+
+    @router.get("/api/research/crawl4ai/status")
+    async def crawl4ai_status(request: Request):
+        _require_user(request)
+        return crawl4ai_adapter.status()
+
+    @router.post("/api/research/crawl4ai/crawl")
+    async def crawl4ai_crawl(body: Crawl4AIRequest, request: Request):
+        from src.auth_helpers import require_privilege
+
+        user = require_privilege(request, "can_use_research")
+        try:
+            result = await crawl4ai_adapter.crawl_url(
+                body.url,
+                word_count_threshold=body.word_count_threshold,
+                timeout_seconds=body.timeout_seconds,
+            )
+        except crawl4ai_adapter.Crawl4AIBlockedURL as e:
+            raise HTTPException(400, f"URL blocked: {e}")
+        except crawl4ai_adapter.Crawl4AIUnavailable as e:
+            raise HTTPException(503, str(e))
+        except asyncio.TimeoutError:
+            raise HTTPException(504, "Crawl4AI crawl timed out")
+        except Exception as e:
+            logger.error(f"Crawl4AI crawl failed for {body.url}: {e}", exc_info=True)
+            raise HTTPException(500, f"Crawl4AI crawl failed: {e}")
+
+        session_id = ""
+        if body.save:
+            data_dir = Path("data/deep_research")
+            data_dir.mkdir(parents=True, exist_ok=True)
+            session_id = f"c4a-{uuid.uuid4().hex[:12]}"
+            now = time.time()
+            record = {
+                "id": session_id,
+                "owner": user,
+                "query": f"Crawl4AI source import: {result.url}",
+                "category": "crawl4ai",
+                "status": "complete" if result.success else "error",
+                "started_at": now,
+                "completed_at": now,
+                "archived": False,
+                "result": result.markdown,
+                "raw_findings": [result.markdown] if result.markdown else [],
+                "sources": [{
+                    "title": result.title or result.url,
+                    "url": result.url,
+                    "status_code": result.status_code,
+                    "type": "crawl4ai",
+                }],
+                "stats": {
+                    "Extractor": "crawl4ai",
+                    "Status": result.status_code,
+                    "Links": sum(len(v or []) for v in result.links.values()) if isinstance(result.links, dict) else 0,
+                },
+                "crawl4ai": result.to_dict(),
+            }
+            (data_dir / f"{session_id}.json").write_text(json.dumps(record, default=str), encoding="utf-8")
+
+        return {
+            "ok": result.success,
+            "session_id": session_id,
+            "url": result.url,
+            "status_code": result.status_code,
+            "title": result.title,
+            "markdown": result.markdown,
+            "error": result.error,
+            "saved": bool(session_id),
+        }
 
     @router.get("/api/research/active")
     async def research_active(request: Request):

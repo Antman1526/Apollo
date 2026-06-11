@@ -9,6 +9,7 @@ when to stop.  Inspired by Alibaba's IterResearch approach.
 import asyncio
 import json
 import logging
+import random
 import re
 import time
 from datetime import datetime
@@ -498,8 +499,17 @@ class DeepResearcher:
         """Search each query and extract relevant info from top results."""
         all_findings: List[Dict] = []
 
-        # Search all queries in parallel
-        search_tasks = [self._search(q) for q in queries]
+        # Search all queries in parallel, but bounded to 2 concurrent requests
+        # with a small jittered delay between each to avoid DDG / provider 429s.
+        _sem = asyncio.Semaphore(2)
+
+        async def _bounded_search(q):
+            async with _sem:
+                res = await self._search(q)
+                await asyncio.sleep(0.4 + random.random() * 0.6)  # ~0.4–1.0s spacing
+                return res
+
+        search_tasks = [_bounded_search(q) for q in queries]
         search_results = await asyncio.gather(*search_tasks, return_exceptions=True)
 
         # Collect URLs to fetch from all search results

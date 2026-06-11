@@ -90,8 +90,8 @@ def _tool_path_roots() -> list[str]:
         private_tmp = os.path.realpath("/tmp")
         if private_tmp != "/tmp":
             roots.append(private_tmp)
-    except OSError:
-        pass
+    except OSError as e:
+        logger.debug("Could not resolve /tmp realpath for tool confinement: %s", e, exc_info=True)
 
     # $TMPDIR — per-user temp root on macOS (e.g. /var/folders/.../T/).
     tmpdir = os.environ.get("TMPDIR")
@@ -104,8 +104,8 @@ def _tool_path_roots() -> list[str]:
         extra = get_setting("tool_path_extra_roots")
         if isinstance(extra, list):
             roots.extend(str(r) for r in extra if r)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Could not load extra tool path roots: %s", e, exc_info=True)
 
     # Deduplicate; resolve symlinks so containment is unambiguous.
     seen: set[str] = set()
@@ -245,7 +245,7 @@ async def _run_subprocess_streaming(
                 except Exception:
                     # Progress is best-effort — never let a UI hiccup
                     # break the underlying subprocess.
-                    pass
+                    logger.debug("Subprocess progress callback failed", exc_info=True)
             await asyncio.sleep(PROGRESS_INTERVAL_S)
 
     rd_out = asyncio.create_task(_reader(proc.stdout, stdout_full, "out"))
@@ -259,24 +259,24 @@ async def _run_subprocess_streaming(
         timed_out = True
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to kill timed-out subprocess: %s", e, exc_info=True)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Timed-out subprocess did not exit cleanly: %s", e, exc_info=True)
     except asyncio.CancelledError:
         # User hit stop / SSE stream torn down. Kill the child so it
         # doesn't keep running orphaned. Re-raise so the agent loop's
         # cancellation propagates as the user expects.
         try:
             proc.kill()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to kill cancelled subprocess: %s", e, exc_info=True)
         try:
             await asyncio.wait_for(proc.wait(), timeout=2)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Cancelled subprocess did not exit cleanly: %s", e, exc_info=True)
         # Best-effort: stop the readers + emitter before re-raising.
         for t in (rd_out, rd_err):
             t.cancel()
@@ -294,8 +294,8 @@ async def _run_subprocess_streaming(
         for t in (rd_out, rd_err):
             try:
                 await asyncio.wait_for(t, timeout=1)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Subprocess pipe reader did not finish cleanly: %s", e, exc_info=True)
 
     return (
         "\n".join(stdout_full),
@@ -696,6 +696,7 @@ async def execute_tool_block(
         do_create_document, do_update_document, do_edit_document,
         do_suggest_document, do_search_chats, do_manage_tasks,
         do_manage_skills, do_api_call, do_manage_endpoints,
+        do_browser,
         do_manage_mcp, do_manage_webhooks, do_manage_tokens,
         do_manage_documents, do_manage_settings, do_manage_notes,
         do_manage_calendar,
@@ -744,6 +745,11 @@ async def execute_tool_block(
         desc = f"{tool}: BLOCKED"
         result = {"error": f"Tool '{tool}' is disabled by user.", "exit_code": 1}
         logger.info(f"Tool blocked by user: {tool}")
+        return desc, result
+    if disabled_tools and tool in {"browser", "builtin_browser"} and ({"browser", "builtin_browser"} & set(disabled_tools)):
+        desc = f"{tool}: BLOCKED"
+        result = {"error": "Browser tool is disabled by user.", "exit_code": 1}
+        logger.info("Browser tool blocked by user: %s", tool)
         return desc, result
 
     if tool in _ADMIN_TOOLS and not _owner_is_admin(owner):
@@ -828,6 +834,9 @@ async def execute_tool_block(
         first_line = content.split("\n")[0].strip()[:60]
         desc = f"api_call: {first_line}"
         result = await do_api_call(content)
+    elif tool in ("browser", "builtin_browser"):
+        desc = "browser"
+        result = await do_browser(content, owner=owner)
     elif tool == "manage_endpoints":
         desc = "manage_endpoints"
         result = await do_manage_endpoints(content, owner=owner)

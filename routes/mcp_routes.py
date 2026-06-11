@@ -50,20 +50,44 @@ def setup_mcp_routes(mcp_manager: McpManager):
             result = []
             for srv in servers:
                 status = mcp_manager.get_server_status(srv.id)
-                oauth_cfg = json.loads(srv.oauth_config) if srv.oauth_config else None
+                try:
+                    oauth_cfg = json.loads(srv.oauth_config) if srv.oauth_config else None
+                    disabled_list = json.loads(srv.disabled_tools) if srv.disabled_tools else []
+                    args = json.loads(srv.args) if srv.args else []
+                    env = json.loads(srv.env) if srv.env else {}
+                except (json.JSONDecodeError, TypeError) as exc:
+                    # One corrupted row must not take down the whole list.
+                    logger.warning("MCP server %s has corrupted config: %s", srv.id, exc)
+                    result.append({
+                        "id": srv.id,
+                        "name": srv.name,
+                        "transport": srv.transport,
+                        "command": srv.command,
+                        "args": [],
+                        "env": {},
+                        "url": srv.url,
+                        "is_enabled": srv.is_enabled,
+                        "status": "error",
+                        "tool_count": 0,
+                        "disabled_tool_count": 0,
+                        "enabled_tool_count": 0,
+                        "error": f"corrupted configuration: {exc}",
+                        "has_oauth": False,
+                        "needs_oauth": False,
+                    })
+                    continue
                 needs_oauth = False
                 if oauth_cfg:
                     token_file = os.path.expanduser(oauth_cfg.get("token_file", ""))
                     needs_oauth = token_file and not os.path.exists(token_file)
-                disabled_list = json.loads(srv.disabled_tools) if srv.disabled_tools else []
                 total_tools = status.get("tool_count", 0)
                 result.append({
                     "id": srv.id,
                     "name": srv.name,
                     "transport": srv.transport,
                     "command": srv.command,
-                    "args": json.loads(srv.args) if srv.args else [],
-                    "env": json.loads(srv.env) if srv.env else {},
+                    "args": args,
+                    "env": env,
                     "url": srv.url,
                     "is_enabled": srv.is_enabled,
                     "status": status.get("status", "disconnected"),
@@ -349,15 +373,21 @@ def setup_mcp_routes(mcp_manager: McpManager):
             if not srv.oauth_config:
                 raise HTTPException(400, "Server has no OAuth config")
 
-            oauth_cfg = json.loads(srv.oauth_config)
+            try:
+                oauth_cfg = json.loads(srv.oauth_config)
+            except (json.JSONDecodeError, TypeError) as exc:
+                raise HTTPException(400, f"Invalid OAuth config: {exc}") from exc
             keys_file = os.path.expanduser(oauth_cfg.get("keys_file", ""))
             if not keys_file or not os.path.exists(keys_file):
                 raise HTTPException(400, "OAuth keys file not found")
 
-            with open(keys_file, encoding="utf-8") as f:
-                keys_data = json.load(f)
+            try:
+                with open(keys_file, encoding="utf-8") as f:
+                    keys_data = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise HTTPException(400, f"Could not read OAuth keys file: {exc}") from exc
             keys = keys_data.get("installed") or keys_data.get("web")
-            if not keys:
+            if not isinstance(keys, dict) or not keys.get("client_id"):
                 raise HTTPException(400, "Invalid OAuth keys file format")
 
             client_id = keys["client_id"]

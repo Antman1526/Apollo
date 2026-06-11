@@ -507,7 +507,7 @@ def _save_settings(settings):
     atomic_write_json(str(SETTINGS_FILE), settings, indent=2)
 
 
-def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
+def _get_email_config(account_id: str | None = None, owner: str = "", *, log_missing: bool = True) -> dict:
     """Return IMAP/SMTP config as a dict.
 
     Resolution order:
@@ -578,9 +578,9 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
                     "imap_starttls": bool(row.imap_starttls),
                     "from_address": row.from_address or row.imap_user or "",
                 }
-                if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
+                if log_missing and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
                     logger.warning(f"SMTP not configured for account {row.name!r}")
-                if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
+                if log_missing and not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
                     logger.warning(f"IMAP not configured for account {row.name!r}")
                 return cfg
         finally:
@@ -608,9 +608,9 @@ def _get_email_config(account_id: str | None = None, owner: str = "") -> dict:
         "imap_starttls": settings.get("imap_starttls", True),
         "from_address": settings.get("email_from", os.environ.get("EMAIL_FROM", "")),
     }
-    if not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
+    if log_missing and not (cfg["smtp_host"] and cfg["smtp_user"] and cfg["smtp_password"]):
         logger.warning("SMTP not configured — add an Email Account in Settings or set env vars")
-    if not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
+    if log_missing and not (cfg["imap_host"] and cfg["imap_user"] and cfg["imap_password"]):
         logger.warning("IMAP not configured — add an Email Account in Settings or set env vars")
     return cfg
 

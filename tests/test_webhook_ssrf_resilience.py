@@ -1,8 +1,20 @@
 import sys
+
 # conftest.py stubs src.database with a fake module; webhook_manager imports
-# from it, so drop the stub here to load the real module under test.
-if "src.database" in sys.modules:
-    del sys.modules["src.database"]
+# from it, so drop the stub here to load the real module under test. Some
+# order-dependent tests also stub core.database; clear that stale module too.
+def _drop_module(name: str) -> None:
+    sys.modules.pop(name, None)
+    if "." not in name:
+        return
+    parent_name, _, child_name = name.rpartition(".")
+    parent = sys.modules.get(parent_name)
+    if parent is not None and hasattr(parent, child_name):
+        delattr(parent, child_name)
+
+
+_drop_module("src.database")
+_drop_module("core.database")
 
 import pytest
 from src.webhook_manager import validate_webhook_url

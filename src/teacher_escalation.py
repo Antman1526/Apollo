@@ -14,7 +14,7 @@ Detection tiers:
   Tier 1: regex on tool outputs + agent reply. Catches the "Unknown
           action 'switch'" / "I don't have a tool" / "Could you tell
           me which one?" type failures. Free, instant.
-  Tier 2 (TODO): LLM self-eval for ambiguous cases. Not in first cut.
+  Tier 2: optional structured self-check hook for ambiguous cases.
 
 If Tier 1 fires FAILURE, call the teacher with the full failed
 context. Skill is only saved if the teacher's response itself passes
@@ -24,6 +24,7 @@ itself wasn't confident about.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -119,6 +120,48 @@ def evaluate_turn_regex(
                 return ("failure", f"agent reply matched give-up pattern {pat.pattern!r}")
 
     return ("ok", None)
+
+
+def _normalize_self_check_verdict(verdict: Any) -> Tuple[str, Optional[str]]:
+    """Normalize an optional evaluator verdict into ("ok"|"failure", reason)."""
+    if verdict is None:
+        return ("ok", None)
+    if isinstance(verdict, tuple) and len(verdict) >= 1:
+        status = str(verdict[0] or "").lower()
+        reason = str(verdict[1]) if len(verdict) > 1 and verdict[1] else None
+    elif isinstance(verdict, dict):
+        status = str(verdict.get("status") or verdict.get("verdict") or "").lower()
+        reason = verdict.get("reason") or verdict.get("message")
+        if reason is not None:
+            reason = str(reason)
+    else:
+        status = str(verdict).lower()
+        reason = None
+
+    if status in {"failure", "fail", "failed", "needs_help", "escalate"}:
+        return ("failure", reason or "self-check requested escalation")
+    return ("ok", reason)
+
+
+async def evaluate_turn(
+    tool_results: List[Dict[str, Any]],
+    agent_reply: str,
+    self_check: Optional[Any] = None,
+) -> Tuple[str, Optional[str]]:
+    """Evaluate a completed turn with regex first, then an optional self-check.
+
+    ``self_check`` can be a sync or async callable accepting ``tool_results``
+    and ``agent_reply`` keyword arguments. It should return either a
+    ``("failure", reason)`` / ``("ok", None)`` tuple or a dict with ``status``
+    and optional ``reason`` keys.
+    """
+    status, reason = evaluate_turn_regex(tool_results, agent_reply)
+    if status == "failure" or self_check is None:
+        return status, reason
+    verdict = self_check(tool_results=tool_results or [], agent_reply=agent_reply or "")
+    if inspect.isawaitable(verdict):
+        verdict = await verdict
+    return _normalize_self_check_verdict(verdict)
 
 
 # ── Teacher escalation ────────────────────────────────────────────

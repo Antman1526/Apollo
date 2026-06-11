@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """apollo-logs — unified view of log files across the app.
 
-Right now logs live in two places:
+Right now logs live in a few places:
   - logs/                       app-level (compound.log, future runtime)
   - /tmp/apollo-tmux/*.log    per-tmux-session model download/serve logs
+  - .playwright-mcp/*.log      browser-test console captures
+  - src/services search logs   legacy search-provider error logs
 
 This CLI surfaces them so you don't have to remember which directory
 holds what.
@@ -13,6 +15,8 @@ holds what.
     apollo-logs tail NAME --lines 200   # last N lines only (no follow)
     apollo-logs cat NAME                # print full content
     apollo-logs clean                   # delete tmux logs older than 7 days
+    apollo-logs clean --scope runtime   # dry-run runtime log cleanup
+    apollo-logs clean --scope all --apply
 """
 from __future__ import annotations
 
@@ -31,25 +35,40 @@ from pathlib import Path
 
 _APP_LOGS = _REPO_ROOT / "logs"
 _TMUX_LOGS = Path("/tmp/apollo-tmux")
+_BROWSER_LOGS = _REPO_ROOT / ".playwright-mcp"
+_LEGACY_SEARCH_LOGS = (
+    _REPO_ROOT / "src" / "search_engine_error.log",
+    _REPO_ROOT / "services" / "search_engine_error.log",
+)
+
+
+def _log_paths(scope: str = "all") -> list[Path]:
+    paths: list[Path] = []
+    if scope in ("all", "runtime"):
+        for base in (_APP_LOGS, _BROWSER_LOGS):
+            if base.is_dir():
+                paths.extend(sorted(base.glob("*.log")))
+        paths.extend(p for p in _LEGACY_SEARCH_LOGS if p.exists())
+    if scope in ("all", "tmux"):
+        if _TMUX_LOGS.is_dir():
+            paths.extend(sorted(_TMUX_LOGS.glob("*.log")))
+    return paths
 
 
 def _enumerate() -> list[dict]:
     """Return every known log file as {name, path, bytes, modified}."""
     out = []
-    for base in (_APP_LOGS, _TMUX_LOGS):
-        if not base.is_dir():
+    for p in _log_paths("all"):
+        try:
+            st = p.stat()
+        except OSError:
             continue
-        for p in sorted(base.glob("*.log")):
-            try:
-                st = p.stat()
-            except OSError:
-                continue
-            out.append({
-                "name": p.name,
-                "path": str(p),
-                "bytes": st.st_size,
-                "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
-            })
+        out.append({
+            "name": p.name,
+            "path": str(p),
+            "bytes": st.st_size,
+            "modified": datetime.fromtimestamp(st.st_mtime).isoformat(),
+        })
     out.sort(key=lambda r: r["modified"], reverse=True)
     return out
 
@@ -61,12 +80,9 @@ def _resolve(name: str) -> Path | None:
     if not isinstance(name, str):
         return None
     candidates = []
-    for base in (_APP_LOGS, _TMUX_LOGS):
-        if not base.is_dir():
-            continue
-        for p in base.glob("*.log"):
-            if p.name == name or p.stem == name or name in p.name:
-                candidates.append(p)
+    for p in _log_paths("all"):
+        if p.name == name or p.stem == name or name in p.name:
+            candidates.append(p)
     if not candidates:
         return None
     candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
@@ -98,23 +114,42 @@ def cmd_cat(args):
     sys.stdout.write(p.read_text(errors="replace"))
 
 
-def cmd_clean(args):
-    """Delete tmux logs older than --days. Doesn't touch app logs."""
-    if not _TMUX_LOGS.is_dir():
-        emit({"deleted": 0, "kept": 0}, args)
-        return
-    cutoff = time.time() - args.days * 86400
-    deleted, kept = [], 0
-    for p in _TMUX_LOGS.glob("*.log"):
+def _clean_candidates(scope: str, days: int) -> tuple[list[Path], int]:
+    """Return (old_logs, kept_count) for cleanup planning."""
+    cutoff = time.time() - days * 86400
+    old, kept = [], 0
+    for p in _log_paths(scope):
         try:
             if p.stat().st_mtime < cutoff:
-                p.unlink()
-                deleted.append(p.name)
+                old.append(p)
             else:
                 kept += 1
         except OSError:
             continue
-    emit({"deleted": deleted, "kept": kept, "cutoff_days": args.days}, args)
+    return old, kept
+
+
+def cmd_clean(args):
+    """Delete or dry-run cleanup for old log files."""
+    old, kept = _clean_candidates(args.scope, args.days)
+    apply_cleanup = bool(args.apply or args.scope == "tmux")
+    deleted, errors = [], []
+    if apply_cleanup:
+        for p in old:
+            try:
+                p.unlink()
+                deleted.append(str(p))
+            except OSError as e:
+                errors.append({"path": str(p), "error": str(e)})
+    emit({
+        "scope": args.scope,
+        "dry_run": not apply_cleanup,
+        "would_delete": [] if apply_cleanup else [str(p) for p in old],
+        "deleted": deleted,
+        "kept": kept,
+        "errors": errors,
+        "cutoff_days": args.days,
+    }, args)
 
 
 def _build_parser():
@@ -137,7 +172,11 @@ def _build_parser():
 
     pcl = sub.add_parser("clean", parents=p._common_parents)
     pcl.add_argument("--days", type=int, default=7,
-                     help="delete tmux logs older than N days (default 7)")
+                     help="clean logs older than N days (default 7)")
+    pcl.add_argument("--scope", choices=["tmux", "runtime", "all"], default="tmux",
+                     help="tmux keeps historical behavior; runtime/all dry-run unless --apply")
+    pcl.add_argument("--apply", action="store_true",
+                     help="actually delete runtime/all logs; tmux scope applies by default")
     pcl.set_defaults(func=cmd_clean)
 
     return p

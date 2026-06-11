@@ -286,6 +286,33 @@ def setup_chat_routes(
         if memory_response:
             return {"response": memory_response}
 
+        from src.web_decider import resolve_web_access
+        # NOTE: no apply_incognito here — ChatRequest has no incognito field;
+        # incognito chats only flow through /api/chat_stream. If incognito is
+        # ever added to ChatRequest, wire apply_incognito like the stream path.
+        #
+        # Same history-ordering guarantee as the streaming path: add_user_message
+        # is inside build_chat_context, which runs AFTER this block, so history's
+        # last user entry is the previous turn.
+        _prev_user_msg_ns = ""
+        try:
+            for _m in reversed(getattr(sess, "history", []) or []):
+                if getattr(_m, "role", "") == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        _c = next((i.get("text", "") for i in _c
+                                   if isinstance(i, dict) and i.get("type") == "text"), "")
+                    _prev_user_msg_ns = str(_c)[:500]
+                    break
+        except Exception:
+            pass
+        use_web, _ignored_allow_ws, _web_decision = await resolve_web_access(
+            chat_request.web_access, "chat", message, use_web, None,
+            prev_message=_prev_user_msg_ns,
+        )
+        if _web_decision:
+            logger.info("web_access decision=%s session=%s", _web_decision, session)
+
         # Build shared context (preset, preprocess, preface, compact)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
@@ -376,6 +403,7 @@ def setup_chat_routes(
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
         allow_web_search = form_data.get("allow_web_search")
+        web_access = form_data.get("web_access")
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
@@ -469,6 +497,37 @@ def setup_chat_routes(
                 pass
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
+
+        # Tri-state web access (off/auto/always). 'auto' runs the decider for
+        # chat mode and enables web tools for agent mode. Legacy clients that
+        # don't send web_access keep the old use_web/allow_web_search behavior.
+        #
+        # Extract the previous user message from history for the follow-up
+        # heuristic.  add_user_message is called inside build_chat_context
+        # (chat_helpers.py ~line 471), which runs AFTER this block, so
+        # sess.history's last user-role entry is the *previous* turn — exactly
+        # what the follow-up decider needs.
+        _prev_user_msg = ""
+        try:
+            for _m in reversed(getattr(sess, "history", []) or []):
+                if getattr(_m, "role", "") == "user":
+                    _c = _m.content
+                    if isinstance(_c, list):
+                        _c = next((i.get("text", "") for i in _c
+                                   if isinstance(i, dict) and i.get("type") == "text"), "")
+                    _prev_user_msg = str(_c)[:500]
+                    break
+        except Exception:
+            pass
+        from src.web_decider import resolve_web_access, apply_incognito
+        use_web, allow_web_search, _web_decision = await resolve_web_access(
+            web_access, chat_mode, message if isinstance(message, str) else "",
+            use_web, allow_web_search,
+            prev_message=_prev_user_msg,
+        )
+        use_web, _web_decision = apply_incognito(incognito, use_web, _web_decision)
+        if _web_decision:
+            logger.info("web_access decision=%s session=%s", _web_decision, session)
 
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
@@ -642,6 +701,15 @@ def setup_chat_routes(
 
             if web_sources:
                 yield f"data: {json.dumps({'type': 'web_sources', 'data': web_sources})}\n\n"
+            elif (_web_decision in ("always", "auto-search")
+                  or str(use_web).lower() == "true"):
+                # Web was explicitly requested (or the decider chose to search)
+                # but returned nothing — surface a failure event so the UI can
+                # inform the user rather than silently answering stale.
+                # NOTE: "auto-skip" (the decider decided NOT to search) is
+                # intentional and must NOT fire this event — the condition above
+                # already excludes it.
+                yield f"data: {json.dumps({'type': 'web_search_failed'})}\n\n"
 
             # Emit which memories were injected into context (captured before stream)
             if ctx.used_memories:
@@ -930,12 +998,18 @@ def setup_chat_routes(
                             _stream_set(session, status="done")
                             yield chunk
                 except (asyncio.CancelledError, GeneratorExit):
-                    if full_response:
-                        logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
-                        sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
-                        if not incognito:
-                            session_manager.save_sessions()
+                    # Guard the save so a failure inside add_message /
+                    # save_sessions can't mask the original CancelledError
+                    # (same pattern as agent mode below).
+                    try:
+                        if full_response:
+                            logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
+                            _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
+                            if not incognito:
+                                session_manager.save_sessions()
+                    except Exception:
+                        logger.exception("Failed to save partial response on disconnect (chat mode, session %s)", session)
                     raise
                 finally:
                     _active_streams.pop(session, None)

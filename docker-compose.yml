@@ -61,6 +61,13 @@ services:
       # Find yours with:  id -u  /  id -g
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      # Paperclip sidecar (opt-in). Apollo reverse-proxies it at /paperclip and
+      # only reaches it on the internal network — the paperclip service has no
+      # host port mapping of its own.
+      - PAPERCLIP_ENABLED=${PAPERCLIP_ENABLED:-false}
+      - PAPERCLIP_MODE=docker
+      - PAPERCLIP_URL=http://paperclip:3100
+      - PAPERCLIP_MODEL_ENDPOINT=${PAPERCLIP_MODEL_ENDPOINT:-ollama}
     depends_on:
       searxng:
         condition: service_healthy
@@ -139,7 +146,58 @@ services:
       - NTFY_BASE_URL=${NTFY_BASE_URL:-http://localhost:8091}
     restart: unless-stopped
 
+  # ── Paperclip (bundled agent-management UI) ──────────────────────────────
+  # Opt-in: only do anything when PAPERCLIP_ENABLED=true in .env. Reached only
+  # through Apollo's /paperclip reverse proxy — no host port is published.
+  paperclip-db:
+    profiles: ["paperclip"]
+    image: docker.io/postgres:17-alpine
+    environment:
+      POSTGRES_USER: paperclip
+      POSTGRES_PASSWORD: paperclip
+      POSTGRES_DB: paperclip
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperclip -d paperclip"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    volumes:
+      - paperclip-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  paperclip:
+    profiles: ["paperclip"]
+    build:
+      context: https://github.com/paperclipai/paperclip.git#v2026.529.0
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://paperclip:paperclip@paperclip-db:5432/paperclip
+      PORT: "3100"
+      HOST: "0.0.0.0"
+      SERVE_UI: "true"
+      PAPERCLIP_DEPLOYMENT_MODE: "authenticated"
+      PAPERCLIP_DEPLOYMENT_EXPOSURE: "private"
+      PAPERCLIP_PUBLIC_URL: "${PAPERCLIP_PUBLIC_URL:-http://localhost:${APP_PORT:-7000}/paperclip}"
+      # Required when the paperclip profile is active. Soft default so a normal
+      # `docker compose up` (feature off) never fails on a missing var; set this
+      # in .env before `--profile paperclip up` (openssl rand -hex 32).
+      BETTER_AUTH_SECRET: "${PAPERCLIP_AUTH_SECRET:-}"
+      # opencode-local -> local model (Ollama on the host). Confirm exact keys
+      # via the spike (S3) and adjust if opencode reads a different var.
+      OPENAI_BASE_URL: "${PAPERCLIP_MODEL_BASE_URL:-http://host.docker.internal:11434/v1}"
+      OPENAI_API_KEY: "${PAPERCLIP_MODEL_API_KEY:-local}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - paperclip-data:/paperclip
+    depends_on:
+      paperclip-db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   searxng-data:
   chromadb-data:
   ntfy-cache:
+  paperclip-pgdata:
+  paperclip-data:

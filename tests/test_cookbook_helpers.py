@@ -115,6 +115,10 @@ def test_pip_install_fallback_chain_allows_custom_python_command():
     assert chain.count("bash -c '") == 2
 
 
+@pytest.mark.skipif(
+    sys.prefix == sys.base_prefix,
+    reason="venv_check must detect a real venv; CI runs the system interpreter",
+)
 def test_pip_install_fallback_chain_propagates_failure_in_venv():
     """When base install fails inside a venv, the chain must exit non-zero.
 

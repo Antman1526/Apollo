@@ -14,7 +14,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
-import core.database as cdb
+from tests.real_modules import import_real_module
+
+cdb = import_real_module("core.database")
 from core.database import CalendarEvent
 
 _TMPDB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
@@ -32,7 +34,8 @@ def _bind_temp_db(monkeypatch):
     # do_manage_calendar does `from core.database import SessionLocal` at call
     # time, so patch the module attribute to our temp DB — via monkeypatch so it
     # is RESTORED after each test and can't leak into later tests in the process.
-    monkeypatch.setattr(cdb, "SessionLocal", _TS)
+    real_cdb = import_real_module("core.database")
+    monkeypatch.setattr(real_cdb, "SessionLocal", _TS)
     yield
 
 

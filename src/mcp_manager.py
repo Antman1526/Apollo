@@ -5,9 +5,11 @@ Manages connections to MCP (Model Context Protocol) tool servers.
 Each server exposes tools that are made available to the agent loop.
 """
 
+import asyncio
 import json
 import logging
 import os
+import pathlib
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,18 @@ def _format_mcp_connection_error(name: str, command: str = "", args: Optional[Li
     return raw_error
 
 
+def _stdio_env(command: str, env: Dict[str, str] | None = None) -> Dict[str, str] | None:
+    """Build stdio child env, silencing npm/npx chatter that breaks MCP JSON-RPC."""
+    merged = {**os.environ, **(env or {})}
+    executable = pathlib.Path(command or "").name.lower()
+    if executable in {"npx", "npm", "npm.cmd", "npx.cmd"}:
+        merged.setdefault("NPM_CONFIG_LOGLEVEL", "silent")
+        merged.setdefault("NPM_CONFIG_FUND", "false")
+        merged.setdefault("NPM_CONFIG_AUDIT", "false")
+        merged.setdefault("NO_UPDATE_NOTIFIER", "1")
+    return merged if merged else None
+
+
 
 class McpManager:
     """Manages MCP server connections and tool routing."""
@@ -43,6 +57,15 @@ class McpManager:
         self._sessions: Dict[str, Any] = {}
         # server_id -> exit stack (for cleanup)
         self._stacks: Dict[str, Any] = {}
+        # server_id -> runner task that owns MCP transport context managers.
+        #
+        # Some MCP transports create task-affine cancel scopes. Opening the
+        # context in one task and closing it during FastAPI shutdown from
+        # another task raises "Attempted to exit cancel scope in a different
+        # task". The runner owns both enter and exit; disconnect_server only
+        # signals it to stop.
+        self._runners: Dict[str, asyncio.Task] = {}
+        self._stop_events: Dict[str, asyncio.Event] = {}
         # Tracking updates to tools/connections for RAG indexing
         self._generation = 0
 
@@ -82,57 +105,89 @@ class McpManager:
             from mcp.client.stdio import stdio_client
             from contextlib import AsyncExitStack
 
-            server_params = StdioServerParameters(
-                command=command,
-                args=args,
-                env={**os.environ, **env} if env else None,
+            ready: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            stop_event = asyncio.Event()
+            task = asyncio.create_task(
+                self._run_stdio_connection(
+                    server_id=server_id,
+                    name=name,
+                    command=command,
+                    args=args,
+                    env=env,
+                    ready=ready,
+                    stop_event=stop_event,
+                    client_session_cls=ClientSession,
+                    server_parameters_cls=StdioServerParameters,
+                    stdio_client=stdio_client,
+                    exit_stack_cls=AsyncExitStack,
+                ),
+                name=f"mcp-stdio-{server_id}",
             )
 
-            stack = AsyncExitStack()
-            transport = await stack.enter_async_context(stdio_client(server_params))
-            read_stream, write_stream = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
-
-            await session.initialize()
-
-            # Discover tools
-            tools_result = await session.list_tools()
-            tools = []
-            for tool in tools_result.tools:
-                tools.append({
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
-                })
-
-            self._sessions[server_id] = session
-            self._stacks[server_id] = stack
-            self._tools[server_id] = tools
-            # Extract identity hints from env vars (e.g. email address, API name)
-            # so tool descriptions can distinguish between multiple instances of
-            # the same MCP server (e.g. two email accounts).
-            identity_hints = []
-            for k, v in (env or {}).items():
-                k_lower = k.lower()
-                if any(x in k_lower for x in ['email_address', 'account', 'user', 'username']):
-                    identity_hints.append(v)
-            identity = ", ".join(identity_hints) if identity_hints else ""
-
-            self._connections[server_id] = {
-                "status": "connected",
-                "name": name,
-                "transport": "stdio",
-                "tool_count": len(tools),
-                "identity": identity,
-            }
-
-            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via stdio")
+            await ready
+            self._runners[server_id] = task
+            self._stop_events[server_id] = stop_event
             return True
 
         except ImportError:
             logger.warning("MCP package not installed. Install with: pip install mcp")
             self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
             return False
+
+    async def _run_stdio_connection(
+        self,
+        *,
+        server_id: str,
+        name: str,
+        command: str,
+        args: List[str],
+        env: Dict[str, str],
+        ready: asyncio.Future,
+        stop_event: asyncio.Event,
+        client_session_cls,
+        server_parameters_cls,
+        stdio_client,
+        exit_stack_cls,
+    ) -> None:
+        """Own the lifetime of a stdio MCP connection in one asyncio task."""
+        stack = exit_stack_cls()
+        try:
+            server_params = server_parameters_cls(
+                command=command,
+                args=args,
+                env=_stdio_env(command, env),
+            )
+            transport = await stack.enter_async_context(stdio_client(server_params))
+            read_stream, write_stream = transport
+            session = await stack.enter_async_context(client_session_cls(read_stream, write_stream))
+
+            await session.initialize()
+            tools = await self._discover_tools(session)
+
+            self._sessions[server_id] = session
+            self._tools[server_id] = tools
+            self._connections[server_id] = {
+                "status": "connected",
+                "name": name,
+                "transport": "stdio",
+                "tool_count": len(tools),
+                "identity": self._identity_from_env(env),
+            }
+
+            logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via stdio")
+            if not ready.done():
+                ready.set_result(True)
+            await stop_event.wait()
+        except Exception as e:
+            if not ready.done():
+                ready.set_exception(e)
+            else:
+                logger.warning(f"MCP server {server_id} runner stopped unexpectedly: {e}")
+        finally:
+            try:
+                await stack.aclose()
+            except Exception as e:
+                logger.warning(f"Error closing MCP server {server_id}: {e}")
 
     async def _connect_sse(self, server_id: str, name: str, url: str) -> bool:
         """Connect to an MCP server via SSE transport."""
@@ -141,25 +196,55 @@ class McpManager:
             from mcp.client.sse import sse_client
             from contextlib import AsyncExitStack
 
-            stack = AsyncExitStack()
+            ready: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            stop_event = asyncio.Event()
+            task = asyncio.create_task(
+                self._run_sse_connection(
+                    server_id=server_id,
+                    name=name,
+                    url=url,
+                    ready=ready,
+                    stop_event=stop_event,
+                    client_session_cls=ClientSession,
+                    sse_client=sse_client,
+                    exit_stack_cls=AsyncExitStack,
+                ),
+                name=f"mcp-sse-{server_id}",
+            )
+
+            await ready
+            self._runners[server_id] = task
+            self._stop_events[server_id] = stop_event
+            return True
+
+        except ImportError:
+            logger.warning("MCP package not installed. Install with: pip install mcp")
+            self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
+            return False
+
+    async def _run_sse_connection(
+        self,
+        *,
+        server_id: str,
+        name: str,
+        url: str,
+        ready: asyncio.Future,
+        stop_event: asyncio.Event,
+        client_session_cls,
+        sse_client,
+        exit_stack_cls,
+    ) -> None:
+        """Own the lifetime of an SSE MCP connection in one asyncio task."""
+        stack = exit_stack_cls()
+        try:
             transport = await stack.enter_async_context(sse_client(url))
             read_stream, write_stream = transport
-            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            session = await stack.enter_async_context(client_session_cls(read_stream, write_stream))
 
             await session.initialize()
-
-            # Discover tools
-            tools_result = await session.list_tools()
-            tools = []
-            for tool in tools_result.tools:
-                tools.append({
-                    "name": tool.name,
-                    "description": tool.description or "",
-                    "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
-                })
+            tools = await self._discover_tools(session)
 
             self._sessions[server_id] = session
-            self._stacks[server_id] = stack
             self._tools[server_id] = tools
             self._connections[server_id] = {
                 "status": "connected",
@@ -169,21 +254,56 @@ class McpManager:
             }
 
             logger.info(f"MCP server connected: {name} ({server_id}) - {len(tools)} tools via SSE")
-            return True
-
-        except ImportError:
-            logger.warning("MCP package not installed. Install with: pip install mcp")
-            self._connections[server_id] = {"status": "error", "error": "mcp package not installed", "name": name}
-            return False
-
-    async def disconnect_server(self, server_id: str):
-        """Disconnect from an MCP server."""
-        stack = self._stacks.pop(server_id, None)
-        if stack:
+            if not ready.done():
+                ready.set_result(True)
+            await stop_event.wait()
+        except Exception as e:
+            if not ready.done():
+                ready.set_exception(e)
+            else:
+                logger.warning(f"MCP server {server_id} runner stopped unexpectedly: {e}")
+        finally:
             try:
                 await stack.aclose()
             except Exception as e:
                 logger.warning(f"Error closing MCP server {server_id}: {e}")
+
+    async def _discover_tools(self, session) -> List[Dict]:
+        tools_result = await session.list_tools()
+        tools = []
+        for tool in tools_result.tools:
+            tools.append({
+                "name": tool.name,
+                "description": tool.description or "",
+                "input_schema": tool.inputSchema if hasattr(tool, 'inputSchema') else {},
+            })
+        return tools
+
+    def _identity_from_env(self, env: Dict[str, str]) -> str:
+        identity_hints = []
+        for k, v in (env or {}).items():
+            k_lower = k.lower()
+            if any(x in k_lower for x in ['email_address', 'account', 'user', 'username']):
+                identity_hints.append(v)
+        return ", ".join(identity_hints) if identity_hints else ""
+
+    async def disconnect_server(self, server_id: str):
+        """Disconnect from an MCP server."""
+        task = self._runners.pop(server_id, None)
+        stop_event = self._stop_events.pop(server_id, None)
+        if task and stop_event:
+            stop_event.set()
+            try:
+                await task
+            except Exception as e:
+                logger.warning(f"Error closing MCP server {server_id}: {e}")
+        else:
+            stack = self._stacks.pop(server_id, None)
+            if stack:
+                try:
+                    await stack.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing MCP server {server_id}: {e}")
 
         self._sessions.pop(server_id, None)
         self._tools.pop(server_id, None)

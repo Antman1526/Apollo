@@ -1077,6 +1077,14 @@ const _GOOGLE_OAUTH_HELP = `To get Google OAuth credentials:
 9. If accessing remotely: sign in, then copy the URL from the error page and paste it back`;
 
 const MCP_PRESETS = [
+  { name: "Apollo Workspace Filesystem", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "."], env: {},
+    help: "Recommended local development server. Grants MCP file access only to the configured workspace directory. Replace '.' with an absolute project path if Apollo is launched from another directory." },
+  { name: "Web Fetch",       command: "uvx", args: ["mcp-server-fetch"],                                env: {},
+    help: "Recommended research server. Fetches web pages and converts HTML to markdown. Security note: this can reach network/internal URLs, so keep it enabled only for trusted local use." },
+  { name: "Sequential Thinking", command: "npx", args: ["-y", "@modelcontextprotocol/server-sequential-thinking"], env: {},
+    help: "Recommended planning server. Adds one structured reasoning tool for breaking down multi-step tasks, revising plans, and tracking solution branches." },
+  { name: "Apollo Git Tools", command: "uvx", args: ["mcp-server-git", "--repository", "."],             env: {},
+    help: "Recommended codebase server. Exposes git status, diffs, logs, branches, and commits for the configured repository. Replace '.' with an absolute repo path if needed." },
   { name: "Gmail",           command: "npx", args: ["-y", "@gongrzhe/server-gmail-autoauth-mcp"],      env: { GOOGLE_CLIENT_ID: "", GOOGLE_CLIENT_SECRET: "" },
     oauthFile: { dir: "~/.gmail-mcp", filename: "gcp-oauth.keys.json" },
     oauth: {

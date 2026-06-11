@@ -41,11 +41,27 @@ def _get_search_settings() -> dict:
 
 
 def _get_search_instance() -> str:
-    """Return the active search API URL from admin settings, falling back to env var."""
+    """Active search API URL.
+
+    Precedence: explicit search_url setting > explicit SEARXNG_INSTANCE env
+    (deployment-level, e.g. Docker compose) > managed sidecar when actually
+    installed > built-in default constant.
+    """
     settings = _get_search_settings()
     url = (settings.get("search_url") or "").strip()
     if url:
         return url.rstrip("/")
+    env_url = (os.environ.get("SEARXNG_INSTANCE") or "").strip()
+    if env_url:
+        return env_url.rstrip("/")
+    if settings.get("searxng_managed", True):
+        try:
+            from services.searxng.runtime import get_runtime
+            rt = get_runtime()
+            if rt.installed:
+                return rt.url
+        except Exception:
+            pass
     return SEARXNG_INSTANCE
 
 
@@ -189,7 +205,7 @@ def searxng_search_api(query: str, count: int = 10, categories: str = "general",
                 f"{instance}/search",
                 params=search_params,
                 headers=headers or None,
-                timeout=15,
+                timeout=httpx.Timeout(15.0, connect=2.0),
             )
             response.raise_for_status()
             data = response.json()
@@ -259,7 +275,7 @@ def searxng_search(query, max_results=10):
             f"{instance}/search",
             params={"q": query, "safesearch": _safesearch_for("searxng")},
             headers=req_headers,
-            timeout=10,
+            timeout=httpx.Timeout(10.0, connect=2.0),
         )
         if response.is_success:
             soup = BeautifulSoup(response.text, "html.parser")

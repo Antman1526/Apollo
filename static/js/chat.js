@@ -749,12 +749,18 @@ import createResearchSynapse from './researchSynapse.js';
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
-      if (el('web-toggle').checked) {
-        if (isAgentMode) {
-          fd.append('allow_web_search', 'true');
-        } else {
-          fd.append('use_web', 'true');
-        }
+      let _webMode = Storage.getWebMode(isAgentMode ? 'agent' : 'chat');
+      // Transient overrides (/search slash command, server-driven UI toggle,
+      // compare mode) check the hidden checkbox directly without writing the
+      // webmode_* storage keys — honor them for this message.
+      if (_webMode === 'off' && el('web-toggle').checked) _webMode = 'always';
+      const _incog = el('incognito-toggle');
+      if (_incog && _incog.checked) _webMode = 'off';
+      fd.append('web_access', _webMode);
+      if (_webMode === 'always') {
+        // Keep legacy flags so older server code paths behave identically.
+        if (isAgentMode) fd.append('allow_web_search', 'true');
+        else fd.append('use_web', 'true');
       }
       if (el('research-toggle').checked) {
         fd.append('use_research', 'true');
@@ -801,12 +807,13 @@ import createResearchSynapse from './researchSynapse.js';
       // Track holder globally so stop button can access it
       currentHolder = holder;
       holder._researchQuery = msg; // Store query for notification text
+      holder._webMode = _webMode;  // For auto-search feedback in web_sources handler
       
       const modelName = sessionModule.getCurrentModel() || null;
 
       let loadingText = 'Initializing...';
 
-      if (el('web-toggle').checked && !_isAgent) {
+      if (_webMode === 'always' && !_isAgent) {
         const _searchLabel = searchModule ? searchModule.getProviderLabel() : 'web';
         loadingText = `Searching via ${_searchLabel}...<br>
                        <span style="font-size: 0.9em; opacity: 0.8;">
@@ -834,7 +841,7 @@ import createResearchSynapse from './researchSynapse.js';
       spinner.start();
       
       // Update spinner message based on mode
-      if (el('web-toggle').checked && !_isAgent) {
+      if (_webMode === 'always' && !_isAgent) {
         spinner.updateMessage('Searching web with ' + (searchModule ? searchModule.getProviderLabel() : 'SearXNG'));
         setTimeout(() => spinner.updateMessage('Processing results'), 1500);
       } else if (el('research-toggle').checked) {
@@ -1748,6 +1755,26 @@ import createResearchSynapse from './researchSynapse.js';
                 if (json.data && json.data.length > 0) {
                   _sourcesData = json.data; _sourcesType = 'web';
                   _sourcesHtml = _buildSourcesBox(json.data, 'web');
+                  // Auto-search feedback: let the user know the server decided to search.
+                  if (holder._webMode === 'auto' && spinner && spinner.updateMessage) {
+                    spinner.updateMessage('Searched the web');
+                  }
+                  // First-auto-search splash (self-limits to SPLASH_MAX via SPLASH_COUNT_KEY).
+                  if (holder._webMode === 'auto' && window._showToolSplash) {
+                    window._showToolSplash('web');
+                  }
+                }
+              } else if (json.type === 'web_search_failed') {
+                // Web was requested but returned no results — let the user know
+                // the response may be stale (no live search data).
+                if (!_isBg) {
+                  if (spinner && spinner.updateMessage) {
+                    spinner.updateMessage('Web search unavailable');
+                  }
+                  uiModule.showToast(
+                    'Web search failed — answering without live results',
+                    3000
+                  );
                 }
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback

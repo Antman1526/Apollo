@@ -74,16 +74,15 @@ def test_sanitize_merges_consecutive_user_messages():
     ]
     out = _sanitize_llm_messages(messages)
 
-    # Only consecutive user messages should be merged.
-    # Consecutive system/assistant/tool messages are left as-is.
-    assert len(out) == 7
+    # Only consecutive user messages should be merged. Orphan tool messages are
+    # dropped because OpenAI-compatible providers require a preceding assistant
+    # message with matching tool_calls.
+    assert len(out) == 5
     assert out[0] == {"role": "system", "content": "System message 1"}
     assert out[1] == {"role": "system", "content": "System message 2"}
     assert out[2] == {"role": "user", "content": "User message 1\n\nUser message 2"}
     assert out[3] == {"role": "assistant", "content": "Assistant message 1"}
     assert out[4] == {"role": "assistant", "content": "Assistant message 2"}
-    assert out[5] == {"role": "tool", "content": "Tool output 1", "tool_call_id": "c1"}
-    assert out[6] == {"role": "tool", "content": "Tool output 2", "tool_call_id": "c2"}
 
 
 def test_sanitize_merges_search_results_and_user_query():
@@ -138,7 +137,6 @@ def test_build_anthropic_payload_alternating_roles():
     assert len(anth_messages) == 1
     assert anth_messages[0]["role"] == "user"
     assert anth_messages[0]["content"] == "web search results\n\nuser query"
-
 
 
 

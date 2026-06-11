@@ -1,5 +1,17 @@
 import json
+import sys
 from types import SimpleNamespace
+
+from tests.real_modules import import_real_module
+
+_endpoint_resolver = sys.modules.get("src.endpoint_resolver")
+if _endpoint_resolver is not None and not isinstance(getattr(_endpoint_resolver, "__file__", None), str):
+    sys.modules.pop("src.endpoint_resolver", None)
+    sys.modules.pop("routes.chat_routes", None)
+    routes_pkg = sys.modules.get("routes")
+    if routes_pkg is not None and hasattr(routes_pkg, "chat_routes"):
+        delattr(routes_pkg, "chat_routes")
+import_real_module("src.endpoint_resolver")
 
 from routes import chat_routes
 

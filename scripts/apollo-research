@@ -20,8 +20,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
 from cli import quiet_logs, emit, fail, common_parser, run, REPO_ROOT as _REPO_ROOT
 quiet_logs()
 
-import argparse, json, logging, os, sys
+import argparse, asyncio, contextlib, json, logging, os, sys
 from pathlib import Path
+from services.research import crawl4ai_adapter
 
 _DATA_DIR = _REPO_ROOT / "data" / "deep_research"
 
@@ -132,6 +133,57 @@ def cmd_delete(args):
     emit({"ok": True, "deleted": snap_summary}, args)
 
 
+def cmd_crawl(args):
+    with contextlib.redirect_stdout(sys.stderr):
+        result = asyncio.run(crawl4ai_adapter.crawl_url(
+            args.url,
+            word_count_threshold=args.word_count_threshold,
+            timeout_seconds=args.timeout_seconds,
+        ))
+    session_id = ""
+    if args.save:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        import time
+        session_id = f"c4a-{__import__('uuid').uuid4().hex[:12]}"
+        now = time.time()
+        record = {
+            "id": session_id,
+            "owner": args.owner,
+            "query": f"Crawl4AI source import: {result.url}",
+            "category": "crawl4ai",
+            "status": "complete" if result.success else "error",
+            "started_at": now,
+            "completed_at": now,
+            "archived": False,
+            "result": result.markdown,
+            "raw_findings": [result.markdown] if result.markdown else [],
+            "sources": [{
+                "title": result.title or result.url,
+                "url": result.url,
+                "status_code": result.status_code,
+                "type": "crawl4ai",
+            }],
+            "stats": {"Extractor": "crawl4ai", "Status": result.status_code},
+            "crawl4ai": result.to_dict(),
+        }
+        (_DATA_DIR / f"{session_id}.json").write_text(json.dumps(record, default=str), encoding="utf-8")
+    if args.raw:
+        sys.stdout.write(result.markdown)
+        if not result.markdown.endswith("\n"):
+            sys.stdout.write("\n")
+        return
+    emit({
+        "ok": result.success,
+        "session_id": session_id,
+        "url": result.url,
+        "status_code": result.status_code,
+        "title": result.title,
+        "saved": bool(session_id),
+        "markdown_chars": len(result.markdown),
+        "error": result.error,
+    }, args)
+
+
 def _build_parser():
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--pretty", action="store_true")
@@ -160,6 +212,15 @@ def _build_parser():
     pd = sub.add_parser("delete", parents=[common])
     pd.add_argument("id")
     pd.set_defaults(func=cmd_delete)
+
+    pc = sub.add_parser("crawl", parents=[common])
+    pc.add_argument("url")
+    pc.add_argument("--word-count-threshold", type=int, default=10)
+    pc.add_argument("--timeout-seconds", type=float, default=90)
+    pc.add_argument("--owner", default=os.getenv("APOLLO_OWNER", "local"))
+    pc.add_argument("--no-save", dest="save", action="store_false")
+    pc.add_argument("--raw", action="store_true", help="write raw markdown to stdout")
+    pc.set_defaults(func=cmd_crawl, save=True)
 
     return p
 

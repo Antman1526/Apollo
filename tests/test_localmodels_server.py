@@ -76,3 +76,19 @@ def test_unknown_model_raises():
         assert False, "expected LookupError"
     except LookupError:
         pass
+
+
+def test_serving_context_uses_known_window_capped(monkeypatch):
+    srv = LocalModelServer(dirs_provider=lambda: [])
+    # Llama 3.2 has a huge known window — capped to the env limit (default 16384).
+    big = _model("m1", "Llama-3.2-3B-Instruct-Q4_K_M")
+    assert srv._serving_context(big) == 16384
+    # Unknown models fall back to the cap, never below the configured floor.
+    unknown = _model("m2", "Totally-Unknown-Model-Q4_K_M")
+    assert srv._serving_context(unknown) >= 4096
+    # The cap is tunable.
+    monkeypatch.setenv("APOLLO_LLAMA_CONTEXT", "8192")
+    assert srv._serving_context(big) == 8192
+    # A bogus env value falls back without crashing.
+    monkeypatch.setenv("APOLLO_LLAMA_CONTEXT", "not-a-number")
+    assert srv._serving_context(big) == 16384

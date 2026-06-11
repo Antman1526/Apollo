@@ -1,4 +1,5 @@
 # routes/session_routes.py
+import os
 import re
 import html
 import json
@@ -12,6 +13,16 @@ from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
 from src.auth_helpers import get_current_user, effective_user
+
+
+def _auth_disabled() -> bool:
+    """Single-user mode: no auth middleware runs, so requests carry no user.
+
+    Mirrors core.middleware.require_admin's check — when auth is explicitly
+    disabled, ownership gating is moot and must not lock the user out of
+    their own sessions (rename, model switch, archive, delete).
+    """
+    return os.getenv("AUTH_ENABLED", "true").lower() == "false"
 
 
 def _sanitize_export_filename(name: str) -> str:
@@ -37,6 +48,8 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
     """
     user = effective_user(request)
     if not user:
+        if _auth_disabled():
+            return  # single-user mode: every session belongs to the user
         raise HTTPException(403, "Authentication required")
     db = SessionLocal()
     try:
@@ -382,8 +395,11 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     result["folder"] = folder if folder else None
             finally:
                 db.close()
-        # Switch model/endpoint mid-session
-        if model is not None and endpoint_url is not None:
+        # Switch model/endpoint mid-session. endpoint_id alone is sufficient —
+        # the branch below resolves it to a URL (create_session already accepts
+        # it standalone); requiring endpoint_url too made API calls that sent
+        # model+endpoint_id silently no-op with a 200.
+        if model is not None and (endpoint_url is not None or (endpoint_id and endpoint_id.strip())):
             user = get_current_user(request)
             _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
             endpoint_api_key = ""
@@ -611,9 +627,10 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         db = SessionLocal()
         try:
             q = db.query(DbSession).filter(DbSession.archived == True)
-            if not user:
+            if user:
+                q = q.filter(DbSession.owner == user)
+            elif not _auth_disabled():
                 raise HTTPException(403, "Authentication required")
-            q = q.filter(DbSession.owner == user)
             if search:
                 safe_search = search.replace('%', r'\%').replace('_', r'\_')
                 q = q.filter(DbSession.name.ilike(f"%{safe_search}%", escape='\\'))

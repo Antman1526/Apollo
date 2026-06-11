@@ -783,6 +783,15 @@ export function stripToolBlocks(text) {
 /**
  * Build a collapsible sources box (used by both research and web search).
  */
+// Map of known provider ids to display names for the badge.
+var PROVIDER_NAMES = {
+  duckduckgo: 'DuckDuckGo',
+  brave: 'Brave',
+  tavily: 'Tavily',
+  serper: 'Serper',
+  google_pse: 'Google'
+};
+
 export function buildSourcesBox(sources, type, expanded) {
   var esc = uiModule.esc;
   var id = 'sources-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
@@ -801,11 +810,24 @@ export function buildSourcesBox(sources, type, expanded) {
       + '<span class="source-domain">' + esc(domain) + '</span>'
       + '</a>';
   }
+  // Provider badge: show when any source came from a non-searxng provider (fallback).
+  var providerBadge = '';
+  if (type === 'web') {
+    var fallbackProvider = null;
+    for (var j = 0; j < sources.length; j++) {
+      var p = sources[j] && sources[j].provider;
+      if (p && p !== 'searxng') { fallbackProvider = p; break; }
+    }
+    if (fallbackProvider) {
+      var displayName = PROVIDER_NAMES[fallbackProvider] || fallbackProvider;
+      providerBadge = '<span class="sources-provider-badge">via ' + esc(displayName) + '</span>';
+    }
+  }
   var arrow = expanded ? 'down' : 'right';
   var expandedClass = expanded ? ' expanded' : '';
   return '<div class="sources-section">'
     + '<div class="sources-header" data-sources-id="' + id + '" onclick="window.toggleSources(\'' + id + '\')">'
-    + '<div class="sources-header-left">' + SEARCH_ICON + '<span>' + count + ' ' + label + '</span></div>'
+    + '<div class="sources-header-left">' + SEARCH_ICON + '<span>' + count + ' ' + label + '</span>' + providerBadge + '</div>'
     + '<span class="sources-toggle" id="' + id + '-toggle" data-arrow="' + arrow + '"></span>'
     + '</div>'
     + '<div class="sources-content' + expandedClass + '" id="' + id + '">'
@@ -931,11 +953,7 @@ function _appendReportButton(container, sessionId) {
     } catch (e) {
       chatBtn.disabled = false;
       chatBtn.innerHTML = origLabel;
-      if (window.uiModule && uiModule.showError) {
-        uiModule.showError('Could not start follow-up chat: ' + e.message);
-      } else {
-        alert('Could not start follow-up chat: ' + e.message);
-      }
+      uiModule.showError?.('Could not start follow-up chat: ' + e.message);
     }
   });
   wrap.appendChild(chatBtn);

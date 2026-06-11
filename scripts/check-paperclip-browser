@@ -1,0 +1,75 @@
+#!/usr/bin/env python3
+"""Run browser-use verification against Apollo's Paperclip Floor."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from services.paperclip import browser_use_verifier
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="check-paperclip-browser")
+    parser.add_argument("--base-url", default=os.getenv("APOLLO_BROWSER_VERIFY_URL", "http://127.0.0.1:7000"))
+    parser.add_argument("--timeout-seconds", type=float, default=float(os.getenv("APOLLO_BROWSER_USE_TIMEOUT", "180")))
+    parser.add_argument("--output", default=os.getenv("APOLLO_BROWSER_USE_OUTPUT", ".apollo/paperclip-browser-use.json"))
+    parser.add_argument(
+        "--llm-provider",
+        choices=("local", "browser-use"),
+        help="LLM backend for the browser agent. Defaults to local Apollo lmproxy.",
+    )
+    parser.add_argument(
+        "--model",
+        help="Model name for the browser agent. Local names without a provider are sent as openai/<name>.",
+    )
+    parser.add_argument(
+        "--model-base-url",
+        help="OpenAI-compatible API base URL for local mode. Defaults to <base-url>/lmproxy/v1.",
+    )
+    parser.add_argument(
+        "--model-api-key",
+        help="API key/token for local mode. Defaults to Apollo's Paperclip proxy token.",
+    )
+    parser.add_argument("--status", action="store_true", help="Report browser-use availability without running an agent")
+    parser.add_argument("--dry-run", action="store_true", help="Print the generated verification task without running it")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.llm_provider:
+        os.environ["APOLLO_BROWSER_USE_LLM_PROVIDER"] = args.llm_provider
+    if args.model:
+        os.environ["APOLLO_BROWSER_USE_MODEL"] = args.model
+    if args.model_base_url:
+        os.environ["APOLLO_BROWSER_USE_BASE_URL"] = args.model_base_url
+    if args.model_api_key:
+        os.environ["APOLLO_BROWSER_USE_API_KEY"] = args.model_api_key
+
+    if args.status:
+        print(json.dumps(browser_use_verifier.status(args.base_url), indent=2))
+        return 0
+    task = browser_use_verifier.paperclip_floor_task(args.base_url)
+    if args.dry_run:
+        print(json.dumps({"task": task, "browser_use": browser_use_verifier.status(args.base_url)}, indent=2))
+        return 0
+    try:
+        result = browser_use_verifier.verify_paperclip_floor(
+            args.base_url,
+            timeout_seconds=args.timeout_seconds,
+            output_path=args.output,
+        )
+    except browser_use_verifier.BrowserUseUnavailable as e:
+        print(json.dumps({"ok": False, "error": str(e), "browser_use": browser_use_verifier.status(args.base_url)}, indent=2))
+        return 2
+    print(json.dumps(result.to_dict(), indent=2))
+    return 0 if result.ok else result.returncode or 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

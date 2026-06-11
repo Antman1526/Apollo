@@ -1,15 +1,20 @@
 """Search routes — /api/search/config GET, /api/search POST."""
 
 import logging
+import os
+import subprocess
+import threading
 from typing import Dict, Any
 
 from fastapi import APIRouter, Request
 
 import time
 
+from core.middleware import require_admin
 from services.search import get_search_config, comprehensive_web_search, PROVIDER_INFO
 from services.search.core import _call_provider
 from services.search.providers import _get_provider_key, _get_search_instance
+from src.constants import BASE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -107,5 +112,68 @@ def setup_search_routes(config) -> APIRouter:
             elapsed = round(time.time() - t0, 2)
             logger.error(f"Search provider {provider} failed: {e}")
             return {"results": [], "provider": provider, "time": elapsed, "error": str(e)}
+
+    # ── Managed SearXNG sidecar ──
+    _install_state = {"running": False, "log": [], "ok": None}
+
+    @router.get("/api/search/searxng/status")
+    async def searxng_status(request: Request):
+        require_admin(request)
+        from services.searxng.runtime import get_runtime, _LOG_PATH
+        rt = get_runtime()
+        # Read the last 20 lines of the sidecar runtime log defensively.
+        _runtime_log_tail: list = []
+        try:
+            if os.path.exists(_LOG_PATH):
+                with open(_LOG_PATH, "r", errors="replace") as _lf:
+                    _runtime_log_tail = _lf.read().splitlines()[-20:]
+        except Exception:
+            pass
+        return {
+            "status": rt.status(),
+            "url": rt.url,
+            "installing": _install_state["running"],
+            "install_ok": _install_state["ok"],
+            "log_tail": _install_state["log"][-20:],
+            "runtime_log_tail": _runtime_log_tail,
+        }
+
+    @router.post("/api/search/searxng/install")
+    async def searxng_install(request: Request):
+        require_admin(request)
+        if _install_state["running"]:
+            return {"started": False, "reason": "already running"}
+        _install_state.update(running=True, log=[], ok=None)
+
+        def _run():
+            from services.searxng.runtime import get_runtime
+            if os.name == "nt":
+                script = os.path.join(BASE_DIR, "scripts", "setup-searxng.ps1")
+                cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]
+            else:
+                script = os.path.join(BASE_DIR, "scripts", "setup-searxng.sh")
+                cmd = ["bash", script]
+            try:
+                logger.info("searxng install: stopping sidecar for update")
+                get_runtime().stop()
+                proc = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                )
+                for line in proc.stdout:
+                    _install_state["log"].append(line.rstrip())
+                ok = proc.wait() == 0
+                _install_state["ok"] = ok
+                if ok:
+                    logger.info("searxng install: script succeeded — starting updated sidecar")
+                    get_runtime().start()
+            except Exception as e:
+                _install_state["log"].append(f"install failed: {e}")
+                _install_state["ok"] = False
+            finally:
+                _install_state["running"] = False
+
+        threading.Thread(target=_run, name="searxng-install", daemon=True).start()
+        return {"started": True}
 
     return router

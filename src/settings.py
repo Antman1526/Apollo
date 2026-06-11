@@ -53,6 +53,17 @@ DEFAULT_SETTINGS = {
     # rate-limits, we try DuckDuckGo next. Free, no API key required, so
     # safe to ship on by default for every user.
     "search_fallback_chain": ["duckduckgo"],
+    # Managed SearXNG sidecar (no Docker): Apollo installs SearXNG into
+    # data/searxng/ and supervises it like the Paperclip sidecar. When the
+    # sidecar isn't running, the provider chain skips straight to the
+    # fallback (DuckDuckGo) with no timeout penalty.
+    "searxng_managed": True,
+    "searxng_port": 8893,
+    # Default web access behavior when the client doesn't send web_access:
+    # "manual" — legacy per-message toggles only
+    # "auto"   — decider chooses per message whether to pre-search
+    # "always" — pre-search every chat message
+    "web_access_mode": "manual",
     "search_url": "",
     "search_result_count": 5,
     # SafeSearch level applied to every provider that exposes one.

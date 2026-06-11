@@ -24,7 +24,7 @@ import html
 from html.parser import HTMLParser as _HTMLParser
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from email.mime.text import MIMEText
@@ -34,6 +34,10 @@ from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPExc
 from fastapi.responses import FileResponse
 
 from src.llm_core import llm_call_async
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 from routes.email_helpers import (
     _strip_think, _extract_reply, _apply_email_style_mechanics, require_owner, require_user, _assert_owns_account,
@@ -107,7 +111,7 @@ def _record_email_received_events(owner: str, account_id: str | None, folder: st
     try:
         from src.event_bus import fire_event
         account_key = (account_id or "default").strip() or "default"
-        now = datetime.utcnow().isoformat() + "Z"
+        now = _utcnow().isoformat() + "Z"
         keys = []
         for e in emails:
             key = (e.get("message_id") or e.get("uid") or "").strip()
@@ -172,6 +176,18 @@ def _list_imap_folders(conn) -> tuple[list, list[str]]:
         return folders, names
     except Exception:
         return [], []
+
+
+def _email_imap_configured(account_id: str | None = None, owner: str = "") -> bool:
+    try:
+        cfg = _get_email_config(account_id, owner=owner, log_missing=False)
+    except Exception:
+        return False
+    return bool(
+        (cfg.get("imap_host") or "").strip()
+        and (cfg.get("imap_user") or "").strip()
+        and (cfg.get("imap_password") or "").strip()
+    )
 
 
 def _resolve_mail_folder(conn, preferred: str, role: str = "") -> str:
@@ -496,12 +512,16 @@ def setup_email_routes():
                         del _IMAP_POOL[pool_key]
                         return conn, True  # reused
                     except Exception:
-                        try: conn.logout()
-                        except Exception: pass
+                        try:
+                            conn.logout()
+                        except Exception as e:
+                            logger.debug("Failed to close stale pooled IMAP connection for %s: %s", pool_key, e, exc_info=True)
                         del _IMAP_POOL[pool_key]
                 else:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception as e:
+                        logger.debug("Failed to close idle pooled IMAP connection for %s: %s", pool_key, e, exc_info=True)
                     del _IMAP_POOL[pool_key]
         # Fresh connection
         return _imap_connect(account_id, owner=owner), False
@@ -510,8 +530,10 @@ def setup_email_routes():
         # SECURITY: match the (account_id, owner) key used by _pooled_connect
         # so a pooled handle is returned to the same per-user slot.
         if not ok:
-            try: conn.logout()
-            except Exception: pass
+            try:
+                conn.logout()
+            except Exception as e:
+                logger.debug("Failed to close failed IMAP connection for account=%s owner=%s: %s", account_id, owner, e, exc_info=True)
             return
         with _pool_lock:
             _IMAP_POOL[(account_id, owner)] = (conn, _time.monotonic())
@@ -603,6 +625,14 @@ def setup_email_routes():
         """
         conn = None
         try:
+            if not _email_imap_configured(account_id, owner=owner):
+                return {
+                    "emails": [],
+                    "total": 0,
+                    "folder": folder,
+                    "offset": offset,
+                    "configured": False,
+                }
             conn = _imap_connect(account_id, owner=owner)
             select_status, _ = conn.select(_q(folder), readonly=True)
             if select_status != "OK":
@@ -972,7 +1002,7 @@ def setup_email_routes():
             _list_emails_sync, folder, limit, offset, filter, account_id, from_addr,
             bool(has_attachments), owner,
         )
-        if result and not result.get("error"):
+        if result and not result.get("error") and result.get("configured", True) is not False:
             if offset == 0 and not from_addr and not has_attachments and filter in ("all", "unread", "unanswered", "undone"):
                 _record_email_received_events(owner, account_id, folder, result.get("emails") or [])
                 _schedule_recent_email_warm(result.get("emails") or [], folder, account_id, owner)
@@ -1185,8 +1215,8 @@ def setup_email_routes():
                     with _imap(account_id, owner=owner) as conn2:
                         conn2.select(_q(folder))
                         conn2.uid("STORE", _uid_bytes(uid), "+FLAGS", "\\Seen")
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to mark email uid=%s folder=%s as seen: %s", uid, folder, e, exc_info=True)
             _t_total = _t.monotonic() - _t0
             if _t_total > 2.0:
                 logger.warning(
@@ -1232,8 +1262,8 @@ def setup_email_routes():
                         ).fetchone()
                         if _rs and _rs[0]:
                             cached_sender_sig = _rs[0]
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Sender signature cache lookup failed for %s: %s", sender_addr, e, exc_info=True)
                 if _row3:
                     cached_boundaries = {"sig_start": _row3[0], "quote_start": _row3[1]}
                     if _row3[2]:
@@ -1254,8 +1284,8 @@ def setup_email_routes():
                         except Exception:
                             cached_turns = None
                 _c.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Email cached metadata lookup failed for message_id=%s: %s", message_id, e, exc_info=True)
 
             # If no cached turns, parse on-the-fly so the client never has
             # to do the heavy lifting. Cheap on a 50KB body, free for short
@@ -1513,7 +1543,7 @@ def setup_email_routes():
                 )
 
                 upload_id = f"{uuid.uuid4().hex}.pdf"
-                today = datetime.utcnow().strftime("%Y/%m/%d")
+                today = _utcnow().strftime("%Y/%m/%d")
                 dated_dir = _os.path.join(UPLOAD_DIR, today)
                 _os.makedirs(dated_dir, exist_ok=True)
                 dest_path = _os.path.join(dated_dir, upload_id)
@@ -1929,7 +1959,7 @@ def setup_email_routes():
         if cc:
             outer["Cc"] = cc
         outer["Subject"] = subject or ""
-        outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        outer["Date"] = _utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
         _apply_apollo_headers(outer, apollo_kind or "scheduled", apollo_ref)
         if in_reply_to:
             outer["In-Reply-To"] = in_reply_to
@@ -1997,7 +2027,7 @@ def setup_email_routes():
                 req.get("references") or None,
                 json.dumps(req.get("attachments") or []),
                 send_at,
-                datetime.utcnow().isoformat(),
+                _utcnow().isoformat(),
                 req.get("account_id") or None,
                 req.get("apollo_kind") or "scheduled",
                 owner or "",
@@ -2127,7 +2157,7 @@ def setup_email_routes():
         if req.cc:
             outer["Cc"] = req.cc
         outer["Subject"] = req.subject
-        outer["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        outer["Date"] = _utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
         outer["Message-ID"] = email.utils.make_msgid(domain="apollo.local")
 
         if req.in_reply_to:
@@ -2305,7 +2335,7 @@ def setup_email_routes():
         if req.bcc:
             msg["Bcc"] = req.bcc
         msg["Subject"] = req.subject
-        msg["Date"] = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+        msg["Date"] = _utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
 
         if req.in_reply_to:
             msg["In-Reply-To"] = req.in_reply_to
@@ -2539,7 +2569,7 @@ def setup_email_routes():
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """, (
                         mid, data.get("uid", ""), data.get("folder", ""),
-                        subject, sender, content, model, datetime.utcnow().isoformat(),
+                        subject, sender, content, model, _utcnow().isoformat(),
                     ))
                     _c.commit()
                     _c.close()
@@ -2779,7 +2809,7 @@ def setup_email_routes():
                         INSERT OR REPLACE INTO email_ai_replies
                         (message_id, uid, folder, reply, model_used, created_at)
                         VALUES (?, ?, ?, ?, ?, ?)
-                    """, (message_id, source_uid, source_folder, reply, model, datetime.utcnow().isoformat()))
+                    """, (message_id, source_uid, source_folder, reply, model, _utcnow().isoformat()))
                     _c.commit()
                     _c.close()
                 except Exception as e:
@@ -3141,8 +3171,10 @@ def setup_email_routes():
                     conn.login(imap_user, imap_pass)
                     imap_result = {"ok": True}
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception as e:
+                        logger.debug("Failed to close IMAP test connection for host=%s: %s", imap_host, e, exc_info=True)
             except Exception as e:
                 imap_result = {"ok": False, "error": str(e)[:200]}
 
@@ -3163,8 +3195,10 @@ def setup_email_routes():
                     smtp.login(smtp_user, smtp_pass)
                     smtp_result = {"ok": True}
                 finally:
-                    try: smtp.quit()
-                    except Exception: pass
+                    try:
+                        smtp.quit()
+                    except Exception as e:
+                        logger.debug("Failed to close SMTP test connection for host=%s: %s", smtp_host, e, exc_info=True)
             except Exception as e:
                 smtp_result = {"ok": False, "error": str(e)[:200]}
 

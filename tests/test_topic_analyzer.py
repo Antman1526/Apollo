@@ -3,10 +3,17 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from tests.real_modules import import_real_module
+
+import_real_module("core.database")
 from core.database import Base, Session as DbSession, ChatMessage as DbChatMessage
 from core.session_manager import SessionManager
 from src.topic_analyzer import analyze_topics
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _utcnow():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _sm(*messages):
@@ -54,15 +61,15 @@ def test_topic_analyzer_hydrates_sessions(monkeypatch):
         model="gpt-4",
         owner="alice",
         message_count=1,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=_utcnow(),
+        updated_at=_utcnow()
     )
     m = DbChatMessage(
         id="msg-1",
         session_id=session_id,
         role="user",
         content="I love writing python code.",
-        timestamp=datetime.utcnow()
+        timestamp=_utcnow()
     )
     
     db.add(s)

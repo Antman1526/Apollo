@@ -35,6 +35,55 @@ def test_generation_increments_on_disconnect():
     assert mgr._generation == gen_before + 1
 
 
+def test_disconnect_signals_connection_runner_before_removing_state():
+    async def scenario():
+        mgr = _make_mgr()
+        stop_event = asyncio.Event()
+        stopped = []
+
+        async def runner():
+            await stop_event.wait()
+            stopped.append(True)
+
+        mgr._sessions["srv1"] = object()
+        mgr._tools["srv1"] = [{"name": "tool_a"}]
+        mgr._connections["srv1"] = {"status": "connected", "name": "srv1"}
+        mgr._runners["srv1"] = asyncio.create_task(runner())
+        mgr._stop_events["srv1"] = stop_event
+
+        await mgr.disconnect_server("srv1")
+
+        assert stopped == [True]
+        assert "srv1" not in mgr._sessions
+        assert "srv1" not in mgr._tools
+        assert "srv1" not in mgr._connections
+        assert "srv1" not in mgr._runners
+        assert "srv1" not in mgr._stop_events
+
+    asyncio.run(scenario())
+
+
+def test_disconnect_keeps_legacy_stack_cleanup_fallback():
+    class FakeStack:
+        def __init__(self):
+            self.closed = False
+
+        async def aclose(self):
+            self.closed = True
+
+    async def scenario():
+        mgr = _make_mgr()
+        stack = FakeStack()
+        mgr._stacks["srv1"] = stack
+
+        await mgr.disconnect_server("srv1")
+
+        assert stack.closed is True
+        assert "srv1" not in mgr._stacks
+
+    asyncio.run(scenario())
+
+
 # ---------------------------------------------------------------------------
 # Core cache-invalidation regression: stale description after reconnect
 # ---------------------------------------------------------------------------

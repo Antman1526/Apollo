@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List, Set
@@ -92,9 +93,44 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
 _FALLBACK_ORDER = ["duckduckgo"]
 
 
+def _searxng_definitely_down() -> bool:
+    """True only when the MANAGED sidecar is the target and it isn't serving.
+
+    Never true for a custom search_url (external instance), an explicit
+    SEARXNG_INSTANCE env var (e.g. Docker compose), or when the managed
+    sidecar is disabled — those cases let the HTTP call decide.
+    """
+    settings = _get_search_settings()
+    if (settings.get("search_url") or "").strip():
+        return False
+    if (os.environ.get("SEARXNG_INSTANCE") or "").strip():
+        return False  # explicit deployment instance (e.g. Docker) — let HTTP decide
+    if not settings.get("searxng_managed", True):
+        return False
+    try:
+        from services.searxng.runtime import get_runtime
+        rt = get_runtime()
+        if not rt.installed:
+            return True   # managed-but-absent: skip with no probe at all
+        down = not rt.is_serving()
+        if down:
+            rt.maybe_restart()
+        return down
+    except Exception:
+        return False  # fail open — let the HTTP call decide
+
+
 def _build_provider_chain(primary: str) -> List[str]:
-    """Build ordered list: primary first, then configured/default fallbacks."""
+    """Build ordered list: primary first, then configured/default fallbacks.
+
+    When the primary is the managed SearXNG sidecar and it's down/not
+    installed, skip it entirely so the fallback (DuckDuckGo) answers with
+    no timeout penalty.
+    """
     chain = [primary]
+    if primary == "searxng" and _searxng_definitely_down():
+        logger.info("SearXNG sidecar not serving — skipping straight to fallback providers")
+        chain = []
     settings = _get_search_settings()
     user_chain = settings.get("search_fallback_chain") or []
     if isinstance(user_chain, str):
@@ -103,6 +139,8 @@ def _build_provider_chain(primary: str) -> List[str]:
     for fb in fallbacks:
         if fb and fb != primary and fb not in chain and fb != "disabled":
             chain.append(fb)
+    if not chain:
+        chain = list(_FALLBACK_ORDER)
     return chain
 
 
@@ -158,7 +196,12 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
                 if results:
                     logger.info(f"{provider_name} search succeeded with {len(results)} results")
                     break
-            except (NetworkError, ParseError, RateLimitError) as e:
+            except RateLimitError as e:
+                # An instant retry of a 429 is counterproductive — log and
+                # break immediately so the chain falls through to the next provider.
+                error_logger.error(f"{provider_name} rate-limited (attempt {attempt + 1}): {e}")
+                break
+            except (NetworkError, ParseError) as e:
                 error_logger.error(f"{provider_name} search error (attempt {attempt + 1}): {e}")
             except Exception as e:
                 error_logger.error(f"Unexpected error during {provider_name} search (attempt {attempt + 1}): {e}")
@@ -267,6 +310,14 @@ def comprehensive_web_search(
                     logger.info(f"Comprehensive search: {provider_name} returned {len(search_results)} results")
                     break
                 empty = True
+            except RateLimitError as e:
+                # An instant retry of a 429 is counterproductive — break
+                # immediately so the chain falls through to the next provider.
+                last_err = e
+                logger.warning(
+                    f"Comprehensive search: {provider_name} rate-limited (attempt {attempt + 1}): {e}"
+                )
+                break
             except Exception as e:
                 last_err = e
                 logger.warning(f"Comprehensive search: {provider_name} attempt {attempt + 1} failed: {e}")
@@ -290,6 +341,14 @@ def comprehensive_web_search(
             )
         logger.warning(msg)
         return (msg, []) if return_sources else msg
+
+    winning_provider = provider_name  # provider that produced search_results
+    if winning_provider != search_provider:
+        logger.info(
+            "Search answered via fallback provider %s (primary: %s)",
+            winning_provider,
+            search_provider,
+        )
 
     search_results = rank_search_results(query, search_results)
 
@@ -328,7 +387,7 @@ def comprehensive_web_search(
 
     # Build sources list for the frontend (before content fetching)
     _source_list = [
-        {"url": r.get("url", ""), "title": r.get("title", "")}
+        {"url": r.get("url", ""), "title": r.get("title", ""), "provider": winning_provider}
         for r in search_results if r.get("url")
     ]
 

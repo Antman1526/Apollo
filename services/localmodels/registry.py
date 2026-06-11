@@ -23,8 +23,16 @@ def sync_managed_endpoint(models: list[LocalModel]) -> None:
 
     Chat models are listed first, then embedding models. Safe to call repeatedly.
     """
-    names = [m.name for m in models if m.kind == "chat"]
-    names += [m.name for m in models if m.kind == "embedding"]
+    # The picker is name-based, so the same model present in two configured
+    # dirs (e.g. an external drive and a Desktop copy) must list once —
+    # resolution picks the first scanned copy either way.
+    names: list[str] = []
+    seen: set[str] = set()
+    for kind in ("chat", "embedding"):
+        for m in models:
+            if m.kind == kind and m.name not in seen:
+                seen.add(m.name)
+                names.append(m.name)
     payload = json.dumps(names)
     db = SessionLocal()
     try:

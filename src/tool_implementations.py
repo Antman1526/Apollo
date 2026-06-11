@@ -1713,7 +1713,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
                 "terminal": ["bash"],
                 "search": ["web_search"],
                 "web": ["web_search"],
-                "browser": ["builtin_browser"],
+                "browser": ["browser", "builtin_browser"],
                 "documents": ["create_document", "edit_document", "update_document", "suggest_document"],
                 "doc": ["create_document", "edit_document", "update_document", "suggest_document"],
                 "memory": ["manage_memory"],
@@ -1817,6 +1817,69 @@ async def do_api_call(content: str) -> Dict:
         body=args.get("body"),
         extra_headers=args.get("headers"),
     )
+
+
+async def do_browser(content: str, owner: Optional[str] = None) -> Dict:
+    """Control Apollo's shared browser session.
+
+    JSON contract:
+      {"action": "navigate", "url": "http://localhost:3000"}
+      {"action": "getVisibleText"}
+      {"action": "click", "selector": "button[type=submit]"}
+      {"action": "type", "selector": "input[name=q]", "text": "Apollo"}
+    """
+    try:
+        args = _parse_tool_args(content)
+    except ValueError as exc:
+        return {"error": f"browser: invalid JSON: {exc}", "exit_code": 1}
+
+    from services.browser import embedded_browser
+
+    action = str(args.get("action") or args.get("method") or "").strip()
+    action_key = action.replace("_", "").replace("-", "").lower()
+    try:
+        if action_key == "navigate":
+            result = await embedded_browser.session.navigate(str(args.get("url") or args.get("target") or ""))
+        elif action_key in {"getcurrenturl", "current", "url"}:
+            result = await embedded_browser.session.get_current_url()
+        elif action_key in {"getpagehtml", "html"}:
+            result = await embedded_browser.session.get_page_html()
+        elif action_key in {"getvisibletext", "text"}:
+            result = await embedded_browser.session.get_visible_text()
+        elif action_key in {"executescript", "execute", "script"}:
+            result = await embedded_browser.session.execute_script(str(args.get("script") or args.get("js") or ""))
+        elif action_key == "screenshot":
+            result = await embedded_browser.session.screenshot(full_page=bool(args.get("full_page") or args.get("fullPage")))
+        elif action_key in {"waitforselector", "wait"}:
+            result = await embedded_browser.session.wait_for_selector(
+                str(args.get("selector") or args.get("sel") or ""),
+                int(args.get("timeout_ms") or args.get("timeoutMs") or 15_000),
+            )
+        elif action_key == "click":
+            result = await embedded_browser.session.click(str(args.get("selector") or args.get("sel") or ""))
+        elif action_key in {"type", "fill"}:
+            result = await embedded_browser.session.type(
+                str(args.get("selector") or args.get("sel") or ""),
+                str(args.get("text") or ""),
+            )
+        elif action_key in {"events", "console"}:
+            result = {"events": embedded_browser.session.events()}
+        else:
+            return {
+                "error": (
+                    "browser: action must be one of navigate, getCurrentURL, getPageHTML, "
+                    "getVisibleText, executeScript, screenshot, waitForSelector, click, type"
+                ),
+                "exit_code": 1,
+            }
+    except embedded_browser.BrowserSecurityError as exc:
+        return {"error": f"browser: {exc}", "exit_code": 1}
+    except embedded_browser.BrowserUnavailable as exc:
+        return {"error": f"browser unavailable: {exc}", "exit_code": 1}
+    except Exception as exc:
+        return {"error": f"browser: {str(exc)[:240]}", "exit_code": 1}
+
+    return {"response": "Browser action completed.", "browser": result, "exit_code": 0}
 
 
 # ---------------------------------------------------------------------------

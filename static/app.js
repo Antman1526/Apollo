@@ -38,6 +38,7 @@ import themeModule from './js/theme.js';
 import cookbookModule from './js/cookbook.js';
 import groupModule from './js/group.js';
 import * as researchPanelModule from './js/research/panel.js';
+import browserPanelModule from './js/browserPanel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
@@ -735,6 +736,8 @@ function initializeEventListeners() {
         _webChk.checked = false;
         saveToolPref('web', (loadToggleState().mode || 'chat'), false);
       }
+      saveWebMode(loadToggleState().mode || 'chat', 'off');
+      applyWebModeToButton('off');
     }
     const s = loadToggleState(); s.group = active; saveToggleState(s);
     updatePlusDot();
@@ -827,6 +830,13 @@ function initializeEventListeners() {
   if (toolResearchBtn) {
     toolResearchBtn.addEventListener('click', () => {
       researchPanelModule.toggle();
+    });
+  }
+
+  const toolBrowserBtn = el('tool-browser-btn');
+  if (toolBrowserBtn) {
+    toolBrowserBtn.addEventListener('click', () => {
+      browserPanelModule.open();
     });
   }
 
@@ -1003,6 +1013,7 @@ function initializeEventListeners() {
       }
     },
     '/calendar': () => calendarModule && calendarModule.openCalendar(),
+    '/browser':  () => document.getElementById('tool-browser-btn')?.click(),
     '/cookbook': () => document.getElementById('tool-cookbook-btn')?.click(),
     '/email':    () => {
       // Collapse the wide sidebar → icon rail (48px) so the user keeps
@@ -1332,6 +1343,7 @@ function initializeEventListeners() {
       const map = {
         web_search:      ['web-toggle-btn'],
         deep_research:   ['research-toggle-btn', 'tool-research-btn', 'overflow-research-btn', 'rail-research'],
+        browser:         ['tool-browser-btn', 'rail-browser'],
         document_editor: ['overflow-doc-btn', 'rail-documents'],
         gallery:         ['tool-gallery-btn', 'rail-gallery'],
       };
@@ -1367,6 +1379,22 @@ function initializeEventListeners() {
       if (overflowTts) {
         overflowTts.style.display = ttsOff ? 'none' : '';
       }
+
+      // Seed the web-access toggle for fresh browsers (no webmode_* or legacy
+      // web_chat/web_agent keys) from the admin-configured default.
+      // mapping: off→off, auto→auto, always→always, manual→auto (today's default).
+      try {
+        const st = loadToggleState();
+        const hasExistingPref = ['webmode_chat', 'webmode_agent', 'web_chat', 'web_agent']
+          .some(k => st[k] !== undefined);
+        if (!hasExistingPref && settings.web_access_mode) {
+          const modeMap = { off: 'off', auto: 'auto', always: 'always', manual: 'auto' };
+          const seed = modeMap[settings.web_access_mode] || 'auto';
+          saveWebMode('chat', seed);
+          saveWebMode('agent', seed);
+          applyWebModeToButton(seed);
+        }
+      } catch (_e) { /* guard all failures silently */ }
     })
     .catch(() => {});
 
@@ -1549,7 +1577,6 @@ function initializeEventListeners() {
   // Mode-affected tools: default ON in Agent mode, default OFF in Chat mode,
   // but the user's explicit per-mode override is persisted and honored.
   const MODE_TOOLS = [
-    { btnId: 'web-toggle-btn',  checkboxId: 'web-toggle',  stateKey: 'web' },
     { btnId: 'bash-toggle-btn', checkboxId: 'bash-toggle', stateKey: 'bash' },
   ];
 
@@ -1567,6 +1594,41 @@ function initializeEventListeners() {
     state[_modeKey(stateKey, mode)] = value;
     saveToggleState(state);
   }
+
+  // ── Tri-state web access (off → auto → always) ──
+  const WEB_MODES = ['off', 'auto', 'always'];
+
+  function loadWebMode(mode) {
+    return Storage.getWebMode(mode);
+  }
+
+  function saveWebMode(mode, value) {
+    const state = loadToggleState();
+    state['webmode_' + mode] = value;
+    saveToggleState(state);
+  }
+
+  function applyWebModeToButton(webMode) {
+    const btn = el('web-toggle-btn');
+    const chk = el('web-toggle');
+    if (!btn) return;
+    btn.classList.toggle('active', webMode !== 'off');
+    btn.classList.toggle('web-auto', webMode === 'auto');
+    btn.setAttribute('aria-pressed', String(webMode !== 'off'));
+    btn.setAttribute('aria-label', 'Web search: ' + webMode);
+    btn.title = 'Web search: ' + webMode;
+    if (chk) chk.checked = webMode !== 'off'; // compat: compare mode, slash cmds
+  }
+
+  // Exposed for modules outside this scope (chatStream server-driven toggles,
+  // slash commands) — mirrors the window._syncRagIndicator pattern.
+  window._showToolSplash = _showToolSplash;
+  window._setWebMode = function(value, uiMode) {
+    const m = uiMode || (loadToggleState().mode) || 'chat';
+    if (!WEB_MODES.includes(value)) return;
+    saveWebMode(m, value);
+    applyWebModeToButton(value);
+  };
 
   const TOOL_TOGGLE_TOAST_LABELS = {
     web: 'Web search',
@@ -1587,6 +1649,7 @@ function initializeEventListeners() {
       btn.classList.toggle('active', on);
       if (checkboxId) { const chk = el(checkboxId); if (chk) chk.checked = on; }
     });
+    applyWebModeToButton(loadWebMode(mode));
   }
 
   // ── Agent / Chat mode toggle ──
@@ -1626,7 +1689,7 @@ function initializeEventListeners() {
   const SPLASH_COUNT_KEY = 'apollo-tool-splash-counts';
   const SPLASH_MAX = 2;
   const _toolSplashes = {
-    web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
+    web: { role: 'Web Search', text: 'Cycles Off → Auto → Always. Auto lets Apollo decide per message and searches privately via your local SearXNG (DuckDuckGo fallback). Always searches every message.' },
     bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
     builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
     research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
@@ -1682,7 +1745,26 @@ function initializeEventListeners() {
       }
     });
   }
-  setupToggle('web-toggle-btn', 'web-toggle', 'web');
+  // Web toggle cycles off → auto → always (not a plain checkbox toggle).
+  (function setupWebToggle() {
+    const btn = el('web-toggle-btn');
+    if (!btn) return;
+    const mode = (loadToggleState().mode) || 'chat';
+    applyWebModeToButton(loadWebMode(mode));
+    btn.addEventListener('click', () => {
+      const curMode = (loadToggleState().mode) || 'chat';
+      const cur = loadWebMode(curMode);
+      const next = WEB_MODES[(WEB_MODES.indexOf(cur) + 1) % WEB_MODES.length];
+      saveWebMode(curMode, next);
+      applyWebModeToButton(next);
+      if (uiModule?.showToast) uiModule.showToast('Web search: ' + next, 1800);
+      if (next === 'always') _showToolSplash('web');
+      if (next !== 'off') {
+        const resChk = el('research-toggle');
+        if (resChk && resChk.checked) _syncResearchIndicator(false);
+      }
+    });
+  })();
   setupToggle('bash-toggle-btn', 'bash-toggle', 'bash');
 
   // Document editor toggle (special: uses module panel, not a checkbox)
@@ -1920,6 +2002,8 @@ function initializeEventListeners() {
           if (webBtn) webBtn.classList.remove('active');
           saveToolPref('web', (st.mode || 'chat'), false);
         }
+        saveWebMode(st.mode || 'chat', 'off');
+        applyWebModeToButton('off');
       }
 
       researchBtn.addEventListener('click', () => {
@@ -1938,6 +2022,8 @@ function initializeEventListeners() {
             if (webBtn) webBtn.classList.remove('active');
             saveToolPref('web', (loadToggleState().mode || 'chat'), false);
           }
+          saveWebMode(loadToggleState().mode || 'chat', 'off');
+          applyWebModeToButton('off');
           // Research requires chat mode — force switch from agent
           const rs = loadToggleState();
           if (rs.mode === 'agent') {
@@ -2190,6 +2276,8 @@ function initializeEventListeners() {
           if (webBtn) webBtn.classList.remove('active');
           saveToolPref('web', (loadToggleState().mode || 'chat'), false);
         }
+        saveWebMode(loadToggleState().mode || 'chat', 'off');
+        applyWebModeToButton('off');
         // Research requires chat mode
         const rs2 = loadToggleState();
         if (rs2.mode === 'agent') {
@@ -2296,11 +2384,13 @@ function initializeEventListeners() {
         if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
         // Default to plain chat: disable tools visually, switch to chat mode.
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
-        // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
-        // ephemeral — their agent-mode defaults must come back on toggle-off.
-        const _offIds = ['web-toggle', 'bash-toggle', 'research-toggle'];
+        // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`, `webmode_*`).
+        // Nobody mode is ephemeral — their agent-mode defaults must come back on toggle-off.
+        const _offIds = ['bash-toggle', 'research-toggle'];
         _offIds.forEach(id => { const c = el(id); if (c) c.checked = false; });
-        ['web-toggle-btn', 'bash-toggle-btn'].forEach(id => { const b = el(id); if (b) b.classList.remove('active'); });
+        const _bashBtn = el('bash-toggle-btn'); if (_bashBtn) _bashBtn.classList.remove('active');
+        // Visual-only web off: do NOT saveWebMode so persisted state is restored on exit.
+        applyWebModeToButton('off');
         const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
         if (_ab) _ab.classList.remove('active');
         if (_cb) _cb.classList.add('active');
@@ -3421,6 +3511,7 @@ function startApolloApp() {
     compareModule.init(API_BASE);
   }
   researchPanelModule.init(API_BASE, markdownModule, sessionModule);
+  browserPanelModule.init();
   // Initialize document editor module
   if (documentModule) {
     documentModule.init(API_BASE);
@@ -3445,6 +3536,7 @@ function startApolloApp() {
 
   // Rail tool buttons — delegate to sidebar tool buttons
   const _railToolMap = {
+    'rail-browser':   'tool-browser-btn',
     'rail-compare':   'tool-compare-btn',
     'rail-research':  'tool-research-btn',
     'rail-cookbook':   'tool-cookbook-btn',

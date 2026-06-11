@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VENV_DIR="${APOLLO_BROWSER_USE_VENV:-$ROOT_DIR/.apollo/browser-use-venv}"
+if [[ -z "${PYTHON:-}" ]]; then
+  if [[ -x "$ROOT_DIR/venv/bin/python" ]]; then
+    PYTHON="$ROOT_DIR/venv/bin/python"
+  else
+    PYTHON="python3"
+  fi
+fi
+
+"$PYTHON" -m venv "$VENV_DIR"
+"$VENV_DIR/bin/python" -m pip install --upgrade pip
+"$VENV_DIR/bin/python" -m pip install -r "$ROOT_DIR/requirements-browser-use.txt"
+"$VENV_DIR/bin/browser-use" install
+
+cat <<EOF
+browser-use env ready:
+  $VENV_DIR
+
+Use it with:
+  scripts/check-paperclip-browser --base-url http://127.0.0.1:7000
+
+Check the whole agent workbench with:
+  scripts/apollo-integrations agent-workbench --pretty
+EOF

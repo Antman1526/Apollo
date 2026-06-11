@@ -6,6 +6,7 @@ import themeModule from '../theme.js';
 import createResearchSynapse from '../researchSynapse.js';
 import spinnerModule from '../spinner.js';
 import { sortModelIds } from '../modelSort.js';
+import uiModule from '../ui.js';
 
 // jobId -> { synapse, status } — survives across _renderJobs() rebuilds so
 // the SVG keeps its accumulated nodes/edges between progress events.
@@ -44,6 +45,13 @@ let _sessionModule = null;
 let _settingsCollapsed = false;
 const _SETTINGS_KEY = 'apollo-research-settings';
 const _COLLAPSE_KEY = 'apollo-research-settings-collapsed';
+
+function _confirmDanger(message, confirmText = 'Delete') {
+  if (uiModule?.styledConfirm) {
+    return uiModule.styledConfirm(message, { confirmText, danger: true });
+  }
+  return Promise.resolve(window.confirm?.(message));
+}
 
 try { _settingsCollapsed = localStorage.getItem(_COLLAPSE_KEY) === '1'; } catch {}
 
@@ -1022,10 +1030,8 @@ function _buildJobCard(job) {
     });
     card.querySelector('[data-action="delete"]').addEventListener('click', async (e) => {
       e.stopPropagation();
-      if (window.styledConfirm) {
-        const ok = await window.styledConfirm('Delete this research? This permanently removes it from disk.', { confirmText: 'Delete', danger: true });
-        if (!ok) return;
-      }
+      const message = 'Delete this research? This permanently removes it from disk.';
+      if (!await _confirmDanger(message)) return;
       try { await fetch(`${_apiBase}/api/research/${job.id}`, { method: 'DELETE', credentials: 'same-origin' }); } catch {}
       _animateOutThenRemove(card, () => jobs.removeJob(job.id));
     });
@@ -1222,7 +1228,7 @@ async function _chatAboutResearch(researchId, btn) {
     }
   } catch (e) {
     if (btn) { btn.disabled = false; btn.innerHTML = origLabel; }
-    alert('Could not start follow-up chat: ' + e.message);
+    uiModule.showError?.('Could not start follow-up chat: ' + e.message);
   }
 }
 
