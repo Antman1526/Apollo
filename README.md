@@ -36,7 +36,7 @@ more jank and fun. Privacy-first, no telemetry, no trojan.
   AI assists rather than replaces; plus image gallery, file uploads with vision/PDF
   understanding, model comparison with blind testing, and a hardware-aware model
   "Cookbook" (scan → recommend → download → serve).
-- **Looks how you want** — 25 built-in themes (dark *and* light), a full theme editor with
+- **Looks how you want** — 24 built-in themes (dark *and* light), a full theme editor with
   custom palettes, background effects, fonts and density; responsive/installable PWA.
 
 It is a three-tier system: a **FastAPI backend** (Python 3.11+) exposing ~40 modular
