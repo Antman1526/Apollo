@@ -862,6 +862,29 @@ import threading
 from services.localmodels.lifecycle import startup_scan
 threading.Thread(target=startup_scan, name="local-models-scan", daemon=True).start()
 
+# Managed SearXNG sidecar (no Docker): start if installed+enabled; reuse an
+# already-running instance. Skipped entirely when not installed — search then
+# falls back to DuckDuckGo via the provider chain.
+from services.searxng.runtime import get_runtime as _get_searxng_runtime
+
+
+@app.on_event("startup")
+async def _start_searxng_runtime():
+    def _boot():
+        try:
+            _get_searxng_runtime().start()
+        except Exception as e:
+            logger.warning("SearXNG sidecar startup failed (non-critical): %s", e)
+    threading.Thread(target=_boot, name="searxng-runtime", daemon=True).start()
+
+
+@app.on_event("shutdown")
+async def _stop_searxng_runtime():
+    try:
+        _get_searxng_runtime().stop()
+    except Exception:
+        pass
+
 # ========= ROUTES (kept in app.py) =========
 
 def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
