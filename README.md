@@ -25,7 +25,8 @@ more jank and fun. Privacy-first, no telemetry, no trojan.
   proxy (`/lmproxy/v1`). Their activity renders live as an **isometric Lego office**
   ("The Floor"): each agent gets a desk, walks to a review table or help bar as its state
   changes, speaks task-based speech bubbles, and walks out an exit door when its work is done.
-- **Researches** — multi-step deep-research runs that search (SearXNG/DDG/Brave/Tavily…),
+- **Researches** — multi-step deep-research runs that search the web (Apollo's built-in
+  SearXNG sidecar, DuckDuckGo fallback, or user-added Brave/Tavily),
   crawl pages into clean Markdown (crawl4ai), and synthesize cited visual reports.
 - **Remembers** — persistent semantic memory and skills (ChromaDB + local fastembed ONNX
   embeddings) that the assistant consults and updates across sessions.
@@ -54,6 +55,7 @@ sidecar. See [Architecture](#architecture) below for enough detail to rebuild it
   - **Ralph Loop** -- an opt-in PRD/task loop for learning across iterations and getting scoped agent work done.<br>　<sub>prd.json · progress.md · AGENTS learning snippets · quality gates</sub>
   - **Browser + Crawl Agents** -- browser-use verifies real UI workflows, while crawl4ai turns web sources into research-ready Markdown.<br>　<sub>Paperclip Floor QA · Ralph verification commands · Crawl4AI source imports</sub>
   - **Cookbook** -- Scans your hardware, recommends models, click to download and serve.. easy!<br>　<sub>built on [llmfit](https://github.com/AlexsJones/llmfit) · VRAM-aware · GGUF / FP8 / AWQ · fit scoring · vLLM / llama.cpp serving</sub>
+  - **Web Access** -- tri-state toggle (off / auto / always) per chat. **Auto** runs a per-message heuristic to decide whether a search is useful, then injects results as context — even models without tool-calling get fresh sourced answers; the spinner shows "Searched the web" when auto fired. **Always** pre-searches every message in chat mode and enables web tools in agent mode. The built-in **SearXNG** sidecar (no Docker required) installs into `data/searxng/` via `scripts/setup-searxng.sh` (macOS/Linux) or `scripts/setup-searxng.ps1` (Windows); Apollo starts and health-checks it automatically. When the sidecar is down or not installed, the provider chain skips it with no timeout penalty and falls back to DuckDuckGo; sources are tagged with the answering provider and the UI shows a "via DuckDuckGo" badge. Admin default: **Settings → Web Access** (`web_access_mode`; default `manual` = legacy toggle behavior for untouched installs).<br>　<sub>SearXNG managed sidecar · DuckDuckGo fallback · off / auto / always · heuristic auto-decider · localhost-only port 8893</sub>
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
   - **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
   - **Documents** -- YOU write the text, AI is there to assist, not the opposite.<br>　<sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
@@ -62,7 +64,7 @@ sidecar. See [Architecture](#architecture) below for enough detail to rebuild it
   - **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
   - **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
-  - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · web search · presets · sessions · 2FA</sub>
+  - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor · file uploads (vision + PDF) · presets · sessions · 2FA</sub>
 
 ## Demo
 A full, hover-to-play tour lives on the landing page (`docs/index.html`).
@@ -363,7 +365,9 @@ the install path is baked into the app.
 **Docker bundled services.** Compose starts Apollo, ChromaDB, SearXNG, and
 ntfy. Apollo and the bundled service ports bind to `127.0.0.1` by default, so
 they are reachable from the host but not exposed to your LAN/public internet
-unless you opt in.
+unless you opt in. Native installs use Apollo's managed SearXNG sidecar
+(installed via `scripts/setup-searxng.sh` / `scripts/setup-searxng.ps1`) instead
+of the Docker-bundled instance.
 
 **Cookbook storage in Docker.** Downloads live in `./data/huggingface`
 (`~/.cache/huggingface` in the container). Cookbook-installed Python CLIs and
@@ -560,8 +564,9 @@ Common internal-only ports from the default docs/compose setup:
 | Port | Service |
 |---|---|
 | `7000` | Apollo raw app port |
-| `8080` | SearXNG |
+| `8080` | SearXNG (Docker-bundled instance) |
 | `8091` | ntfy |
+| `8893` | SearXNG managed sidecar (native installs; `searxng_port` setting) |
 | `8100` | ChromaDB host port for manual/compose access |
 | `11434` | Ollama |
 | `8000-8020` | Common local model/provider APIs |
@@ -581,7 +586,7 @@ Key settings:
 | `LLM_HOST` | `localhost` | Your LLM server (e.g. `llm-host.local:8000`) |
 | `LLM_HOSTS` | -- | Comma-separated list for model discovery |
 | `OPENAI_API_KEY` | -- | Optional OpenAI key. Prefer adding providers in the app unless pre-seeding. |
-| `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL. Docker overrides this to `http://searxng:8080`. |
+| `SEARXNG_INSTANCE` | `http://localhost:8080` | SearXNG URL override. Docker sets this to `http://searxng:8080`. In native mode the managed sidecar on port `searxng_port` (default 8893) is used automatically — only set this to point at a separate SearXNG instance. |
 | `SEARXNG_SECRET` | generated on first Docker boot | Optional SearXNG cookie/CSRF secret. Leave blank unless you need to pin it. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address for the web UI. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
 | `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
@@ -622,7 +627,11 @@ routes/    one module per feature: <name>_routes.py exposes
 services/  domain logic: localmodels/ (GGUF scanner, single-warm-slot llama-server
            manager, picker registry), paperclip/ (config, native runtime supervisor,
            Node bootstrap w/ checksum verify, reverse-proxy helpers, EventHub,
-           live-events collector, per-agent token registry), memory/, integrations/ …
+           live-events collector, per-agent token registry), searxng/ (managed
+           sidecar supervisor — install, health-check, auto-start/reuse; routes:
+           /api/search/searxng/{status,install}), web_decider (per-message heuristic
+           + optional Utility-model tie-break; resolves off/auto/always → bool),
+           memory/, integrations/ …
 static/    index.html (single page: sidebar + rail + modals) + style.css (CSS-variable
            theming, color-mix tokens) + js/ ES modules (app.js orchestrator; theme.js
            preset/custom themes; paperclip.js floor engine+renderer; storage.js …)
