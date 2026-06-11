@@ -137,6 +137,29 @@ class LocalModelServer:
                 self._chat = proc
             return proc.base_url
 
+    def _serving_context(self, m: LocalModel) -> int:
+        """Context window to launch llama-server with.
+
+        Apollo's prompt packer budgets against the model's KNOWN window, so a
+        fixed small -c rejects long chats with HTTP 400 ("request exceeds the
+        available context size"). Serve min(known window, cap) instead — the
+        cap (APOLLO_LLAMA_CONTEXT, default 16384) keeps the KV cache bounded;
+        the configured default stays the floor.
+        """
+        cap = self._context
+        try:
+            cap = max(int(os.getenv("APOLLO_LLAMA_CONTEXT", "16384")), self._context)
+        except ValueError:
+            cap = max(16384, self._context)
+        try:
+            from src.model_context import _lookup_known
+            known = _lookup_known(m.name or m.id)
+        except Exception:
+            known = None
+        if known:
+            return max(self._context, min(known, cap))
+        return cap
+
     def _launch(self, m: LocalModel) -> _Proc:
         binary = self.find_binary()
         if not binary:
@@ -148,7 +171,7 @@ class LocalModelServer:
         cmd = [
             binary, "--model", m.path,
             "--host", self._host, "--port", str(port),
-            "-c", str(self._context),
+            "-c", str(self._serving_context(m)),
         ]
         if m.kind == "embedding":
             cmd.append("--embedding")
@@ -163,7 +186,8 @@ class LocalModelServer:
             logf.close()
         base_url = f"http://{self._host}:{port}"
         try:
-            self._wait_health(base_url, proc, log_path)
+            self._wait_health(base_url, proc, log_path,
+                              timeout=self._health_timeout_for(m))
         except Exception:
             try:
                 proc.terminate()
@@ -172,8 +196,16 @@ class LocalModelServer:
             raise
         return _Proc(m.id, m.name, m.kind, port, proc, base_url, log_path)
 
-    def _wait_health(self, base_url: str, proc: subprocess.Popen, log_path: str) -> None:
-        deadline = time.monotonic() + self._health_timeout
+    def _health_timeout_for(self, m: LocalModel) -> float:
+        """Big GGUFs (20GB+ MoE models, external drives) can take far longer
+        than the base timeout just to read from disk. Allow ~20s/GB on top of
+        the configured floor."""
+        size_gb = (m.size_bytes or 0) / (1024 ** 3)
+        return max(self._health_timeout, size_gb * 20.0)
+
+    def _wait_health(self, base_url: str, proc: subprocess.Popen, log_path: str,
+                     timeout: Optional[float] = None) -> None:
+        deadline = time.monotonic() + (timeout if timeout else self._health_timeout)
         url = base_url + "/health"
         while time.monotonic() < deadline:
             if proc.poll() is not None:
