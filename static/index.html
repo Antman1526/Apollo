@@ -1764,6 +1764,19 @@
                 <label class="settings-label" title="Providers tried in order when the primary fails or hits a rate limit">Fallbacks</label>
                 <div class="search-fallback-chain" id="set-searchFallbackChain"></div>
               </div>
+              <div class="settings-row">
+                <label class="settings-label">SearXNG sidecar</label>
+                <span id="searxng-sidecar-status" style="flex:1;font-size:12px;color:color-mix(in srgb, var(--fg) 60%, transparent);">checking…</span>
+                <button type="button" class="admin-btn-sm" id="searxng-install-btn" style="margin-left:6px;flex-shrink:0;">Install</button>
+              </div>
+              <div class="settings-row">
+                <label class="settings-label">Web access default</label>
+                <select id="web-access-mode" class="settings-select">
+                  <option value="manual">Manual (toggle only)</option>
+                  <option value="auto">Auto (search when needed)</option>
+                  <option value="always">Always search</option>
+                </select>
+              </div>
               <div id="set-searchHint" class="admin-toggle-sub"></div>
               <div id="set-searchMsg" style="font-size:11px;"></div>
             </div>

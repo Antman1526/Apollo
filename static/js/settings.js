@@ -1646,6 +1646,67 @@ async function initSearchSettings() {
       }
     });
   }
+
+  // ── SearXNG sidecar status / install ──
+  async function refreshSearxngStatus() {
+    var span = document.getElementById('searxng-sidecar-status');
+    var btn = document.getElementById('searxng-install-btn');
+    if (!span) return;
+    try {
+      var res = await fetch('/api/search/searxng/status', { credentials: 'same-origin' });
+      var s = await res.json();
+      var labels = {
+        running: '● running at ' + s.url,
+        not_installed: '○ not installed',
+        stopped: '○ installed, not running',
+        failed: '✕ failed to start',
+        disabled: '— disabled',
+      };
+      span.textContent = s.installing ? '⟳ installing…' : (labels[s.status] || s.status);
+      if (btn) {
+        btn.textContent = s.status === 'not_installed' ? 'Install' : 'Update';
+        btn.disabled = !!s.installing;
+      }
+      if (s.installing) setTimeout(refreshSearxngStatus, 3000);
+    } catch (_e) {
+      span.textContent = 'status unavailable';
+    }
+  }
+
+  var installBtn = document.getElementById('searxng-install-btn');
+  if (installBtn) {
+    installBtn.addEventListener('click', async function() {
+      installBtn.disabled = true;
+      try {
+        await fetch('/api/search/searxng/install', { method: 'POST', credentials: 'same-origin' });
+        await refreshSearxngStatus();
+      } catch (_e) {
+        var span = document.getElementById('searxng-sidecar-status');
+        if (span) span.textContent = 'install request failed';
+        installBtn.disabled = false;
+      }
+    });
+  }
+
+  refreshSearxngStatus();
+
+  // ── Web access default ──
+  var webAccessSel = el('web-access-mode');
+  if (webAccessSel) {
+    if (_settings.web_access_mode) webAccessSel.value = _settings.web_access_mode;
+    webAccessSel.addEventListener('change', async function() {
+      try {
+        await fetch('/api/auth/settings', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ web_access_mode: webAccessSel.value }),
+        });
+        _settings.web_access_mode = webAccessSel.value;
+        msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+        setTimeout(refreshStatus, 2000);
+      } catch (_e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+    });
+  }
 }
 
 // SVG logos for each search provider (16×16 viewBox normalised to 24×24).
