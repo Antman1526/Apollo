@@ -203,3 +203,29 @@ def test_start_after_stop_clears_stop_signal(tmp_path):
     rt.stop()  # sets the stopping event with nothing running
     assert rt.start() is True  # must clear the event and boot normally
     assert spawned, "start() should have spawned after a prior stop()"
+
+
+def test_spawn_env_is_minimal(tmp_path, monkeypatch):
+    """The sidecar must not inherit Apollo's secrets (API keys etc.)."""
+    monkeypatch.setenv("TAVILY_API_KEY", "sk-secret")
+    monkeypatch.setenv("DATA_BRAVE_API_KEY", "sk-secret2")
+    spawned = []
+
+    def spawn(*a, **kw):
+        p = FakeProc(*a, **kw)
+        spawned.append(p)
+        return p
+
+    calls = {"n": 0}
+
+    def check(u, t=2.0):
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path), spawn=spawn, health_check=check)
+    assert rt.start() is True
+    env = spawned[0].kwargs["env"]
+    assert "TAVILY_API_KEY" not in env
+    assert "DATA_BRAVE_API_KEY" not in env
+    assert env["SEARXNG_SETTINGS_PATH"].endswith("settings.yml")
+    assert "PATH" in env

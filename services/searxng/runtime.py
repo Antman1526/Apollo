@@ -97,7 +97,10 @@ class SearxngRuntime:
             if self.is_serving():
                 logger.info("SearXNG already serving at %s — reusing", cfg.url)
                 return True
-            env = dict(os.environ)
+            # Minimal env: the sidecar needs none of Apollo's secrets.
+            _PASS = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TEMP", "TMP",
+                     "SYSTEMROOT", "WINDIR", "USERPROFILE")
+            env = {k: os.environ[k] for k in _PASS if k in os.environ}
             env["SEARXNG_SETTINGS_PATH"] = cfg.settings_path
             try:
                 self._proc = self._spawn(
