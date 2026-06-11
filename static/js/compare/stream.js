@@ -207,7 +207,13 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
     fd.append('message', message);
     fd.append('session', sessionId);
 
-    // Compare mode determines what tools/features are enabled
+    // Compare mode determines what tools/features are enabled.
+    // web_access is sent explicitly for every pane so results are deterministic
+    // regardless of the server's web_access_mode default setting.
+    //
+    // NOTE: 'search' compare mode never reaches this function — it calls
+    // /api/search/query directly in index.js and returns early.  web_access
+    // therefore only matters for agent / research / chat / image panes.
     const isAgent = state._compareMode === 'agent';
     const isResearch = state._compareMode === 'research';
 
@@ -216,8 +222,14 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       fd.append('mode', 'agent');
       fd.append('allow_web_search', 'true');
       fd.append('allow_bash', 'true');
+      // Always web-search in agent compare — each pane fetches live results as
+      // a tool call; no pre-fetched shared context is used for this mode.
+      fd.append('web_access', 'always');
     } else if (isResearch) {
       fd.append('use_research', 'true');
+      // Research panes use their own research pipeline; disable ad-hoc web
+      // access so every pane follows the same deterministic research path.
+      fd.append('web_access', 'off');
     } else {
       // Chat/Image: pure chat only — no tools, no search, no bash, no RAG.
       // Explicitly send mode='chat' so the backend's compare_mode strip
@@ -227,6 +239,8 @@ async function streamToPane(paneIdx, sessionId, message, aiMsgEl, opts) {
       // models would still attempt to run Python.
       fd.append('mode', 'chat');
       fd.append('use_rag', 'false');
+      // No web access for chat/image compare — keep pane outputs deterministic.
+      fd.append('web_access', 'off');
     }
     const incognitoChk = document.getElementById('incognito-toggle');
     if (incognitoChk && incognitoChk.checked) {
