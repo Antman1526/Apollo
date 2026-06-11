@@ -16,7 +16,7 @@ SEARXNG_HOME = os.path.join(DATA_DIR, "searxng")
 DEFAULT_PORT = 8893
 
 
-@dataclass
+@dataclass(frozen=True)
 class SearxngConfig:
     enabled: bool
     port: int
