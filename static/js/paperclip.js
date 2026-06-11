@@ -1063,7 +1063,11 @@ function handleLiveEvent(event) {
 }
 
 function startLiveStream() {
-  if (_liveStream || _status?.reachable !== true) return false;
+  // The hub serves events from HTTP ingest, the collector, and lmproxy
+  // pulses even when the sidecar itself isn't reachable — so the only gate
+  // is "Paperclip integration on". The server tells us the rest via
+  // paperclip.stream.waiting / .unavailable events.
+  if (_liveStream || !_status?.enabled) return false;
   _liveStream = createLiveEventStream({
     onOpen() {
       // Keep the preview running until real events arrive (the stream may

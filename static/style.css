@@ -227,7 +227,7 @@ html {
 
 .paperclip-floor-stage {
   position: relative;
-  overflow: auto;
+  overflow: hidden;  /* the stage scales itself to fit */
 }
 
 .paperclip-floor-meta {
