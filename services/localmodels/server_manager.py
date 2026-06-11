@@ -197,11 +197,12 @@ class LocalModelServer:
         return _Proc(m.id, m.name, m.kind, port, proc, base_url, log_path)
 
     def _health_timeout_for(self, m: LocalModel) -> float:
-        """Big GGUFs (20GB+ MoE models, external drives) can take far longer
-        than the base timeout just to read from disk. Allow ~20s/GB on top of
-        the configured floor."""
+        """Big GGUFs (external drives, MoE models) plus large -c values take
+        far longer than the base timeout to load. Measured live: a 8.4GB 14B
+        at -c 16384 needs >180s on this hardware. Allow ~40s/GB with the
+        configured timeout as the floor."""
         size_gb = (m.size_bytes or 0) / (1024 ** 3)
-        return max(self._health_timeout, size_gb * 20.0)
+        return max(self._health_timeout, size_gb * 40.0)
 
     def _wait_health(self, base_url: str, proc: subprocess.Popen, log_path: str,
                      timeout: Optional[float] = None) -> None:
