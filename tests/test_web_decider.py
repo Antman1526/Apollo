@@ -81,3 +81,8 @@ def test_bare_url_question_still_no():
 ])
 def test_coding_vocab_not_web(msg):
     assert heuristic_decision(msg) == "no"
+
+
+def test_no_web_verbs_beat_explicit_search_intent():
+    """Deliberate precedence: self-contained work wins even with a search ask."""
+    assert heuristic_decision("refactor this and search the web for examples") == "no"
