@@ -3117,6 +3117,17 @@ body.bg-pattern-sparkles {
       bottom: 1px;
       right: 2px;
     }
+    /* Web toggle in 'always': dot marker so touch users can distinguish
+       always-on from auto without relying on the title tooltip. */
+    #web-toggle-btn.active:not(.web-auto) { position: relative; }
+    #web-toggle-btn.active:not(.web-auto)::after {
+      content: '•';
+      position: absolute;
+      font-size: 8px;
+      font-weight: 700;
+      bottom: 1px;
+      right: 2px;
+    }
     /* Character indicator — hide name text below 768px, icon always visible */
     @media (max-width: 768px) {
       #character-indicator-name { display: none !important; }
