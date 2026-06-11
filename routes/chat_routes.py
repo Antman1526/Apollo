@@ -930,12 +930,18 @@ def setup_chat_routes(
                             _stream_set(session, status="done")
                             yield chunk
                 except (asyncio.CancelledError, GeneratorExit):
-                    if full_response:
-                        logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
-                        _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
-                        sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
-                        if not incognito:
-                            session_manager.save_sessions()
+                    # Guard the save so a failure inside add_message /
+                    # save_sessions can't mask the original CancelledError
+                    # (same pattern as agent mode below).
+                    try:
+                        if full_response:
+                            logger.info("Client disconnected mid-stream (chat mode) for session %s, saving partial (%d chars)", session, len(full_response))
+                            _stopped_content, _stopped_md = clean_thinking_for_save(full_response, {"stopped": True, "model": sess.model})
+                            sess.add_message(ChatMessage("assistant", _stopped_content, metadata=_stopped_md))
+                            if not incognito:
+                                session_manager.save_sessions()
+                    except Exception:
+                        logger.exception("Failed to save partial response on disconnect (chat mode, session %s)", session)
                     raise
                 finally:
                     _active_streams.pop(session, None)
