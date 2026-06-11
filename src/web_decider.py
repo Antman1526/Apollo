@@ -16,16 +16,41 @@ from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# Explicit asks — always search.
+# Explicit asks — always search (checked before URL so intent wins).
+# 'google' requires a query-like follow-up or standalone verb usage
+# ("google it", "google for X") to avoid matching "google docs API how to".
 _FORCE_RE = re.compile(
-    r"\b(search( the web)?( for)?|look up|google|web search)\b", re.I)
+    r"\b(search( the web)?( for)?|look up|web search|"
+    r"google\s+(it|for\b|this\b)|google\s+\w+\s+(search|results?))\b",
+    re.I,
+)
 
-# Freshness / volatile-fact signals.
-_RECENCY_RE = re.compile(
-    r"\b(today|tonight|yesterday|this (week|month|year)|latest|current(ly)?|"
-    r"breaking|news|headlines?|price|stock|weather|forecast|score|schedule[d]?|"
-    r"release (date|notes)|just (released|announced)|right now|upcoming|next "
-    r"(launch|release|election|game|match))\b", re.I)
+# Strong recency signals — these indicate live-web need on their own.
+# Includes unambiguous freshness words and time anchors.
+_STRONG_RECENCY_RE = re.compile(
+    r"\b(today|tonight|yesterday|this (week|month|year)|latest|breaking|"
+    r"just (released|announced)|right now|upcoming|"
+    r"next (launch|release|election|game|match)|"
+    r"release (date|notes)|weather\b)\b",
+    re.I,
+)
+
+# Weak recency nouns — only count as a freshness signal when paired with a
+# question shape (ends with '?' or starts with a question word) OR with a
+# strong freshness co-signal like "current", "today", "latest", "now".
+# This prevents coding-vocabulary false positives:
+#   "update the price field in my schema" → price alone is NOT enough
+#   "current price of AMD stock"          → price + "current" co-signal → yes
+_WEAK_RECENCY_RE = re.compile(
+    r"\b(price|stock|score|schedule[d]?|forecast|news|headlines?)\b", re.I
+)
+
+# Co-signals that make a weak recency noun count as a freshness hit.
+_FRESHNESS_CO_RE = re.compile(
+    r"\b(current(ly)?|today|tonight|yesterday|latest|right now|"
+    r"this (week|month|year)|just|upcoming|breaking|live)\b",
+    re.I,
+)
 
 # Self-contained work — the answer is in the message or the model's weights.
 _NO_WEB_RE = re.compile(
@@ -38,24 +63,56 @@ _URL_RE = re.compile(r"https?://", re.I)
 _QUESTION_WORDS = ("who", "what", "when", "where", "which", "how much", "how many")
 
 
+def _is_question_shaped(msg: str) -> bool:
+    """Return True if msg ends with '?' and starts with (or contains) a question word."""
+    lower = msg.lower()
+    return msg.rstrip().endswith("?") and any(
+        lower.startswith(w) or f" {w} " in lower for w in _QUESTION_WORDS
+    )
+
+
+def _has_recency_signal(msg: str) -> bool:
+    """Return True if msg has a strong recency word or a weak noun with co-signal/question."""
+    if _STRONG_RECENCY_RE.search(msg):
+        return True
+    if _WEAK_RECENCY_RE.search(msg):
+        # Weak noun counts only when paired with a freshness co-signal or question shape.
+        return bool(_FRESHNESS_CO_RE.search(msg)) or _is_question_shaped(msg)
+    return False
+
+
 def heuristic_decision(message: Optional[str]) -> str:
-    """Classify a message: 'yes' (search), 'no' (skip), 'ambiguous'."""
+    """Classify a message: 'yes' (search), 'no' (skip), 'ambiguous'.
+
+    Precedence (first match wins):
+    1. empty / code-paste / long → no
+    2. NO_WEB verbs (refactor, fix this, …) → no
+    3. FORCE explicit search intent (search for, look up, …) → yes
+       (checked before URL so "search for https://…" still searches)
+    4. URL present:
+       a. URL + recency signal → ambiguous  (let tie-breaker decide)
+       b. URL alone            → no         (chat_processor auto-fetches)
+    5. Strong/weak recency signal (see _has_recency_signal) → yes
+    6. Question-shaped ambiguous
+    7. default → no
+    """
     msg = (message or "").strip()
     if not msg:
         return "no"
     if "```" in msg or len(msg) > 4000:
         return "no"  # pasted code/content — answer from what's provided
-    if _URL_RE.search(msg):
-        return "no"  # embedded URLs are auto-fetched by chat_processor
     if _NO_WEB_RE.search(msg):
         return "no"
     if _FORCE_RE.search(msg):
         return "yes"
-    if _RECENCY_RE.search(msg):
+    if _URL_RE.search(msg):
+        # URL + explicit recency → ambiguous (may need both fetch + search)
+        if _has_recency_signal(msg):
+            return "ambiguous"
+        return "no"  # pure URL: auto-fetched by chat_processor
+    if _has_recency_signal(msg):
         return "yes"
-    lower = msg.lower()
-    if msg.rstrip().endswith("?") and any(lower.startswith(w) or f" {w} " in lower
-                                          for w in _QUESTION_WORDS):
+    if _is_question_shaped(msg):
         return "ambiguous"
     return "no"
 

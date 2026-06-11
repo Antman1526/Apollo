@@ -43,3 +43,41 @@ def test_empty_is_no():
 
 def test_long_paste_is_no():
     assert heuristic_decision("latest news " + "x" * 4000) == "no"
+
+
+# ---------------------------------------------------------------------------
+# Fix 1: URL + explicit search/recency intent
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("msg", [
+    "Search for other coverage of https://example.com/story",
+    "look up reactions to https://example.com/launch",
+])
+def test_url_with_explicit_search_intent_is_yes(msg):
+    assert heuristic_decision(msg) == "yes"
+
+
+def test_url_with_recency_is_ambiguous():
+    assert heuristic_decision(
+        "Summarize the latest news from https://example.com and compare to current coverage"
+    ) == "ambiguous"
+
+
+def test_bare_url_question_still_no():
+    assert heuristic_decision("https://example.com/article — what does this say?") == "no"
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: coding/schema vocab must not trigger web search
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("msg", [
+    "update the price field in my schema",
+    "the stock SQLAlchemy model needs a new column",
+    "add a forecast column to the dataframe",
+    "schedule a cron job in python",
+    "score this code review please",
+    "my news feed component wont render",
+])
+def test_coding_vocab_not_web(msg):
+    assert heuristic_decision(msg) == "no"
