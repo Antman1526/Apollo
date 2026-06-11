@@ -1,8 +1,12 @@
 # Paperclip ⨉ Apollo — Engineering Handoff (for Codex / next agent)
 
-**Last updated:** 2026-06-08
-**Branch:** all work merged to `main` (16 commits, latest `444be2e`).
-**Status:** Phase 1 + Phase 2 (native lifecycle, local-model proxy, dedicated UI, Node auto-provision) **shipped & tested**. The "live agents-at-work visualization" is **designed and de-risked but not yet built** — that's the next major body of work.
+**Last updated:** 2026-06-10
+**Branch:** `codex/worktree-checkpoint` (continuation of `main`).
+**Status:** Phase 1 + Phase 2 shipped & tested. **Update 2026-06-10:** Phase 3
+(collector) and Phase 4 (The Floor) are now **built and tested** — see the
+dated section at the end of this doc. Remaining: Phase 3.4 (per-agent token
+attribution), Phase 5 (concurrency/federation), Phase 6 (native shell),
+Phase 7 (productionization).
 
 > Read this first, then the two companion docs:
 > - Design/spec: [`docs/superpowers/specs/2026-06-07-paperclip-apollo-integration-design.md`](specs/2026-06-07-paperclip-apollo-integration-design.md) (see **Revision 2 — Native-first**)
@@ -196,3 +200,42 @@ Each phase is independently shippable and testable. The viz is web tech → buil
 - Paperclip source on disk (read-only reference): `~/Desktop/PaperClip_BP/paperclip-2026.416.0`
 - Live Paperclip instance: `http://localhost:3100` (`/api/health`, `/api/companies`)
 - Upstream: `https://github.com/paperclipai/paperclip` (v2026.529.0, MIT)
+
+---
+
+## 10. Update — 2026-06-10 (Phases 3 + 4 built)
+
+**Phase 4 ("The Floor") shipped** as an isometric Lego office in vanilla
+SVG/CSS (`static/js/paperclip.js`, no deps): per-agent desks, shared stations
+(Review Table / Help Bar / Done Dock), true depth-sorted occlusion (agents are
+SVG groups painted with the furniture), walk/sit/talk/idle animations,
+task-based conversation bubbles, Board role accents, reduced-motion support.
+Tour + ingest API doc: `docs/paperclip-floor.md` (with renders).
+
+**Phase 3 (collector) shipped:**
+- **3.0 auth spike answer:** Paperclip's `/events/ws` accepts **tokenless**
+  connections in `local_trusted` deployment mode (its default — what the
+  bundled sidecar runs); REST is implicitly instance-admin in that mode too.
+  In `authenticated` mode use an **agent API key** as a Bearer token
+  (company-scoped, sha256-looked-up in `agentApiKeys`). Confirmed from
+  `server/src/realtime/live-events-ws.ts` + `server/src/middleware/auth.ts`.
+- **3.1–3.3:** `services/paperclip/collector.py` (REST company discovery, one
+  WS per company, LiveEvent→Floor normalization, capped-backoff reconnect,
+  clean shutdown) publishes into the shared `services/paperclip/events.EventHub`
+  drained by `/api/paperclip/stream` (SSE; replays recent, emits
+  `paperclip.stream.waiting` when idle, `…unavailable` when disabled).
+  Env: `PAPERCLIP_COLLECTOR_ENABLED` / `PAPERCLIP_COLLECTOR_TOKEN` /
+  `PAPERCLIP_COMPANY_ID`. Wired in `app.py` next to the runtime hooks.
+  Tests: `tests/test_paperclip_collector.py`, `tests/test_paperclip_routes.py`,
+  `tests/test_paperclip_floor_ui.mjs`.
+- **Not yet validated against a live Paperclip** (none running during the
+  build) — first end-to-end check: start the sidecar, open the Floor, confirm
+  the label flips from "Live · waiting for agents" to "Live" when an agent runs.
+- **3.4 (per-agent lmproxy token attribution) remains unbuilt.**
+
+Also landed since 2026-06-08: SSE stream held open when idle (was: closed →
+permanent preview), seq-watermark replay dedup, EventSource reconnect
+tolerance + retry, native-mode model endpoint defaults (localhost, not
+host.docker.internal), Node download SHASUMS256 verification + tar filter,
+zombie reaping on stop, llama-server log fd leak fix, route hardening
+(lmproxy/MCP), walk-once motion model, keyboard selection, arc aging.

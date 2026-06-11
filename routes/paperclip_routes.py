@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import time
-from collections import deque
 from typing import Callable, Optional
 
 import httpx
@@ -22,6 +21,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
 from services.paperclip.config import PaperclipConfig
+from services.paperclip.events import EventHub, FLOOR_EVENT_TYPES
 from services.paperclip.proxy import (
     build_upstream_url,
     filter_request_headers,
@@ -32,62 +32,14 @@ from services.integrations import agent_workbench
 
 logger = logging.getLogger(__name__)
 
-# Shared types the Floor UI (static/js/paperclip.js) knows how to render.
-_FLOOR_EVENT_TYPES = {
-    "agent.status",
-    "heartbeat.run.status",
-    "heartbeat.run.log",
-    "heartbeat.run.event",
-    "activity.logged",
-}
 _MAX_INGEST_BATCH = 100
-
-
-class _EventHub:
-    """Fan-out hub feeding /api/paperclip/stream from /api/paperclip/events.
-
-    Keeps a small replay buffer so a Floor view opened after a Ralph loop
-    started still sees recent context. Slow subscribers drop events rather
-    than back-pressuring the ingest path.
-    """
-
-    def __init__(self, history: int = 200):
-        self._subscribers: set[asyncio.Queue] = set()
-        self._recent: deque = deque(maxlen=history)
-        self._seq = 0
-
-    def publish(self, events: list[dict]) -> int:
-        accepted = 0
-        for event in events:
-            self._seq += 1
-            entry = (self._seq, event)
-            self._recent.append(entry)
-            accepted += 1
-            for queue in list(self._subscribers):
-                try:
-                    queue.put_nowait(entry)
-                except asyncio.QueueFull:
-                    pass
-        return accepted
-
-    def subscribe(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=500)
-        self._subscribers.add(queue)
-        return queue
-
-    def unsubscribe(self, queue: asyncio.Queue) -> None:
-        self._subscribers.discard(queue)
-
-    @property
-    def recent(self) -> list[tuple[int, dict]]:
-        """Buffered (seq, event) pairs, oldest first."""
-        return list(self._recent)
 
 
 def setup_paperclip_routes(
     cfg: PaperclipConfig,
     http_client: Optional[httpx.AsyncClient] = None,
     ws_validate: Optional[Callable[[Optional[str]], bool]] = None,
+    hub: Optional[EventHub] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["paperclip"])
     owns_client = http_client is None
@@ -95,7 +47,7 @@ def setup_paperclip_routes(
     if owns_client:
         # include_router propagates this to the app's shutdown hooks.
         router.add_event_handler("shutdown", client.aclose)
-    hub = _EventHub()
+    hub = hub or EventHub()
     events_token = os.environ.get("PAPERCLIP_EVENTS_TOKEN", "")
 
     async def build_status(app_base_url: str | None = None):
@@ -171,7 +123,7 @@ def setup_paperclip_routes(
         for event in raw_events:
             if (
                 isinstance(event, dict)
-                and event.get("type") in _FLOOR_EVENT_TYPES
+                and event.get("type") in FLOOR_EVENT_TYPES
                 and isinstance(event.get("payload"), dict)
             ):
                 valid.append(

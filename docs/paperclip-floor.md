@@ -40,8 +40,17 @@ Heads-down agents murmur their current task in a small thought bubble.
 
 ## Feeding the Floor
 
-The Floor renders live data from the SSE stream at `/api/paperclip/stream`,
-which is backed by the ingest endpoint:
+**Live Paperclip agents appear automatically.** When the sidecar is enabled,
+Apollo's collector connects to Paperclip's live-events websocket
+(`/api/companies/{id}/events/ws`), discovers companies via REST, normalizes
+each LiveEvent, and publishes it into the same hub that feeds the Floor. It
+reconnects with capped backoff if Paperclip restarts. Tokenless access works
+against Paperclip's default `local_trusted` mode; for an authenticated
+deployment set `PAPERCLIP_COLLECTOR_TOKEN` (an agent API key) and
+`PAPERCLIP_COMPANY_ID`. Disable with `PAPERCLIP_COLLECTOR_ENABLED=false`.
+
+External processes (e.g. the Ralph loop) can also push activity through the
+ingest endpoint backing the same stream:
 
 ```bash
 curl -X POST http://localhost:7000/api/paperclip/events \

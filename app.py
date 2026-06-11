@@ -707,13 +707,18 @@ logger.info("Communication and integration routes initialized")
 # middleware, so the WS handler validates the session cookie via auth_manager.
 from routes.paperclip_routes import setup_paperclip_routes
 from services.paperclip.config import load_config as _load_paperclip_config, resolve_proxy_token as _paperclip_proxy_token
+from services.paperclip.events import EventHub as _PaperclipEventHub
 _paperclip_cfg = _load_paperclip_config()
+# Shared hub: fed by HTTP ingest and the live-events collector below, drained
+# by /api/paperclip/stream.
+_paperclip_hub = _PaperclipEventHub()
 build_and_include_router(
     app,
     "Sidecar proxy",
     setup_paperclip_routes,
     _paperclip_cfg,
     ws_validate=lambda token: auth_manager.validate_token(token),
+    hub=_paperclip_hub,
     logger=logger,
 )
 
@@ -792,6 +797,20 @@ _paperclip_runtime = _PaperclipRuntime(
 )
 app.state.paperclip_runtime = _paperclip_runtime
 
+# Live-events collector: bridges Paperclip's realtime websocket into the
+# Floor's event hub so real agents show up in the office. Tokenless works in
+# Paperclip's default local_trusted mode; set PAPERCLIP_COLLECTOR_TOKEN (an
+# agent API key) plus PAPERCLIP_COMPANY_ID for authenticated deployments.
+from services.paperclip.collector import PaperclipCollector as _PaperclipCollector
+
+_paperclip_collector = _PaperclipCollector(
+    _paperclip_cfg,
+    _paperclip_hub.publish,
+    token=os.getenv("PAPERCLIP_COLLECTOR_TOKEN", ""),
+    company_id=os.getenv("PAPERCLIP_COMPANY_ID", ""),
+)
+app.state.paperclip_collector = _paperclip_collector
+
 
 @app.on_event("startup")
 async def _start_paperclip_runtime():
@@ -821,10 +840,14 @@ async def _start_paperclip_runtime():
             if _paperclip_runtime.start():
                 _paperclip_runtime.wait_healthy(timeout=90)
         threading.Thread(target=_boot, name="paperclip-runtime", daemon=True).start()
+    if _paperclip_cfg.enabled and os.getenv(
+            "PAPERCLIP_COLLECTOR_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on"):
+        _paperclip_collector.start()
 
 
 @app.on_event("shutdown")
 async def _stop_paperclip_runtime():
+    await _paperclip_collector.stop()
     _paperclip_runtime.stop()
 
 # Kick off a non-blocking local model directory scan so the catalog is warm
