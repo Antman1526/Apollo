@@ -749,7 +749,7 @@ import createResearchSynapse from './researchSynapse.js';
         isAgentMode = true;
       }
       fd.append('mode', isAgentMode ? 'agent' : 'chat');
-      const _webMode = (() => {
+      let _webMode = (() => {
         const st = Storage.loadToggleState();
         const key = 'webmode_' + (isAgentMode ? 'agent' : 'chat');
         if (['off', 'auto', 'always'].includes(st[key])) return st[key];
@@ -757,6 +757,10 @@ import createResearchSynapse from './researchSynapse.js';
         if (legacy !== undefined) return legacy ? 'always' : 'off';
         return 'auto';
       })();
+      // Transient overrides (/search slash command, server-driven UI toggle,
+      // compare mode) check the hidden checkbox directly without writing the
+      // webmode_* storage keys — honor them for this message.
+      if (_webMode === 'off' && el('web-toggle').checked) _webMode = 'always';
       fd.append('web_access', _webMode);
       if (_webMode === 'always') {
         // Keep legacy flags so older server code paths behave identically.
