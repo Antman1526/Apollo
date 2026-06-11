@@ -1759,6 +1759,10 @@ import createResearchSynapse from './researchSynapse.js';
                   if (holder._webMode === 'auto' && spinner && spinner.updateMessage) {
                     spinner.updateMessage('Searched the web');
                   }
+                  // First-auto-search splash (self-limits to SPLASH_MAX via SPLASH_COUNT_KEY).
+                  if (holder._webMode === 'auto' && window._showToolSplash) {
+                    window._showToolSplash('web');
+                  }
                 }
               } else if (json.type === 'web_search_failed') {
                 // Web was requested but returned no results — let the user know

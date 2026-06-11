@@ -1622,6 +1622,7 @@ function initializeEventListeners() {
 
   // Exposed for modules outside this scope (chatStream server-driven toggles,
   // slash commands) — mirrors the window._syncRagIndicator pattern.
+  window._showToolSplash = _showToolSplash;
   window._setWebMode = function(value, uiMode) {
     const m = uiMode || (loadToggleState().mode) || 'chat';
     if (!WEB_MODES.includes(value)) return;
@@ -1688,7 +1689,7 @@ function initializeEventListeners() {
   const SPLASH_COUNT_KEY = 'apollo-tool-splash-counts';
   const SPLASH_MAX = 2;
   const _toolSplashes = {
-    web: { role: 'Web Search', text: 'Searches the web for relevant information to include in the response. Results are fetched and summarized before the AI answers.' },
+    web: { role: 'Web Search', text: 'Cycles Off → Auto → Always. Auto lets Apollo decide per message and searches privately via your local SearXNG (DuckDuckGo fallback). Always searches every message.' },
     bash: { role: 'Shell Access', text: 'Gives the AI access to a sandboxed shell for running commands, installing packages, and executing scripts. Use with caution.' },
     builder: { role: 'Tool Builder', text: 'Create custom mini-apps and tools the AI can use. Describe what you need and the AI will build a tool you can reuse across conversations.' },
     research: { role: 'Deep Research', text: 'Multi-round web search with source analysis. Takes longer but produces comprehensive, well-sourced answers. Your next message will trigger a deep research cycle.' },
@@ -1757,7 +1758,7 @@ function initializeEventListeners() {
       saveWebMode(curMode, next);
       applyWebModeToButton(next);
       if (uiModule?.showToast) uiModule.showToast('Web search: ' + next, 1800);
-      if (next !== 'off') _showToolSplash('web');
+      if (next === 'always') _showToolSplash('web');
       if (next !== 'off') {
         const resChk = el('research-toggle');
         if (resChk && resChk.checked) _syncResearchIndicator(false);

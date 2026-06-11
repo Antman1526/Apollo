@@ -1651,9 +1651,22 @@ async function initSearchSettings() {
   async function refreshSearxngStatus() {
     var span = document.getElementById('searxng-sidecar-status');
     var btn = document.getElementById('searxng-install-btn');
+    var logPre = document.getElementById('searxng-install-log');
     if (!span) return;
+    // Non-admin shortcut: skip fetch and show static explainer.
+    if (window._isAdmin === false) {
+      span.textContent = 'Managed by your admin — searches fall back to DuckDuckGo when SearXNG is unavailable';
+      if (btn) btn.style.display = 'none';
+      return;
+    }
     try {
       var res = await fetch('/api/search/searxng/status', { credentials: 'same-origin' });
+      // 401/403 → non-admin path
+      if (res.status === 401 || res.status === 403) {
+        span.textContent = 'Managed by your admin — searches fall back to DuckDuckGo when SearXNG is unavailable';
+        if (btn) btn.style.display = 'none';
+        return;
+      }
       var s = await res.json();
       var labels = {
         running: '● running at ' + s.url,
@@ -1662,16 +1675,44 @@ async function initSearchSettings() {
         failed: '✕ failed to start',
         disabled: '— disabled',
       };
-      span.textContent = s.installing ? '⟳ installing…' : (labels[s.status] || s.status);
+      var wasInstalling = refreshSearxngStatus._wasInstalling;
+      var nowInstalling = !!s.installing;
+      span.textContent = nowInstalling ? '⟳ installing…' : (labels[s.status] || s.status);
       if (btn) {
         btn.textContent = s.status === 'not_installed' ? 'Install' : 'Update';
-        btn.disabled = !!s.installing;
+        btn.disabled = nowInstalling;
       }
-      if (s.installing) setTimeout(refreshSearxngStatus, 3000);
+      // Install log: show while installing or on failure
+      if (logPre) {
+        var logText = '';
+        if (nowInstalling && s.log_tail) {
+          logText = s.log_tail;
+        } else if (!nowInstalling && s.install_ok === false) {
+          logText = (s.log_tail || '') + (s.runtime_log_tail ? '\n--- runtime ---\n' + s.runtime_log_tail : '');
+        }
+        if (logText) {
+          logPre.textContent = logText;
+          logPre.style.display = 'block';
+          logPre.scrollTop = logPre.scrollHeight;
+        } else if (!nowInstalling) {
+          logPre.style.display = 'none';
+        }
+      }
+      // Toast once when install completes (transition: installing → done)
+      if (wasInstalling && !nowInstalling) {
+        if (s.install_ok === false) {
+          if (window.uiModule && uiModule.showToast) uiModule.showToast('SearXNG install failed — see log', 5000);
+        } else {
+          if (window.uiModule && uiModule.showToast) uiModule.showToast('SearXNG installed and running', 4000);
+        }
+      }
+      refreshSearxngStatus._wasInstalling = nowInstalling;
+      if (nowInstalling) setTimeout(refreshSearxngStatus, 3000);
     } catch (_e) {
       span.textContent = 'status unavailable';
     }
   }
+  refreshSearxngStatus._wasInstalling = false;
 
   var installBtn = document.getElementById('searxng-install-btn');
   if (installBtn) {
