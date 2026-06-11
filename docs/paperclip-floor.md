@@ -73,5 +73,24 @@ may ingest. Until real events arrive the Floor plays a demo preview and the
 stream stays open in a waiting state, going live automatically on the first
 ingested event.
 
+## Per-agent LLM attribution
+
+Each Paperclip agent can get its own token for Apollo's local-model proxy so
+its LLM calls are attributed (and its minifig visibly works while
+generating). Mint one (admin):
+
+```bash
+curl -X POST http://localhost:7000/api/paperclip/agent-tokens \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_id": "my-agent", "name": "Coder"}'
+```
+
+Paste the returned token into that agent's `opencode-local` config as
+`OPENAI_API_KEY` (replacing the shared proxy token). While the agent
+generates, the proxy publishes a debounced `heartbeat.run.event` pulse for it
+— at most one per agent every 10 seconds. The shared `PAPERCLIP_PROXY_TOKEN`
+keeps working for unattributed agents. Minting again for the same agent
+rotates its previous token out.
+
 Roles color the minifig torso: research (green), coding (blue), review
 (purple), ops (red). The view respects `prefers-reduced-motion`.

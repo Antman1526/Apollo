@@ -41,6 +41,7 @@ def setup_paperclip_routes(
     ws_validate: Optional[Callable[[Optional[str]], bool]] = None,
     hub: Optional[EventHub] = None,
     collector_status: Optional[Callable[[], dict]] = None,
+    agent_tokens=None,
 ) -> APIRouter:
     router = APIRouter(tags=["paperclip"])
     owns_client = http_client is None
@@ -192,6 +193,39 @@ def setup_paperclip_routes(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache"},
         )
+
+    @router.post("/api/paperclip/agent-tokens")
+    async def mint_agent_token(request: Request):
+        """Mint (or rotate) a per-agent lmproxy token (Phase 3.4).
+
+        Paste the returned token into the Paperclip agent's opencode-local
+        config as OPENAI_API_KEY; the proxy then attributes that agent's LLM
+        calls and pulses its activity onto the Floor.
+        """
+        from core.middleware import require_admin  # local import: keep module light
+
+        require_admin(request)
+        if agent_tokens is None:
+            return JSONResponse({"detail": "agent tokens not configured"}, status_code=503)
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"detail": "invalid JSON"}, status_code=400)
+        agent_id = str((body or {}).get("agent_id", "")).strip()
+        if not agent_id:
+            return JSONResponse({"detail": "agent_id is required"}, status_code=400)
+        name = str((body or {}).get("name", "")).strip()
+        token = agent_tokens.mint(agent_id, name)
+        return {"agent_id": agent_id, "name": name or agent_id, "token": token}
+
+    @router.get("/api/paperclip/agent-tokens")
+    def list_agent_tokens(request: Request):
+        from core.middleware import require_admin  # local import: keep module light
+
+        require_admin(request)
+        if agent_tokens is None:
+            return {"tokens": []}
+        return {"tokens": agent_tokens.list()}
 
     @router.api_route(
         "/paperclip/{path:path}",

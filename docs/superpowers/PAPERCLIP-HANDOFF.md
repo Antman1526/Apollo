@@ -231,7 +231,14 @@ Tour + ingest API doc: `docs/paperclip-floor.md` (with renders).
 - **Not yet validated against a live Paperclip** (none running during the
   build) — first end-to-end check: start the sidecar, open the Floor, confirm
   the label flips from "Live · waiting for agents" to "Live" when an agent runs.
-- **3.4 (per-agent lmproxy token attribution) remains unbuilt.**
+- **3.4 MVP shipped (2026-06-11):** `services/paperclip/agent_tokens.py`
+  (file-backed registry under `~/.apollo`, one token per agent, rotate on
+  re-mint) + lmproxy accepts per-agent tokens alongside the shared one and
+  publishes a debounced `heartbeat.run.event` Floor pulse per agent while it
+  generates. Mint via admin `POST /api/paperclip/agent-tokens`; paste into
+  the agent's `opencode-local` `OPENAI_API_KEY`. Still open from 3.4: writing
+  the token into Paperclip's agent config automatically (needs live REST
+  validation) and true per-agent token *accounting* (events exist, no ledger).
 
 Also landed since 2026-06-08: SSE stream held open when idle (was: closed →
 permanent preview), seq-watermark replay dedup, EventSource reconnect

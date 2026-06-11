@@ -714,7 +714,10 @@ _paperclip_cfg = _load_paperclip_config()
 # onto the Floor; tokenless works in Paperclip's default local_trusted mode,
 # authenticated deployments set PAPERCLIP_COLLECTOR_TOKEN (+ company id).
 _paperclip_hub = _PaperclipEventHub()
+from services.paperclip.agent_tokens import AgentTokenRegistry as _PaperclipAgentTokens
 from services.paperclip.collector import PaperclipCollector as _PaperclipCollector
+
+_paperclip_agent_tokens = _PaperclipAgentTokens()
 
 _paperclip_collector = _PaperclipCollector(
     _paperclip_cfg,
@@ -731,6 +734,7 @@ build_and_include_router(
     ws_validate=lambda token: auth_manager.validate_token(token),
     hub=_paperclip_hub,
     collector_status=_paperclip_collector.status,
+    agent_tokens=_paperclip_agent_tokens,
     logger=logger,
 )
 
@@ -792,6 +796,10 @@ def _warm_chat_base_url():
 build_and_include_router(app, "Local model proxy", setup_lmproxy_routes,
     token_provider=_paperclip_proxy_token,
     warm_url_provider=_warm_chat_base_url,
+    # Per-agent tokens (Phase 3.4): attribute agent LLM calls and pulse the
+    # Floor while an agent is generating.
+    agent_lookup=_paperclip_agent_tokens.lookup,
+    publish_activity=_paperclip_hub.publish,
     logger=logger,
 )
 
