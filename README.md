@@ -8,7 +8,42 @@
 
 ![Apollo](docs/apollo.jpg)
 
-A self-hosted AI workspace -- meant to be the self-hosted version of the UI experience you get from ChatGPT and Claude. But with more jank and fun. Running on your own hardware, with your own data -- local-first, privacy-first, and no trojan.
+**Apollo is a self-hosted, local-first AI workspace** — the ChatGPT/Claude UI experience
+running entirely on your own hardware, with your own data and your own models. But with
+more jank and fun. Privacy-first, no telemetry, no trojan.
+
+**What it actually does**, concretely:
+
+- **Chats with language models** — local GGUF files that Apollo discovers in folders you
+  configure and serves on demand through `llama.cpp` (one warm model at a time, swapped
+  automatically when you pick another), or any OpenAI-compatible / Anthropic / OpenRouter /
+  Groq / Ollama endpoint you add. Streaming SSE responses, presets, sessions, folders,
+  multimodal attachments.
+- **Runs autonomous agents** — an agent mode with shell/web/file/MCP tools, a PRD-driven
+  "Ralph" iteration loop, and a bundled **[Paperclip](https://github.com/paperclipai/paperclip)**
+  agent-management sidecar whose agents run on your local models through a token-guarded
+  proxy (`/lmproxy/v1`). Their activity renders live as an **isometric Lego office**
+  ("The Floor"): each agent gets a desk, walks to a review table or help bar as its state
+  changes, speaks task-based speech bubbles, and walks out an exit door when its work is done.
+- **Researches** — multi-step deep-research runs that search (SearXNG/DDG/Brave/Tavily…),
+  crawl pages into clean Markdown (crawl4ai), and synthesize cited visual reports.
+- **Remembers** — persistent semantic memory and skills (ChromaDB + local fastembed ONNX
+  embeddings) that the assistant consults and updates across sessions.
+- **Manages your day** — IMAP/SMTP email with AI triage (urgency, auto-tag, summaries,
+  reply drafts, spam), notes with reminders, cron-scheduled tasks, and a CalDAV-synced
+  calendar — all agent-accessible.
+- **Edits documents** — a multi-tab editor (Markdown/HTML/CSV, syntax highlighting) where
+  AI assists rather than replaces; plus image gallery, file uploads with vision/PDF
+  understanding, model comparison with blind testing, and a hardware-aware model
+  "Cookbook" (scan → recommend → download → serve).
+- **Looks how you want** — 25 built-in themes (dark *and* light), a full theme editor with
+  custom palettes, background effects, fonts and density; responsive/installable PWA.
+
+It is a three-tier system: a **FastAPI backend** (Python 3.11+) exposing ~40 modular
+routers, a **framework-free vanilla-JS frontend** (ES modules, server-sent events, no
+build step), and a **SQLite + ChromaDB data layer**. Everything runs as one `uvicorn`
+process plus on-demand `llama-server` subprocesses and the optional Paperclip Node
+sidecar. See [Architecture](#architecture) below for enough detail to rebuild it.
 
 > Apollo is a renamed distribution of **[Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)** by **pewdiepie-archdaemon**. All the original work is theirs — Apollo only changes the name. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for full credits.
 
@@ -571,19 +606,83 @@ npx -y @playwright/mcp@latest --version
 That installs `@playwright/mcp` plus Playwright (~300MB total). Restart Apollo and the server will register at startup.
 
 ## Architecture
+
+Enough detail here to rebuild the system from scratch; the patterns below are the
+load-bearing ones.
+
 ```
-app.py                   # FastAPI entry point
-core/      auth, database, middleware, constants
-src/       llm_core, agent_loop, agent_tools, chat_processor, search/
-routes/    chat, session, document, memory, model … endpoints
-services/  docs, memory, search, hwfit (Cookbook), localmodels (GGUF scan + serve) …
-static/    index.html + app.js + style.css + js/ (modular front-end)
-docs/      landing page (index.html) + preview clips
+app.py                   # FastAPI entry point: middleware, ~40 router registrations,
+                         # startup/shutdown hooks (model scan, Paperclip runtime+collector)
+core/      auth manager, SQLAlchemy models + engine (database.py), middleware
+           (require_admin, internal-tool token), session manager, constants
+src/       llm_core (provider calls + SSE streaming), agent_loop/agent_tools/agent_runs,
+           mcp_manager, event_bus, model_context, request_models, endpoint_resolver
+routes/    one module per feature: <name>_routes.py exposes
+           setup_<name>_routes(deps...) -> APIRouter; never imports other routes
+services/  domain logic: localmodels/ (GGUF scanner, single-warm-slot llama-server
+           manager, picker registry), paperclip/ (config, native runtime supervisor,
+           Node bootstrap w/ checksum verify, reverse-proxy helpers, EventHub,
+           live-events collector, per-agent token registry), memory/, integrations/ …
+static/    index.html (single page: sidebar + rail + modals) + style.css (CSS-variable
+           theming, color-mix tokens) + js/ ES modules (app.js orchestrator; theme.js
+           preset/custom themes; paperclip.js floor engine+renderer; storage.js …)
+tests/     flat pytest suite (~1,580 tests) + node:test .mjs suites; scripts/check.sh
+           = compileall + pytest + npm test is the single quality gate
+docs/      landing page, preview clips, Paperclip Floor guide (paperclip-floor.md),
+           engineering handoff (superpowers/PAPERCLIP-HANDOFF.md)
 ```
 
+**Key patterns (the parts you'd need to get right when recreating it):**
+
+- **Router factories with labeled registration.** Every feature is
+  `setup_<name>_routes(...) -> APIRouter`, registered in `app.py` through
+  `build_and_include_router(app, "Label", factory, *deps)` so a broken feature fails
+  loudly at startup with its label. Dependencies (managers, config, the shared event
+  hub) are passed in — routes never construct globals.
+- **One auth middleware, explicit exemptions.** `AuthMiddleware` is installed only when
+  `AUTH_ENABLED=true`; cookie sessions, optional TOTP 2FA, `ody_` bearer API tokens, and
+  a loopback internal-tool token. Self-authenticating endpoints (`/lmproxy/*`, task
+  webhooks, `/api/paperclip/events`) live in `AUTH_EXEMPT_PREFIXES` and prove identity
+  themselves (token match or loopback-only). Websockets bypass HTTP middleware, so the
+  Paperclip WS proxy validates the session cookie explicitly. With auth disabled
+  (single-user mode), ownership checks short-circuit (`_auth_disabled()` pattern).
+- **Local models: scan → catalog → single warm slot.** `services/localmodels/scanner.py`
+  walks configured dirs for GGUFs (skipping AppleDouble `._` files, split parts, mmproj);
+  the registry syncs a deduped name list into the picker's `cached_models`;
+  `server_manager.ensure_running(model)` swaps one warm `llama-server` subprocess
+  (context = `min(model's known window, APOLLO_LLAMA_CONTEXT=16384)`, health timeout
+  scaled 40s/GB). Chat resolves the `local://llama.cpp` endpoint sentinel through
+  `materialize_local_url()` at call time. First configured dir wins for duplicate names.
+- **Streaming.** Chat and the Floor both use SSE: `data:` JSON frames, an `event: error`
+  channel with status codes, `[DONE]` terminators. Client disconnects are handled with a
+  guarded partial-save (a save failure must never mask the `CancelledError`).
+- **The Paperclip pipeline.** One bounded `EventHub` (200-entry replay deque, seq
+  watermark, drop-don't-backpressure subscriber queues) is fed by three producers —
+  HTTP ingest, a reconnecting WebSocket collector against Paperclip's live-events
+  endpoint, and per-agent lmproxy activity pulses — and drained by `/api/paperclip/stream`
+  (emits `paperclip.stream.waiting` while idle instead of closing). The Floor UI keeps
+  all layout in logical 0-100 coordinates and projects to an isometric SVG stage at
+  render time; furniture and minifig agents share one depth-sorted paint list (true
+  occlusion); movement animates exactly once per change via committed `lastX/lastY`;
+  identical-HTML renders skip the DOM write so animations never restart.
+- **Packaging is launcher-style.** `build-macos-app.sh` produces `Apollo.app`/`Apollo.dmg`
+  that drive this repo's venv (install path baked at build time);
+  `scripts/windows-launcher/apollo_launcher.c` cross-compiles (mingw-w64) to `Apollo.exe`,
+  which opens `launch-windows.ps1` in a console beside it.
+
+**Stack:** Python 3.11+ · FastAPI/Starlette/uvicorn · httpx (all outbound HTTP incl.
+streaming proxies) · websockets · SQLAlchemy/SQLite · ChromaDB + fastembed · llama.cpp ·
+vanilla ES-module JS · node:test + pytest. Full dependency rationale lives as comments
+in `requirements.txt`.
+
 ## Data
-All user data lives in `data/` (gitignored): `app.db` (sessions, messages, documents),
-`memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/`, `settings.json`.
+All user data lives in `data/` (gitignored): `app.db` (SQLite: sessions, messages,
+documents, model endpoints, MCP servers, notes, calendars, scheduled tasks, gallery,
+memories, email accounts, API tokens, webhooks), `auth.json` (users/2FA),
+`user_prefs.json` (per-user prefs incl. custom themes and local-model folders),
+`memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/` (vector memory).
+Generated secrets live in `~/.apollo/` with 0600 permissions (Paperclip auth secret,
+proxy token, per-agent tokens).
 
 ## Star History
 
