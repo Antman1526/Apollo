@@ -709,9 +709,20 @@ from routes.paperclip_routes import setup_paperclip_routes
 from services.paperclip.config import load_config as _load_paperclip_config, resolve_proxy_token as _paperclip_proxy_token
 from services.paperclip.events import EventHub as _PaperclipEventHub
 _paperclip_cfg = _load_paperclip_config()
-# Shared hub: fed by HTTP ingest and the live-events collector below, drained
-# by /api/paperclip/stream.
+# Shared hub: fed by HTTP ingest and the live-events collector, drained by
+# /api/paperclip/stream. The collector bridges Paperclip's realtime websocket
+# onto the Floor; tokenless works in Paperclip's default local_trusted mode,
+# authenticated deployments set PAPERCLIP_COLLECTOR_TOKEN (+ company id).
 _paperclip_hub = _PaperclipEventHub()
+from services.paperclip.collector import PaperclipCollector as _PaperclipCollector
+
+_paperclip_collector = _PaperclipCollector(
+    _paperclip_cfg,
+    _paperclip_hub.publish,
+    token=os.getenv("PAPERCLIP_COLLECTOR_TOKEN", ""),
+    company_id=os.getenv("PAPERCLIP_COMPANY_ID", ""),
+)
+app.state.paperclip_collector = _paperclip_collector
 build_and_include_router(
     app,
     "Sidecar proxy",
@@ -719,6 +730,7 @@ build_and_include_router(
     _paperclip_cfg,
     ws_validate=lambda token: auth_manager.validate_token(token),
     hub=_paperclip_hub,
+    collector_status=_paperclip_collector.status,
     logger=logger,
 )
 
@@ -796,20 +808,6 @@ _paperclip_runtime = _PaperclipRuntime(
         f"http://localhost:{os.getenv('APP_PORT', '7000')}/lmproxy/v1"),
 )
 app.state.paperclip_runtime = _paperclip_runtime
-
-# Live-events collector: bridges Paperclip's realtime websocket into the
-# Floor's event hub so real agents show up in the office. Tokenless works in
-# Paperclip's default local_trusted mode; set PAPERCLIP_COLLECTOR_TOKEN (an
-# agent API key) plus PAPERCLIP_COMPANY_ID for authenticated deployments.
-from services.paperclip.collector import PaperclipCollector as _PaperclipCollector
-
-_paperclip_collector = _PaperclipCollector(
-    _paperclip_cfg,
-    _paperclip_hub.publish,
-    token=os.getenv("PAPERCLIP_COLLECTOR_TOKEN", ""),
-    company_id=os.getenv("PAPERCLIP_COMPANY_ID", ""),
-)
-app.state.paperclip_collector = _paperclip_collector
 
 
 @app.on_event("startup")

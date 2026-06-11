@@ -40,6 +40,7 @@ def setup_paperclip_routes(
     http_client: Optional[httpx.AsyncClient] = None,
     ws_validate: Optional[Callable[[Optional[str]], bool]] = None,
     hub: Optional[EventHub] = None,
+    collector_status: Optional[Callable[[], dict]] = None,
 ) -> APIRouter:
     router = APIRouter(tags=["paperclip"])
     owns_client = http_client is None
@@ -69,6 +70,7 @@ def setup_paperclip_routes(
             "model_endpoint": cfg.model_endpoint,
             "reachable": reachable,
             "browser_use": browser_use,
+            "collector": collector_status() if collector_status else None,
         }
         payload["agent_workbench"] = agent_workbench.status(
             app_base_url=app_base_url,

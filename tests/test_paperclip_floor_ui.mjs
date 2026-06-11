@@ -38,8 +38,8 @@ test('normalizes Paperclip live events into an agent floor model', () => {
   ]);
 });
 
-test('renders agents as little Lego-like humans with task state', () => {
-  const html = paperclip.renderLegoAgentHTML({
+test('renders the focus figure as the same SVG minifig used on the floor', () => {
+  const html = paperclip.renderFocusFigureHTML({
     id: 'coder',
     name: 'Coder',
     role: 'coding',
@@ -48,9 +48,10 @@ test('renders agents as little Lego-like humans with task state', () => {
     thinking: true,
   });
 
-  assert.match(html, /paperclip-lego-agent/);
-  assert.match(html, /paperclip-lego-head/);
-  assert.match(html, /paperclip-lego-torso/);
+  assert.match(html, /paperclip-focus-card/);
+  assert.match(html, /paperclip-fig/);
+  assert.match(html, /paperclip-fig-head/);
+  assert.match(html, /paperclip-fig-torso/);
   assert.match(html, /Coder/);
   assert.match(html, /Implement The Floor/);
   assert.doesNotMatch(html, /<script/i);
@@ -454,7 +455,7 @@ test('a waiting stream stays live without forwarding placeholder events', () => 
 });
 
 test('allowlists role CSS classes while preserving role labels as text', () => {
-  const html = paperclip.renderLegoAgentHTML({
+  const html = paperclip.renderFocusFigureHTML({
     id: 'reviewer',
     name: 'Reviewer',
     role: 'review danger" onclick="alert(1)',

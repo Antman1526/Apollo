@@ -214,35 +214,29 @@ function applyFloorEvent(state, event) {
   return state;
 }
 
-function renderLegoAgentHTML(agent, selected = false) {
+// Focus-pane header card: the same SVG minifig as the floor, plus name,
+// role/zone, and current task.
+function renderFocusFigureHTML(agent) {
   const roleKey = normalizeRole(agent.role);
   const zoneKey = normalizeZone(agent.zone);
   const role = ROLE_LABELS[roleKey] || ROLE_LABELS.coding;
   const classes = [
-    'paperclip-agent-tile',
-    selected ? 'selected' : '',
+    'paperclip-focus-card',
     agent.thinking ? 'thinking' : '',
     `zone-${zoneKey}`,
     `role-${roleKey}`,
   ].filter(Boolean).join(' ');
   return `
-    <button type="button" class="${classes}" data-agent-id="${escapeHTML(agent.id)}" title="${escapeHTML(agent.name)}">
-      <span class="paperclip-lego-agent" aria-hidden="true">
-        <span class="paperclip-lego-head"><span class="paperclip-lego-face"></span></span>
-        <span class="paperclip-lego-body">
-          <span class="paperclip-lego-arm left"></span>
-          <span class="paperclip-lego-torso"></span>
-          <span class="paperclip-lego-arm right"></span>
-        </span>
-        <span class="paperclip-lego-legs"><span></span><span></span></span>
-      </span>
+    <div class="${classes}">
+      <svg class="paperclip-focus-fig" viewBox="-28 -78 56 84" aria-hidden="true">
+        ${minifigSVG()}
+      </svg>
       <span class="paperclip-agent-copy">
         <span class="paperclip-agent-name">${escapeHTML(agent.name)}</span>
         <span class="paperclip-agent-role">${escapeHTML(role)} / ${escapeHTML(zoneKey)}</span>
         <span class="paperclip-agent-task">${escapeHTML(agent.task || 'Ready')}</span>
       </span>
-      <span class="paperclip-thinking-dots" aria-hidden="true"><span></span><span></span><span></span></span>
-    </button>
+    </div>
   `;
 }
 
@@ -687,6 +681,33 @@ function renderInteractionArcs(layout) {
   }).join('')}</g>`;
 }
 
+// One minifig, shared by the floor scene and the focus pane. Anchored at its
+// feet at the group origin.
+function minifigSVG() {
+  return `
+      <g class="paperclip-fig">
+        <g class="paperclip-fig-legs">
+          <rect class="paperclip-fig-leg left" x="-9" y="-16" width="8" height="16" rx="2"/>
+          <rect class="paperclip-fig-leg right" x="1" y="-16" width="8" height="16" rx="2"/>
+          <rect class="paperclip-fig-hip" x="-10" y="-20" width="20" height="5" rx="2"/>
+        </g>
+        <g class="paperclip-fig-body">
+          <rect class="paperclip-fig-torso" x="-13" y="-42" width="26" height="23" rx="4"/>
+          <rect class="paperclip-fig-arm" x="-19" y="-40" width="7" height="17" rx="3.5"/>
+          <rect class="paperclip-fig-arm" x="12" y="-40" width="7" height="17" rx="3.5"/>
+          <circle class="paperclip-fig-hand" cx="-15.5" cy="-21" r="3"/>
+          <circle class="paperclip-fig-hand" cx="15.5" cy="-21" r="3"/>
+        </g>
+        <g class="paperclip-fig-headgroup">
+          <rect class="paperclip-fig-stud" x="-5" y="-68" width="10" height="6" rx="2"/>
+          <rect class="paperclip-fig-head" x="-10" y="-63" width="20" height="20" rx="6"/>
+          <circle class="paperclip-fig-eye" cx="-4.5" cy="-55" r="1.7"/>
+          <circle class="paperclip-fig-eye" cx="4.5" cy="-55" r="1.7"/>
+          <path class="paperclip-fig-smile" d="M -4.5 -50.5 Q 0 -46.5 4.5 -50.5"/>
+        </g>
+      </g>`;
+}
+
 // The minifig is drawn directly into the scene SVG (anchored at its feet at
 // the group origin) so depth-sorted furniture can occlude it correctly.
 function renderWorkspaceAgentSVG(agent, selected = false) {
@@ -716,27 +737,7 @@ function renderWorkspaceAgentSVG(agent, selected = false) {
       <title>${escapeHTML(`${agent.name} · ${role} · ${agent.task || zoneKey}`)}</title>
       <ellipse class="paperclip-agent-shadow" cx="0" cy="2" rx="19" ry="6"/>
       ${selected ? '<ellipse class="paperclip-select-ring" cx="0" cy="2" rx="24" ry="8"/>' : ''}
-      <g class="paperclip-fig">
-        <g class="paperclip-fig-legs">
-          <rect class="paperclip-fig-leg left" x="-9" y="-16" width="8" height="16" rx="2"/>
-          <rect class="paperclip-fig-leg right" x="1" y="-16" width="8" height="16" rx="2"/>
-          <rect class="paperclip-fig-hip" x="-10" y="-20" width="20" height="5" rx="2"/>
-        </g>
-        <g class="paperclip-fig-body">
-          <rect class="paperclip-fig-torso" x="-13" y="-42" width="26" height="23" rx="4"/>
-          <rect class="paperclip-fig-arm" x="-19" y="-40" width="7" height="17" rx="3.5"/>
-          <rect class="paperclip-fig-arm" x="12" y="-40" width="7" height="17" rx="3.5"/>
-          <circle class="paperclip-fig-hand" cx="-15.5" cy="-21" r="3"/>
-          <circle class="paperclip-fig-hand" cx="15.5" cy="-21" r="3"/>
-        </g>
-        <g class="paperclip-fig-headgroup">
-          <rect class="paperclip-fig-stud" x="-5" y="-68" width="10" height="6" rx="2"/>
-          <rect class="paperclip-fig-head" x="-10" y="-63" width="20" height="20" rx="6"/>
-          <circle class="paperclip-fig-eye" cx="-4.5" cy="-55" r="1.7"/>
-          <circle class="paperclip-fig-eye" cx="4.5" cy="-55" r="1.7"/>
-          <path class="paperclip-fig-smile" d="M -4.5 -50.5 Q 0 -46.5 4.5 -50.5"/>
-        </g>
-      </g>
+      ${minifigSVG()}
       ${agent.talking ? `
         <g class="paperclip-speech-burst">
           <rect x="13" y="-88" width="34" height="16" rx="8"/>
@@ -847,7 +848,7 @@ function renderFocusHTML(state) {
     : '<div class="paperclip-empty-line">No messages</div>';
   return `
     <div class="paperclip-focus-head">
-      ${renderLegoAgentHTML(agent, true)}
+      ${renderFocusFigureHTML(agent)}
       <div class="paperclip-focus-status">${escapeHTML(agent.status)} / ${escapeHTML(agent.task || 'Ready')}</div>
     </div>
     <div class="paperclip-pane-title">Tools</div>
@@ -1180,6 +1181,10 @@ function applyStatus(status) {
     const bits = [];
     if (status.model_endpoint) bits.push(`model: ${status.model_endpoint}`);
     if (status.browser_url) bits.push(status.browser_url);
+    if (status.collector) {
+      const c = status.collector;
+      bits.push(`collector: ${c.connected ? 'connected' : c.running ? 'connecting' : 'off'}`);
+    }
     endpointEl.textContent = bits.join(' · ');
   }
   const openBtn = $('set-paperclipOpen');
@@ -1251,7 +1256,7 @@ export {
   createLiveEventStream,
   isoProject,
   refreshStatus,
-  renderLegoAgentHTML,
+  renderFocusFigureHTML,
   renderWorkspaceHTML,
   zoneForStatus,
 };

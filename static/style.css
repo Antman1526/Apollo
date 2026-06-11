@@ -400,27 +400,33 @@ html {
   padding: 9px;
 }
 
-.paperclip-agent-tile {
-  width: 100%;
-  min-height: 128px;
-  position: relative;
+/* Focus-pane header card: shares the SVG minifig with the floor scene. */
+.paperclip-focus-card {
   display: grid;
-  grid-template-columns: 58px minmax(0, 1fr);
-  gap: 9px;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 10px;
   align-items: center;
-  padding: 10px 9px;
+  margin-bottom: 10px;
+  padding: 10px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
   border-radius: 8px;
   color: var(--fg);
   background: color-mix(in srgb, var(--panel) 72%, var(--bg));
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+}
+
+.paperclip-focus-fig {
+  width: 56px;
+  height: 80px;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.28));
+}
+
+.paperclip-focus-card.thinking .paperclip-fig-arm {
+  animation: paperclip-lego-arm 680ms ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 10%;
 }
 
 .paperclip-view-btn:focus-visible,
-.paperclip-agent-tile:focus-visible,
 .paperclip-roaming-agent:focus-visible,
 .paperclip-board-card:focus-visible,
 #paperclip-modal .close-btn:focus-visible,
@@ -505,11 +511,12 @@ g.paperclip-roaming-agent.selected .paperclip-fig {
   stroke-width: 1.5;
 }
 
-/* Minifig "uniforms": torso color follows the agent's role. */
-g.role-research .paperclip-fig-torso { fill: #20b486; }
-g.role-coding .paperclip-fig-torso { fill: #3b82f6; }
-g.role-review .paperclip-fig-torso { fill: #c678dd; }
-g.role-ops .paperclip-fig-torso { fill: #e06c75; }
+/* Minifig "uniforms": torso color follows the agent's role (applies on the
+   floor scene g and the focus card alike). */
+.role-research .paperclip-fig-torso { fill: #20b486; }
+.role-coding .paperclip-fig-torso { fill: #3b82f6; }
+.role-review .paperclip-fig-torso { fill: #c678dd; }
+.role-ops .paperclip-fig-torso { fill: #e06c75; }
 
 /* Poses. */
 g.pose-sitting .paperclip-fig-legs { transform: translateY(8px) scaleY(0.45); }
@@ -550,10 +557,10 @@ g.paperclip-roaming-agent.walking .paperclip-fig-leg.right {
 
 /* Status dot on the name chip, colored by the agent's zone. */
 .paperclip-chip-dot { fill: #8a8f98; }
-g.zone-working .paperclip-chip-dot { fill: #3b82f6; }
-g.zone-review .paperclip-chip-dot { fill: #c678dd; }
-g.zone-blocked .paperclip-chip-dot { fill: #e06c75; }
-g.zone-done .paperclip-chip-dot { fill: #50fa7b; }
+.zone-working .paperclip-chip-dot { fill: #3b82f6; }
+.zone-review .paperclip-chip-dot { fill: #c678dd; }
+.zone-blocked .paperclip-chip-dot { fill: #e06c75; }
+.zone-done .paperclip-chip-dot { fill: #50fa7b; }
 
 g.paperclip-speech-burst rect {
   fill: color-mix(in srgb, var(--panel) 92%, var(--bg));
@@ -582,8 +589,6 @@ line.paperclip-walk-path {
   animation: paperclip-trail-fade 1.25s ease-out;
 }
 
-.paperclip-agent-tile:hover,
-.paperclip-agent-tile.selected,
 .paperclip-board-card:hover,
 .paperclip-board-card.selected {
   transform: translateY(-1px);
@@ -620,116 +625,6 @@ line.paperclip-walk-path {
   overflow: hidden;
 }
 
-.paperclip-lego-agent {
-  width: 48px;
-  height: 88px;
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  justify-content: flex-end;
-  filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.28));
-}
-
-.paperclip-lego-head,
-.paperclip-lego-torso,
-.paperclip-lego-arm,
-.paperclip-lego-legs span {
-  display: block;
-  background: #f4c542;
-  border: 2px solid rgba(0, 0, 0, 0.32);
-}
-
-.paperclip-lego-head {
-  width: 30px;
-  height: 28px;
-  position: relative;
-  border-radius: 8px 8px 6px 6px;
-  margin-bottom: 3px;
-}
-
-.paperclip-lego-head::before {
-  content: "";
-  position: absolute;
-  left: 8px;
-  top: -7px;
-  width: 14px;
-  height: 7px;
-  border-radius: 4px 4px 0 0;
-  background: #d6a72d;
-  border: 2px solid rgba(0, 0, 0, 0.28);
-  border-bottom: 0;
-}
-
-.paperclip-lego-face::before,
-.paperclip-lego-face::after {
-  content: "";
-  position: absolute;
-  top: 10px;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #1b1b1b;
-}
-
-.paperclip-lego-face::before { left: 8px; }
-.paperclip-lego-face::after { right: 8px; }
-
-.paperclip-lego-body {
-  width: 48px;
-  height: 35px;
-  display: grid;
-  grid-template-columns: 9px 1fr 9px;
-  align-items: start;
-}
-
-.paperclip-lego-torso {
-  height: 34px;
-  border-radius: 5px 5px 3px 3px;
-  background: #3b82f6;
-}
-
-.paperclip-lego-head::after {
-  content: "";
-  position: absolute;
-  left: 50%;
-  bottom: 4px;
-  width: 12px;
-  height: 6px;
-  transform: translateX(-50%);
-  border: 2px solid #1b1b1b;
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
-}
-
-.paperclip-lego-arm {
-  height: 30px;
-  border-radius: 6px;
-  background: #f4c542;
-  transform-origin: top center;
-}
-
-.paperclip-lego-arm.left { transform: rotate(8deg); }
-.paperclip-lego-arm.right { transform: rotate(-8deg); }
-
-.paperclip-lego-legs {
-  width: 32px;
-  height: 22px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 4px;
-}
-
-.paperclip-lego-legs span {
-  border-radius: 2px 2px 5px 5px;
-  background: #24324a;
-}
-
-.role-research .paperclip-lego-torso { background: #20b486; }
-.role-coding .paperclip-lego-torso { background: #3b82f6; }
-.role-review .paperclip-lego-torso { background: #c678dd; }
-.role-ops .paperclip-lego-torso { background: #e06c75; }
-
-.paperclip-agent-tile.thinking .paperclip-lego-agent,
 /* Typing wiggle while a seated minifig works. */
 g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   animation: paperclip-lego-arm 680ms ease-in-out infinite;
@@ -737,44 +632,12 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   transform-origin: 50% 10%;
 }
 
-.paperclip-agent-tile.thinking .paperclip-lego-arm.right {
-  animation: paperclip-lego-arm 680ms ease-in-out infinite;
-}
-
-.paperclip-thinking-dots {
-  position: absolute;
-  right: 8px;
-  top: 8px;
-  display: none;
-  gap: 3px;
-}
-
-.paperclip-agent-tile.thinking .paperclip-thinking-dots {
-  display: inline-flex;
-}
-
-.paperclip-thinking-dots span {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--green);
-  animation: paperclip-dot-pulse 900ms ease-in-out infinite;
-}
-
-.paperclip-thinking-dots span:nth-child(2) { animation-delay: 120ms; }
-.paperclip-thinking-dots span:nth-child(3) { animation-delay: 240ms; }
-
 .paperclip-focus-pane,
 .paperclip-activity-pane {
   padding: 12px;
   overflow: auto;
 }
 
-.paperclip-focus-head .paperclip-agent-tile {
-  cursor: default;
-  transform: none;
-  margin-bottom: 10px;
-}
 
 .paperclip-pane-title {
   margin: 12px 0 7px;
@@ -868,34 +731,14 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   background: var(--bg);
 }
 
-@keyframes paperclip-lego-work {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-4px); }
-}
-
 @keyframes paperclip-lego-arm {
   0%, 100% { transform: rotate(-8deg); }
   50% { transform: rotate(-38deg); }
 }
 
-@keyframes paperclip-dot-pulse {
-  0%, 100% { opacity: 0.28; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-2px); }
-}
-
 @keyframes paperclip-lego-nod {
   0%, 100% { transform: translateY(0) rotate(0deg); }
   50% { transform: translateY(-2px) rotate(-4deg); }
-}
-
-@keyframes paperclip-screen-work {
-  0% { background-position: 0 0, 0 0; }
-  100% { background-position: 24px 0, 0 0; }
-}
-
-@keyframes paperclip-speech-dot {
-  0%, 100% { opacity: 0.28; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-2px); }
 }
 
 @keyframes paperclip-agent-walk {
@@ -1041,11 +884,6 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   #paperclip-modal .paperclip-fig-leg,
   #paperclip-modal .paperclip-speech-burst circle,
   #paperclip-modal .paperclip-iso-thinking circle,
-  #paperclip-modal .paperclip-lego-agent,
-  #paperclip-modal .paperclip-lego-head,
-  #paperclip-modal .paperclip-lego-arm,
-  #paperclip-modal .paperclip-lego-legs span,
-  #paperclip-modal .paperclip-thinking-dots span,
   #paperclip-modal .paperclip-desk-screen,
   #paperclip-modal .paperclip-agent-desk.active .paperclip-desk-screen,
   #paperclip-modal .paperclip-interaction-arc,

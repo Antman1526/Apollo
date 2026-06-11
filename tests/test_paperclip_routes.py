@@ -55,6 +55,19 @@ def test_status_reports_enabled():
         assert r.json()["browser_url"] == "http://localhost:3100"
         assert r.json()["browser_use"]["package"] == "browser-use"
         assert r.json()["agent_workbench"]["components"]["paperclip"]["state"] == "ready"
+        assert r.json()["collector"] is None
+
+
+def test_status_reports_collector_state():
+    app = FastAPI()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    app.include_router(setup_paperclip_routes(
+        _cfg(), http_client=client,
+        collector_status=lambda: {"running": True, "connected": False, "authenticated": True},
+    ))
+    with TestClient(app) as c:
+        collector = c.get("/api/paperclip/status").json()["collector"]
+        assert collector == {"running": True, "connected": False, "authenticated": True}
 
 
 def test_proxy_forwards_get_and_returns_body():
