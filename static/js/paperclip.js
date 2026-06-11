@@ -9,6 +9,7 @@ let _demoTimer = null;
 let _demoIndex = 0;
 let _liveStream = null;
 let _liveRetryTimer = null;
+let _ambientTimer = null;
 let _floorState = createFloorState();
 
 const ZONES = [
@@ -26,6 +27,11 @@ const SHARED_STATIONS = {
   blocked: { id: 'blocked', label: 'Help Bar', x: 14, y: 74 },
   done: { id: 'done', label: 'Done Dock', x: 76, y: 70 },
 };
+
+// Finished agents head for the door (on the left wall) and, after a short
+// goodbye linger, leave the office. New activity brings them back.
+const EXIT_SPOT = { x: 7, y: 84 };
+const EXIT_LINGER_MS = 20000;
 
 // Personal desk slots laid out as two office rows. Each agent is assigned the
 // next free slot on first sight and keeps it for the session.
@@ -155,7 +161,13 @@ function applyFloorEvent(state, event) {
     const agent = ensureAgent(state, payloadAgentId(payload), payload);
     const status = payload.status || payload.state || (type === 'heartbeat.run.queued' ? 'queued' : agent.status);
     agent.status = status;
-    agent.zone = zoneForStatus(status);
+    const zone = zoneForStatus(status);
+    if (zone === 'done') {
+      if (agent.zone !== 'done') agent.doneAt = Date.now();
+    } else {
+      agent.doneAt = undefined;
+    }
+    agent.zone = zone;
     agent.task = payload.task || payload.title || payload.run?.title || agent.task;
     agent.thinking = agent.zone === 'working';
     agent.updatedAt = Date.now();
@@ -171,6 +183,7 @@ function applyFloorEvent(state, event) {
     const agent = ensureAgent(state, payloadAgentId(payload), payload);
     const chunk = payload.chunk || payload.text || payload.message || '';
     if (chunk) pushLimited(agent.transcript, chunk, 32);
+    agent.doneAt = undefined;
     agent.status = 'running';
     agent.zone = 'working';
     agent.thinking = true;
@@ -182,6 +195,7 @@ function applyFloorEvent(state, event) {
     const agent = ensureAgent(state, payloadAgentId(payload), payload);
     const tool = payload.tool || payload.name || payload.event || 'tool';
     pushLimited(agent.tools, tool, 8);
+    agent.doneAt = undefined;
     agent.zone = 'working';
     agent.thinking = true;
     agent.updatedAt = Date.now();
@@ -266,12 +280,18 @@ function stationPoint(zoneId, index = 0) {
 }
 
 function workspacePoint(state, agentId, zoneId, index = 0) {
-  // Backlog and working agents are at their own desk; everyone else heads to
-  // the matching shared corner of the office.
+  // Backlog and working agents are at their own desk; done agents head for
+  // the exit door; everyone else goes to the matching shared corner.
   if (zoneId === 'working' || zoneId === 'backlog') {
     const desk = deskPointFor(state, agentId);
     // Stand/sit at the chair on the near side of the desk, not inside it.
     return { x: desk.x, y: clampY(desk.y + 3) };
+  }
+  if (zoneId === 'done') {
+    return {
+      x: clampX(EXIT_SPOT.x + index * 5),
+      y: clampY(EXIT_SPOT.y - index * 3),
+    };
   }
   return stationPoint(zoneId, index);
 }
@@ -288,8 +308,9 @@ function conversationLineFor(agent) {
 }
 
 function computeWorkspaceLayout(state = _floorState) {
+  const now = Date.now();
   const zoneCounts = {};
-  const agents = sortedAgents(state).map((agent) => {
+  const allAgents = sortedAgents(state).map((agent) => {
     const zoneIndex = zoneCounts[agent.zone] || 0;
     zoneCounts[agent.zone] = zoneIndex + 1;
     const point = workspacePoint(state, agent.id, agent.zone, zoneIndex);
@@ -306,9 +327,12 @@ function computeWorkspaceLayout(state = _floorState) {
       moving: false,
     };
   });
+  // Done agents linger at the exit to say goodbye, then leave the office.
+  // (Their desk stays put and the Board still lists them.)
+  const agents = allAgents.filter((agent) =>
+    !(agent.zone === 'done' && agent.doneAt && now - agent.doneAt > EXIT_LINGER_MS));
   const byId = new Map(agents.map((agent) => [agent.id, agent]));
   // Old chatter ages out — both the arcs and the speech bubbles.
-  const now = Date.now();
   const interactions = state.messages
     .map((message) => ({
       ...message,
@@ -366,7 +390,23 @@ function computeWorkspaceLayout(state = _floorState) {
       text: agent.transcript[0] || `Working on ${agent.task}`,
     }));
 
-  const desks = agents.map((agent) => {
+  // Everyone else gets a status callout so the office narrates itself:
+  // review/blocked agents explain what they're stuck on or checking, and
+  // departing agents say goodbye at the door.
+  const callouts = agents
+    .filter((agent) => !agent.talking && ['review', 'blocked', 'done'].includes(agent.zone))
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, 3)
+    .map((agent) => ({
+      id: agent.id,
+      x: agent.x,
+      y: agent.y,
+      text: agent.zone === 'done'
+        ? `${conversationLineFor(agent)} Heading out!`
+        : conversationLineFor(agent),
+    }));
+
+  const desks = allAgents.map((agent) => {
     const point = deskPointFor(state, agent.id);
     return {
       ownerId: agent.id,
@@ -386,6 +426,7 @@ function computeWorkspaceLayout(state = _floorState) {
     interactions,
     conversations,
     murmurs,
+    callouts,
   };
 }
 
@@ -527,6 +568,29 @@ function wallClockSVG(gy, height) {
     '</g>';
 }
 
+// Door on the left wall, slightly ajar, with a glowing EXIT sign — finished
+// agents walk out through it.
+function exitDoorSVG() {
+  const quad = (y1, y2, hTop, hBottom = 0) => {
+    const a = isoProject(0, y1);
+    const b = isoProject(0, y2);
+    return isoPoints([
+      { px: a.px, py: a.py - hTop }, { px: b.px, py: b.py - hTop },
+      { px: b.px, py: b.py - hBottom }, { px: a.px, py: a.py - hBottom },
+    ]);
+  };
+  const handle = isoProject(0, 87.8);
+  const sign = isoProject(0, 85);
+  return `<g class="paperclip-exit-door">` +
+    `<polygon points="${quad(79.5, 90.5, 66)}" fill="#3a2e26"/>` +
+    `<polygon points="${quad(80.5, 89.5, 62)}" fill="#5a463a"/>` +
+    `<polygon points="${quad(88.1, 89.5, 62)}" fill="#8a715f"/>` +
+    `<circle cx="${(handle.px + 1.5).toFixed(1)}" cy="${(handle.py - 30).toFixed(1)}" r="1.6" fill="#d9b98c"/>` +
+    `<polygon points="${quad(82, 88, 78, 70)}" fill="#143a24"/>` +
+    `<text class="paperclip-exit-sign" x="${sign.px.toFixed(1)}" y="${(sign.py - 72.5).toFixed(1)}" text-anchor="middle">EXIT</text>` +
+    '</g>';
+}
+
 function wallDecorSVG() {
   return [
     // Kanban board with sticky notes.
@@ -541,6 +605,7 @@ function wallDecorSVG() {
     windowSVG(52, 60, 78, 34),
     windowSVG(63, 71, 78, 34),
     wallClockSVG(50, 64),
+    exitDoorSVG(),
   ].join('');
 }
 
@@ -783,6 +848,14 @@ function renderConversationHTML(layout) {
     bubbles.push(`
       <div class="paperclip-murmur-bubble" style="--bubble-x:${p.px.toFixed(1)}px;--bubble-y:${p.py.toFixed(1)}px;">
         ${escapeHTML(murmur.text)}
+      </div>
+    `);
+  }
+  for (const callout of layout.callouts) {
+    const p = isoProject(callout.x, callout.y);
+    bubbles.push(`
+      <div class="paperclip-callout-bubble" style="--bubble-x:${p.px.toFixed(1)}px;--bubble-y:${p.py.toFixed(1)}px;">
+        ${escapeHTML(callout.text)}
       </div>
     `);
   }
@@ -1113,12 +1186,20 @@ function startFloorUpdates() {
   seedFloorPreview();
   renderFloor();
   if (!startLiveStream()) startPreviewLoop();
+  // Time-driven states (exit-door departures, conversation aging) need an
+  // occasional re-render even when no events arrive. The identical-HTML
+  // skip in renderZones makes no-op ticks free.
+  if (!_ambientTimer && typeof window !== 'undefined' && typeof window.setInterval === 'function') {
+    _ambientTimer = window.setInterval(renderFloor, 10000);
+  }
 }
 
 function stopFloorUpdates() {
   cancelLiveRetry();
   stopLiveStream();
   stopPreviewLoop();
+  if (_ambientTimer && typeof window !== 'undefined') window.clearInterval(_ambientTimer);
+  _ambientTimer = null;
 }
 
 function openModal() {

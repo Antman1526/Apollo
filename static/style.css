@@ -348,6 +348,33 @@ html {
   animation-delay: 0.7s;
 }
 
+.paperclip-exit-sign {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  fill: #50fa7b;
+}
+
+/* Status callouts: review/blocked/leaving agents narrate their state. */
+.paperclip-callout-bubble {
+  position: absolute;
+  left: var(--bubble-x);
+  top: var(--bubble-y);
+  z-index: 380;
+  max-width: 160px;
+  padding: 4px 8px;
+  transform: translate(-50%, -118px);
+  border: 1px solid color-mix(in srgb, var(--warn, #f0ad4e) 55%, var(--border));
+  border-radius: 8px 8px 8px 2px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  font-size: 9px;
+  line-height: 1.35;
+  animation: paperclip-bubble-pop 2.4s ease-in-out infinite;
+  animation-delay: 1.1s;
+  pointer-events: none;
+}
+
 .paperclip-murmur-bubble {
   position: absolute;
   left: var(--bubble-x);
@@ -889,6 +916,7 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   #paperclip-modal .paperclip-interaction-arc,
   #paperclip-modal .paperclip-chat-bubble,
   #paperclip-modal .paperclip-murmur-bubble,
+  #paperclip-modal .paperclip-callout-bubble,
   #paperclip-modal .paperclip-walk-path {
     animation: none !important;
     transition: none !important;

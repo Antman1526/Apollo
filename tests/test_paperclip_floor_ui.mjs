@@ -288,6 +288,68 @@ test('the sender walks over to the receiver for the newest conversation', () => 
   assert.equal(dev.pose, 'talking');
 });
 
+test('done agents walk to the exit door and depart after lingering', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', name: 'Ada', status: 'running', task: 'Ship the feature' },
+  });
+  paperclip.commitWorkspaceLayout(state, paperclip.computeWorkspaceLayout(state));
+
+  // Finishing the task sends the agent walking to the exit door.
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', status: 'done' },
+  });
+  let layout = paperclip.computeWorkspaceLayout(state);
+  const ada = layout.agents.find((agent) => agent.id === 'a1');
+  assert.ok(ada, 'agent still visible while lingering at the door');
+  assert.equal(ada.moving, true);
+  assert.ok(ada.x <= 16 && ada.y >= 76, `should stand by the exit (${ada.x},${ada.y})`);
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-exit-door/);
+  assert.match(html, /paperclip-exit-sign/);
+
+  // After the linger window the agent has left the office...
+  state.agents.get('a1').doneAt = Date.now() - 60000;
+  layout = paperclip.computeWorkspaceLayout(state);
+  assert.equal(layout.agents.find((agent) => agent.id === 'a1'), undefined);
+  // ...but their desk stays, and the Board still knows them.
+  assert.ok(layout.desks.find((desk) => desk.ownerId === 'a1'));
+  assert.doesNotMatch(paperclip.renderWorkspaceHTML(state), /data-agent-id="a1"/);
+
+  // New activity brings them back through the door.
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'a1', status: 'running', task: 'Hotfix' },
+  });
+  layout = paperclip.computeWorkspaceLayout(state);
+  assert.ok(layout.agents.find((agent) => agent.id === 'a1'));
+});
+
+test('status callouts narrate what blocked/review agents are doing', () => {
+  const state = paperclip.createFloorState();
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'ops', name: 'Ops', status: 'blocked', task: 'Need API creds' },
+  });
+  paperclip.applyFloorEvent(state, {
+    type: 'agent.status',
+    payload: { agentId: 'rev', name: 'Rev', status: 'review', task: 'Audit the diff' },
+  });
+
+  const layout = paperclip.computeWorkspaceLayout(state);
+  assert.ok(layout.callouts.length >= 2, `expected callouts, got ${layout.callouts.length}`);
+  const texts = layout.callouts.map((c) => c.text).join(' | ');
+  assert.match(texts, /Need API creds/);
+  assert.match(texts, /Audit the diff/);
+
+  const html = paperclip.renderWorkspaceHTML(state);
+  assert.match(html, /paperclip-callout-bubble/);
+  assert.match(html, /Need API creds/);
+});
+
 test('busy agents murmur their current work when not in a conversation', () => {
   const state = paperclip.createFloorState();
   paperclip.applyFloorEvent(state, {
@@ -361,7 +423,7 @@ test('depth-sorts agents and furniture together so the scene occludes correctly'
   const state = paperclip.createFloorState();
   paperclip.applyFloorEvent(state, {
     type: 'agent.status',
-    payload: { agentId: 'near', name: 'Near', status: 'done' }, // lounge, deep corner
+    payload: { agentId: 'near', name: 'Near', status: 'review' }, // review table, deeper
   });
   paperclip.applyFloorEvent(state, {
     type: 'agent.status',
@@ -371,13 +433,13 @@ test('depth-sorts agents and furniture together so the scene occludes correctly'
   const html = paperclip.renderWorkspaceHTML(state);
   const farAt = html.indexOf('data-agent-id="far"');
   const nearAt = html.indexOf('data-agent-id="near"');
-  const loungeAt = html.indexOf('station-done');
-  assert.ok(farAt !== -1 && nearAt !== -1 && loungeAt !== -1);
+  const tableAt = html.indexOf('station-review');
+  assert.ok(farAt !== -1 && nearAt !== -1 && tableAt !== -1);
   // SVG paints in document order: the desk agent is deeper into the room than
-  // the lounge, so it must be drawn before the lounge furniture, while the
-  // agent standing at the lounge draws after it.
-  assert.ok(farAt < loungeAt, 'desk agent should render behind lounge furniture');
-  assert.ok(nearAt > loungeAt, 'lounge agent should render in front of lounge furniture');
+  // the review table, so it draws before that furniture, while the agent
+  // seated at the table draws after it (ties paint agents after furniture).
+  assert.ok(farAt < tableAt, 'desk agent should render behind the review table');
+  assert.ok(nearAt > tableAt, 'review agent should render in front of the review table');
 });
 
 test('agents render inside the SVG scene so furniture can occlude them', () => {
