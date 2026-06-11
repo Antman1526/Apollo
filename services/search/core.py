@@ -319,6 +319,14 @@ def comprehensive_web_search(
         logger.warning(msg)
         return (msg, []) if return_sources else msg
 
+    winning_provider = provider_name  # provider that produced search_results
+    if winning_provider != search_provider:
+        logger.info(
+            "Search answered via fallback provider %s (primary: %s)",
+            winning_provider,
+            search_provider,
+        )
+
     search_results = rank_search_results(query, search_results)
 
     # URL filter helper
@@ -356,7 +364,7 @@ def comprehensive_web_search(
 
     # Build sources list for the frontend (before content fetching)
     _source_list = [
-        {"url": r.get("url", ""), "title": r.get("title", "")}
+        {"url": r.get("url", ""), "title": r.get("title", ""), "provider": winning_provider}
         for r in search_results if r.get("url")
     ]
 
