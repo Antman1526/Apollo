@@ -1772,10 +1772,15 @@
               <div class="settings-row">
                 <label class="settings-label">Web access default</label>
                 <select id="web-access-mode" class="settings-select">
-                  <option value="manual">Manual (toggle only)</option>
+                  <option value="manual">Manual (legacy clients only)</option>
+                  <option value="off">Off (never search)</option>
                   <option value="auto">Auto (search when needed)</option>
                   <option value="always">Always search</option>
                 </select>
+              </div>
+              <div class="settings-row" style="padding-top:0;">
+                <span class="settings-label"></span>
+                <span class="admin-toggle-sub" style="font-size:11px;color:color-mix(in srgb, var(--fg) 55%, transparent);">Default for new browsers and API clients; your in-chat toggle always wins.</span>
               </div>
               <div id="set-searchHint" class="admin-toggle-sub"></div>
               <div id="set-searchMsg" style="font-size:11px;"></div>

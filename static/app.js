@@ -1379,6 +1379,22 @@ function initializeEventListeners() {
       if (overflowTts) {
         overflowTts.style.display = ttsOff ? 'none' : '';
       }
+
+      // Seed the web-access toggle for fresh browsers (no webmode_* or legacy
+      // web_chat/web_agent keys) from the admin-configured default.
+      // mapping: off→off, auto→auto, always→always, manual→auto (today's default).
+      try {
+        const st = loadToggleState();
+        const hasExistingPref = ['webmode_chat', 'webmode_agent', 'web_chat', 'web_agent']
+          .some(k => st[k] !== undefined);
+        if (!hasExistingPref && settings.web_access_mode) {
+          const modeMap = { off: 'off', auto: 'auto', always: 'always', manual: 'auto' };
+          const seed = modeMap[settings.web_access_mode] || 'auto';
+          saveWebMode('chat', seed);
+          saveWebMode('agent', seed);
+          applyWebModeToButton(seed);
+        }
+      } catch (_e) { /* guard all failures silently */ }
     })
     .catch(() => {});
 

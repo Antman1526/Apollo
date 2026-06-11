@@ -251,8 +251,10 @@ async def resolve_web_access(
     if mode not in ("off", "auto", "always"):
         from src.settings import load_settings
         cfg = (load_settings().get("web_access_mode") or "manual").strip().lower()
-        if cfg not in ("auto", "always"):
-            # Manual / unrecognised — leave legacy flags untouched.
+        _legacy_intent = (str(use_web).lower() == "true"
+                          or str(allow_web_search).lower() == "true")
+        if cfg not in ("off", "auto", "always") or _legacy_intent:
+            # Manual / unrecognised / explicit legacy flags — leave untouched.
             return use_web, allow_web_search, None
         mode = cfg
 

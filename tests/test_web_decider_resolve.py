@@ -77,6 +77,27 @@ async def test_settings_auto_applies_when_param_missing(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_settings_fallback_respects_explicit_legacy_flags(monkeypatch):
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"web_access_mode": "auto"})
+    # Old client explicitly asked for web — never override with the decider.
+    use_web, allow_ws, decision = await resolve_web_access(
+        None, "chat", "write a poem", "true", None)
+    assert use_web == "true"
+    assert decision is None
+
+
+@pytest.mark.asyncio
+async def test_settings_off_applies_when_no_legacy_intent(monkeypatch):
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"web_access_mode": "off"})
+    use_web, allow_ws, decision = await resolve_web_access(
+        None, "chat", "latest news", None, None)
+    assert use_web is False
+    assert decision == "off"
+
+
+@pytest.mark.asyncio
 async def test_decide_yes_no_skip_utility():
     # Clear heuristic verdicts never call the utility model.
     with patch("src.web_decider._ask_utility_model", new=AsyncMock()) as ask:
