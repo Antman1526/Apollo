@@ -754,6 +754,8 @@ import createResearchSynapse from './researchSynapse.js';
       // compare mode) check the hidden checkbox directly without writing the
       // webmode_* storage keys — honor them for this message.
       if (_webMode === 'off' && el('web-toggle').checked) _webMode = 'always';
+      const _incog = el('incognito-toggle');
+      if (_incog && _incog.checked) _webMode = 'off';
       fd.append('web_access', _webMode);
       if (_webMode === 'always') {
         // Keep legacy flags so older server code paths behave identically.

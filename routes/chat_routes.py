@@ -481,11 +481,12 @@ def setup_chat_routes(
         # Tri-state web access (off/auto/always). 'auto' runs the decider for
         # chat mode and enables web tools for agent mode. Legacy clients that
         # don't send web_access keep the old use_web/allow_web_search behavior.
-        from src.web_decider import resolve_web_access
+        from src.web_decider import resolve_web_access, apply_incognito
         use_web, allow_web_search, _web_decision = await resolve_web_access(
             web_access, chat_mode, message if isinstance(message, str) else "",
             use_web, allow_web_search,
         )
+        use_web, _web_decision = apply_incognito(incognito, use_web, _web_decision)
         if _web_decision:
             logger.info("web_access decision=%s session=%s", _web_decision, session)
 

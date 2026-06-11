@@ -214,6 +214,17 @@ async def decide_use_web(message: str) -> bool:
     return False  # conservative default: no extra latency/noise
 
 
+def apply_incognito(incognito: bool, use_web, decision):
+    """Incognito chats must not send queries to search engines.
+
+    Mirrors the RAG/memory suppression in build_chat_context. Pre-search is
+    forced off; agent tools stay (the user explicitly invokes those).
+    """
+    if incognito and use_web:
+        return False, "incognito-off"
+    return use_web, decision
+
+
 async def resolve_web_access(
     web_access: Optional[str],
     chat_mode: str,

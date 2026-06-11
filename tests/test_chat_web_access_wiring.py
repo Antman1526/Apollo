@@ -20,3 +20,14 @@ async def test_route_call_shape_form_strings():
     use_web, allow_ws, decision = await resolve_web_access(
         "always", "agent", "hello", "true", None)
     assert allow_ws == "true"
+
+
+@pytest.mark.asyncio
+async def test_incognito_suppresses_web():
+    """Incognito must not leak queries to search engines (mirrors RAG gating)."""
+    from src.web_decider import resolve_web_access, apply_incognito
+    use_web, allow_ws, decision = await resolve_web_access(
+        "always", "chat", "latest news", None, None)
+    use_web, decision = apply_incognito(True, use_web, decision)
+    assert use_web is False
+    assert decision == "incognito-off"
