@@ -6,7 +6,7 @@
   "scripts": {
     "check": "bash scripts/check.sh",
     "test": "npm run test:js",
-    "test:js": "node --test tests/test_paperclip_floor_ui.mjs tests/test_system_status_card.mjs tests/test_system_status_actions.mjs"
+    "test:js": "node --test tests/test_paperclip_floor_ui.mjs tests/test_system_status_card.mjs tests/test_system_status_actions.mjs tests/test_theme_presets.mjs"
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"

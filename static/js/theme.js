@@ -29,6 +29,16 @@ export const THEMES = {
                             inputBg: '#2f2f2f' } },
   claude:     { bg:'#262624', fg:'#f5f4f0', panel:'#30302e', border:'#4a4a47', red:'#c6613f' },
   cute:       { bg:'#fff0f5', fg:'#d4608a', panel:'#fff8fa', border:'#f0c0d0', red:'#ff6b9d' },
+  // Classic editor palettes
+  nord:       { bg:'#2e3440', fg:'#d8dee9', panel:'#3b4252', border:'#4c566a', red:'#bf616a' },
+  dracula:    { bg:'#282a36', fg:'#f8f8f2', panel:'#1e1f29', border:'#6272a4', red:'#ff5555' },
+  gruvbox:    { bg:'#282828', fg:'#ebdbb2', panel:'#1d2021', border:'#665c54', red:'#fb4934' },
+  rosepine:   { bg:'#191724', fg:'#e0def4', panel:'#1f1d2e', border:'#524f67', red:'#eb6f92' },
+  sunset:     { bg:'#251521', fg:'#ffd9a0', panel:'#1a0e17', border:'#7d4a5a', red:'#ff8c5a' },
+  // Light modes
+  solarized:  { bg:'#fdf6e3', fg:'#586e75', panel:'#eee8d5', border:'#c9c0a3', red:'#cb4b16' },
+  mint:       { bg:'#eef7f1', fg:'#29473b', panel:'#ffffff', border:'#b7d8c6', red:'#2f9e6b' },
+  contrast:   { bg:'#ffffff', fg:'#111111', panel:'#f4f4f4', border:'#666666', red:'#b00020' },
 };
 
 const DEFAULT_THEME = 'dark';
@@ -58,6 +68,10 @@ const THEME_DEFAULT_PATTERN = {
   organs:     'rain',
   ume:        'petals',
   cute:       'sparkles',
+  rosepine:   'petals',
+  sunset:     'embers',
+  solarized:  'dots',
+  mint:       'petals',
 };
 
 // Default effect colors for specific themes (overrides --fg)
@@ -73,6 +87,9 @@ const THEME_DEFAULT_INTENSITY = {
   midnight:   0.5,
   terminal:   0.8,
   organs:     0.65,
+  rosepine:   0.5,
+  sunset:     0.6,
+  mint:       0.4,
 };
 
 // Default frosted-glass state per theme. Themes not listed default to false.
