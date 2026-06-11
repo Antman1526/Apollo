@@ -137,10 +137,15 @@ def setup_search_routes(config) -> APIRouter:
         _install_state.update(running=True, log=[], ok=None)
 
         def _run():
-            script = os.path.join(BASE_DIR, "scripts", "setup-searxng.sh")
+            if os.name == "nt":
+                script = os.path.join(BASE_DIR, "scripts", "setup-searxng.ps1")
+                cmd = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]
+            else:
+                script = os.path.join(BASE_DIR, "scripts", "setup-searxng.sh")
+                cmd = ["bash", script]
             try:
                 proc = subprocess.Popen(
-                    ["bash", script],
+                    cmd,
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 )
                 for line in proc.stdout:
