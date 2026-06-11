@@ -119,14 +119,23 @@ def setup_search_routes(config) -> APIRouter:
     @router.get("/api/search/searxng/status")
     async def searxng_status(request: Request):
         require_admin(request)
-        from services.searxng.runtime import get_runtime
+        from services.searxng.runtime import get_runtime, _LOG_PATH
         rt = get_runtime()
+        # Read the last 20 lines of the sidecar runtime log defensively.
+        _runtime_log_tail: list = []
+        try:
+            if os.path.exists(_LOG_PATH):
+                with open(_LOG_PATH, "r", errors="replace") as _lf:
+                    _runtime_log_tail = _lf.read().splitlines()[-20:]
+        except Exception:
+            pass
         return {
             "status": rt.status(),
             "url": rt.url,
             "installing": _install_state["running"],
             "install_ok": _install_state["ok"],
             "log_tail": _install_state["log"][-20:],
+            "runtime_log_tail": _runtime_log_tail,
         }
 
     @router.post("/api/search/searxng/install")

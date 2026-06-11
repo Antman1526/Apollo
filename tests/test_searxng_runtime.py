@@ -3,6 +3,7 @@ import os
 import threading
 import time
 
+import services.searxng.runtime as _runtime_mod
 from services.searxng.config import SearxngConfig
 from services.searxng.runtime import SearxngRuntime
 
@@ -265,3 +266,39 @@ def test_spawn_env_is_minimal(tmp_path, monkeypatch):
     assert "DATA_BRAVE_API_KEY" not in env
     assert env["SEARXNG_SETTINGS_PATH"].endswith("settings.yml")
     assert "PATH" in env
+
+
+def test_sidecar_stdout_points_at_log_file(tmp_path, monkeypatch):
+    """stdout/stderr passed to spawn must be a file handle for searxng.log,
+    not DEVNULL.  We monkeypatch the module-level _LOG_PATH to a tmp file so
+    no real filesystem side-effects escape the test."""
+    log_file = str(tmp_path / "searxng.log")
+    monkeypatch.setattr(_runtime_mod, "_LOG_PATH", log_file)
+
+    spawned = []
+
+    def spawn(*a, **kw):
+        p = FakeProc(*a, **kw)
+        spawned.append(p)
+        return p
+
+    calls = {"n": 0}
+
+    def check(u, t=2.0):
+        calls["n"] += 1
+        return calls["n"] > 1
+
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path), spawn=spawn, health_check=check)
+    assert rt.start() is True
+    assert spawned, "nothing was spawned"
+    stdout_arg = spawned[0].kwargs.get("stdout")
+    # Must be a real file object (not subprocess.DEVNULL == -1)
+    assert hasattr(stdout_arg, "name"), "stdout should be a file object with .name"
+    assert stdout_arg.name.endswith("searxng.log"), (
+        f"stdout.name should end with searxng.log, got: {stdout_arg.name!r}"
+    )
+    # stderr must point at the same file
+    assert spawned[0].kwargs.get("stderr") is stdout_arg
+    # stop() must close the handle
+    rt.stop()
+    assert stdout_arg.closed, "log file handle should be closed after stop()"

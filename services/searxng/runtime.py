@@ -14,12 +14,17 @@ import time
 import urllib.request
 from typing import Callable, Optional
 
+from src.constants import BASE_DIR
 from services.searxng.config import SearxngConfig, load_config
 
 logger = logging.getLogger(__name__)
 
 _HEALTH_TTL = 2.0  # seconds — is_serving() is consulted on every search call
 _RESTART_COOLDOWN = 300.0  # seconds between automatic restart attempts
+_LOG_MAX_BYTES = 5 * 1024 * 1024  # 5 MB — truncate before each spawn
+
+# Patchable in tests via monkeypatch on this module attribute.
+_LOG_PATH: str = os.path.join(BASE_DIR, "logs", "searxng.log")
 
 
 def _http_ok(url: str, timeout: float = 2.0) -> bool:
@@ -44,6 +49,7 @@ class SearxngRuntime:
         self._health_cache: tuple[float, bool] | None = None
         self._stopping = threading.Event()
         self._last_restart_attempt: Optional[float] = None
+        self._log_fh = None  # open file handle for stdout/stderr; closed on stop()
 
     @property
     def url(self) -> str:
@@ -104,17 +110,38 @@ class SearxngRuntime:
                      "SYSTEMROOT", "WINDIR", "USERPROFILE")
             env = {k: os.environ[k] for k in _PASS if k in os.environ}
             env["SEARXNG_SETTINGS_PATH"] = cfg.settings_path
+            # Open the sidecar log, truncating if it exceeds 5 MB so it
+            # never grows without bound.  _LOG_PATH is module-level for
+            # easy monkeypatching in tests.
+            try:
+                log_path = _LOG_PATH
+                os.makedirs(os.path.dirname(log_path), exist_ok=True)
+                if os.path.exists(log_path) and os.path.getsize(log_path) > _LOG_MAX_BYTES:
+                    open(log_path, "w").close()  # truncate
+                _log_fh = open(log_path, "a")  # noqa: WPS515
+                self._log_fh = _log_fh
+            except Exception as _log_exc:
+                logger.warning("SearXNG log open failed (%s); falling back to DEVNULL", _log_exc)
+                _log_fh = subprocess.DEVNULL
+                self._log_fh = None
             try:
                 self._proc = self._spawn(
                     [cfg.venv_python, "-m", "searx.webapp"],
                     env=env,
                     cwd=cfg.home,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=_log_fh,
+                    stderr=_log_fh,
                 )
             except Exception as e:
                 logger.warning("SearXNG sidecar failed to spawn: %s", e)
                 self._failed = True
+                _fh = self._log_fh
+                self._log_fh = None
+                try:
+                    if _fh is not None:
+                        _fh.close()
+                except Exception:
+                    pass
                 return False
             proc = self._proc
 
@@ -134,6 +161,13 @@ class SearxngRuntime:
             if proc.poll() is not None:
                 logger.warning("SearXNG sidecar exited during boot")
                 self._failed = True
+                _fh = self._log_fh
+                self._log_fh = None
+                try:
+                    if _fh is not None:
+                        _fh.close()
+                except Exception:
+                    pass
                 return False
             self._stopping.wait(1)
         self._failed = True
@@ -148,19 +182,26 @@ class SearxngRuntime:
             proc = self._proc
             self._proc = None
             self._health_cache = None
+            log_fh = self._log_fh
+            self._log_fh = None
         # Terminate/wait/kill *outside* the lock so we never hold it across
         # a blocking wait (terminate+wait can block up to 10 s).
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            proc.terminate()
-            proc.wait(timeout=10)
-        except Exception:
+        if proc is not None and proc.poll() is None:
             try:
-                proc.kill()
-                proc.wait(timeout=5)
+                proc.terminate()
+                proc.wait(timeout=10)
             except Exception:
-                pass
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+        # Close the log file handle after the process is done writing.
+        try:
+            if log_fh is not None:
+                log_fh.close()
+        except Exception:
+            pass
 
 
     def maybe_restart(self) -> bool:
