@@ -92,9 +92,35 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
 _FALLBACK_ORDER = ["duckduckgo"]
 
 
+def _searxng_definitely_down() -> bool:
+    """True only when the MANAGED sidecar is the target and it isn't serving.
+
+    Never true for a custom search_url (external instance) or when the
+    managed sidecar is disabled — those cases let the request itself decide.
+    """
+    settings = _get_search_settings()
+    if (settings.get("search_url") or "").strip():
+        return False
+    if not settings.get("searxng_managed", True):
+        return False
+    try:
+        from services.searxng.runtime import get_runtime
+        return not get_runtime().is_serving()
+    except Exception:
+        return False  # fail open — let the HTTP call decide
+
+
 def _build_provider_chain(primary: str) -> List[str]:
-    """Build ordered list: primary first, then configured/default fallbacks."""
+    """Build ordered list: primary first, then configured/default fallbacks.
+
+    When the primary is the managed SearXNG sidecar and it's down/not
+    installed, skip it entirely so the fallback (DuckDuckGo) answers with
+    no timeout penalty.
+    """
     chain = [primary]
+    if primary == "searxng" and _searxng_definitely_down():
+        logger.info("SearXNG sidecar not serving — skipping straight to fallback providers")
+        chain = []
     settings = _get_search_settings()
     user_chain = settings.get("search_fallback_chain") or []
     if isinstance(user_chain, str):
@@ -103,6 +129,8 @@ def _build_provider_chain(primary: str) -> List[str]:
     for fb in fallbacks:
         if fb and fb != primary and fb not in chain and fb != "disabled":
             chain.append(fb)
+    if not chain:
+        chain = list(_FALLBACK_ORDER)
     return chain
 
 
