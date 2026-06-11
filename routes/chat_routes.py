@@ -701,6 +701,15 @@ def setup_chat_routes(
 
             if web_sources:
                 yield f"data: {json.dumps({'type': 'web_sources', 'data': web_sources})}\n\n"
+            elif (_web_decision in ("always", "auto-search")
+                  or str(use_web).lower() == "true"):
+                # Web was explicitly requested (or the decider chose to search)
+                # but returned nothing — surface a failure event so the UI can
+                # inform the user rather than silently answering stale.
+                # NOTE: "auto-skip" (the decider decided NOT to search) is
+                # intentional and must NOT fire this event — the condition above
+                # already excludes it.
+                yield f"data: {json.dumps({'type': 'web_search_failed'})}\n\n"
 
             # Emit which memories were injected into context (captured before stream)
             if ctx.used_memories:

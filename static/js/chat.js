@@ -1760,6 +1760,18 @@ import createResearchSynapse from './researchSynapse.js';
                     spinner.updateMessage('Searched the web');
                   }
                 }
+              } else if (json.type === 'web_search_failed') {
+                // Web was requested but returned no results — let the user know
+                // the response may be stale (no live search data).
+                if (!_isBg) {
+                  if (spinner && spinner.updateMessage) {
+                    spinner.updateMessage('Web search unavailable');
+                  }
+                  uiModule.showToast(
+                    'Web search failed — answering without live results',
+                    3000
+                  );
+                }
               } else if (json.type === 'model_fallback') {
                 // Model went offline — switched to fallback
                 var _fbData = json.data || {};
