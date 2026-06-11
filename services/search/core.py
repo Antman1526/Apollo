@@ -112,7 +112,10 @@ def _searxng_definitely_down() -> bool:
         rt = get_runtime()
         if not rt.installed:
             return True   # managed-but-absent: skip with no probe at all
-        return not rt.is_serving()
+        down = not rt.is_serving()
+        if down:
+            rt.maybe_restart()
+        return down
     except Exception:
         return False  # fail open — let the HTTP call decide
 

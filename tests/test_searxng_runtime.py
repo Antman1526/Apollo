@@ -205,6 +205,42 @@ def test_start_after_stop_clears_stop_signal(tmp_path):
     assert spawned, "start() should have spawned after a prior stop()"
 
 
+def test_maybe_restart_respawns_dead_proc(tmp_path):
+    spawned = []
+
+    def spawn(*a, **kw):
+        p = FakeProc(*a, **kw)
+        spawned.append(p)
+        return p
+
+    calls = {"n": 0}
+
+    def check(u, t=2.0):
+        calls["n"] += 1
+        return calls["n"] in (2,)  # healthy once after first spawn, then dead
+
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path), spawn=spawn, health_check=check)
+    rt.start()
+    assert len(spawned) == 1
+    spawned[0].killed = True          # simulate crash
+    rt._health_cache = None
+    assert rt.maybe_restart() is True  # schedules a restart
+    import time as _t
+    for _ in range(50):                # restart happens on a background thread
+        if len(spawned) >= 2:
+            break
+        _t.sleep(0.05)
+    assert len(spawned) == 2
+
+
+def test_maybe_restart_rate_limited(tmp_path):
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path),
+                        spawn=FakeProc, health_check=lambda u, t=2.0: False)
+    rt._last_restart_attempt = None
+    assert rt.maybe_restart() is True
+    assert rt.maybe_restart() is False  # within the cooldown window
+
+
 def test_spawn_env_is_minimal(tmp_path, monkeypatch):
     """The sidecar must not inherit Apollo's secrets (API keys etc.)."""
     monkeypatch.setenv("TAVILY_API_KEY", "sk-secret")

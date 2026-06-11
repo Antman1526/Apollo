@@ -19,6 +19,7 @@ from services.searxng.config import SearxngConfig, load_config
 logger = logging.getLogger(__name__)
 
 _HEALTH_TTL = 2.0  # seconds — is_serving() is consulted on every search call
+_RESTART_COOLDOWN = 300.0  # seconds between automatic restart attempts
 
 
 def _http_ok(url: str, timeout: float = 2.0) -> bool:
@@ -42,6 +43,7 @@ class SearxngRuntime:
         self._lock = threading.Lock()
         self._health_cache: tuple[float, bool] | None = None
         self._stopping = threading.Event()
+        self._last_restart_attempt: Optional[float] = None
 
     @property
     def url(self) -> str:
@@ -159,6 +161,30 @@ class SearxngRuntime:
                 proc.wait(timeout=5)
             except Exception:
                 pass
+
+
+    def maybe_restart(self) -> bool:
+        """Schedule a background restart of a crashed sidecar, at most once
+        per cooldown window. Returns True if a restart was scheduled.
+
+        Called from the search hot path (via _searxng_definitely_down) when
+        the managed sidecar is installed but not serving — so it must never
+        block and never raise.
+        """
+        try:
+            cfg = self._cfg_provider()
+            if not cfg.enabled or not cfg.installed:
+                return False
+            now = time.monotonic()
+            if self._last_restart_attempt is not None and \
+                    (now - self._last_restart_attempt) < _RESTART_COOLDOWN:
+                return False
+            self._last_restart_attempt = now
+            threading.Thread(target=self.start, name="searxng-restart",
+                             daemon=True).start()
+            return True
+        except Exception:
+            return False
 
 
 _runtime: SearxngRuntime | None = None
