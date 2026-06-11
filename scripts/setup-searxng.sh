@@ -30,6 +30,8 @@ if [ ! -d "$SRC/.git" ]; then
   git clone https://github.com/searxng/searxng "$SRC"
 fi
 # Prefer the local object (offline re-runs); fetch only when it's missing.
+# (Fetching a bare SHA requires the server to allow SHA-want fetches —
+# GitHub does; a restrictive mirror may not.)
 if ! git -C "$SRC" checkout --quiet "$REF" 2>/dev/null; then
   git -C "$SRC" fetch --quiet origin "$REF" --depth 1
   git -C "$SRC" checkout --quiet FETCH_HEAD

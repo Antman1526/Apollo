@@ -287,6 +287,9 @@ def setup_chat_routes(
             return {"response": memory_response}
 
         from src.web_decider import resolve_web_access
+        # NOTE: no apply_incognito here — ChatRequest has no incognito field;
+        # incognito chats only flow through /api/chat_stream. If incognito is
+        # ever added to ChatRequest, wire apply_incognito like the stream path.
         use_web, _ignored_allow_ws, _web_decision = await resolve_web_access(
             chat_request.web_access, "chat", message, use_web, None,
         )
