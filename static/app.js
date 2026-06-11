@@ -736,6 +736,8 @@ function initializeEventListeners() {
         _webChk.checked = false;
         saveToolPref('web', (loadToggleState().mode || 'chat'), false);
       }
+      saveWebMode(loadToggleState().mode || 'chat', 'off');
+      applyWebModeToButton('off');
     }
     const s = loadToggleState(); s.group = active; saveToggleState(s);
     updatePlusDot();
@@ -1609,6 +1611,15 @@ function initializeEventListeners() {
     if (chk) chk.checked = webMode !== 'off'; // compat: compare mode, slash cmds
   }
 
+  // Exposed for modules outside this scope (chatStream server-driven toggles,
+  // slash commands) — mirrors the window._syncRagIndicator pattern.
+  window._setWebMode = function(value, uiMode) {
+    const m = uiMode || (loadToggleState().mode) || 'chat';
+    if (!WEB_MODES.includes(value)) return;
+    saveWebMode(m, value);
+    applyWebModeToButton(value);
+  };
+
   const TOOL_TOGGLE_TOAST_LABELS = {
     web: 'Web search',
     bash: 'Shell',
@@ -1981,6 +1992,8 @@ function initializeEventListeners() {
           if (webBtn) webBtn.classList.remove('active');
           saveToolPref('web', (st.mode || 'chat'), false);
         }
+        saveWebMode(st.mode || 'chat', 'off');
+        applyWebModeToButton('off');
       }
 
       researchBtn.addEventListener('click', () => {
@@ -1999,6 +2012,8 @@ function initializeEventListeners() {
             if (webBtn) webBtn.classList.remove('active');
             saveToolPref('web', (loadToggleState().mode || 'chat'), false);
           }
+          saveWebMode(loadToggleState().mode || 'chat', 'off');
+          applyWebModeToButton('off');
           // Research requires chat mode — force switch from agent
           const rs = loadToggleState();
           if (rs.mode === 'agent') {
@@ -2251,6 +2266,8 @@ function initializeEventListeners() {
           if (webBtn) webBtn.classList.remove('active');
           saveToolPref('web', (loadToggleState().mode || 'chat'), false);
         }
+        saveWebMode(loadToggleState().mode || 'chat', 'off');
+        applyWebModeToButton('off');
         // Research requires chat mode
         const rs2 = loadToggleState();
         if (rs2.mode === 'agent') {
@@ -2357,11 +2374,13 @@ function initializeEventListeners() {
         if (tipEl) { tipEl.dataset.originalTip = tipEl.textContent; tipEl.textContent = 'Temporary session \u2014 won\u2019t be saved and no memory activation.'; tipEl.style.opacity = '0.5'; tipEl.style.marginTop = '8px'; }
         // Default to plain chat: disable tools visually, switch to chat mode.
         // IMPORTANT: don't overwrite the user's persisted per-mode tool prefs
-        // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`). Nobody mode is
-        // ephemeral — their agent-mode defaults must come back on toggle-off.
-        const _offIds = ['web-toggle', 'bash-toggle', 'research-toggle'];
+        // (`web_agent`, `bash_agent`, `web_chat`, `bash_chat`, `webmode_*`).
+        // Nobody mode is ephemeral — their agent-mode defaults must come back on toggle-off.
+        const _offIds = ['bash-toggle', 'research-toggle'];
         _offIds.forEach(id => { const c = el(id); if (c) c.checked = false; });
-        ['web-toggle-btn', 'bash-toggle-btn'].forEach(id => { const b = el(id); if (b) b.classList.remove('active'); });
+        const _bashBtn = el('bash-toggle-btn'); if (_bashBtn) _bashBtn.classList.remove('active');
+        // Visual-only web off: do NOT saveWebMode so persisted state is restored on exit.
+        applyWebModeToButton('off');
         const _ab = el('mode-agent-btn'), _cb = el('mode-chat-btn');
         if (_ab) _ab.classList.remove('active');
         if (_cb) _cb.classList.add('active');

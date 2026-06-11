@@ -39,6 +39,9 @@ export function handleUIControl(uiData) {
           if (btn) btn.classList.toggle('active', !!uiData.state);
         }
       }
+      if (uiData.toggle_name === 'web' && typeof window._setWebMode === 'function') {
+        window._setWebMode(uiData.state ? 'always' : 'off');
+      }
       var ts = Storage.getJSON(Storage.KEYS.TOGGLES, {});
       ts[uiData.toggle_name] = !!uiData.state;
       Storage.setJSON(Storage.KEYS.TOGGLES, ts);

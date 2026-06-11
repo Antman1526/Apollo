@@ -1706,11 +1706,9 @@ async function _cmdRagRemove(args, ctx) {
 async function _cmdWebSearch(args, ctx) {
   const query = args.join(' ');
   if (!query) { slashReply('Usage: /search &lt;query&gt;'); return true; }
-  // Enable web toggle for this search, then fall through to normal chat
-  const chk = document.getElementById('web-toggle');
-  const btn = document.getElementById('web-toggle-btn');
-  if (chk) chk.checked = true;
-  if (btn) btn.classList.add('active');
+  // Enable web in 'always' mode for this search, then fall through to normal chat.
+  // Using _setWebMode keeps tri-state storage + button visuals in sync.
+  if (typeof window._setWebMode === 'function') window._setWebMode('always');
   uiModule.el('message').value = query;
   return false; // fall through to normal chat submit
 }
@@ -2192,21 +2190,16 @@ async function _cmdDemo(args, ctx) {
       const _t = _agentBtn.closest('.mode-toggle');
       if (_t) _t.classList.add('mode-chat');
     }
-    // Web is persisted per-mode under web_chat / web_agent. Zero both so the
-    // toggle is genuinely off when the user reaches the "turn it on" step.
-    const _st = Storage.getJSON(Storage.KEYS.TOGGLES, {});
-    _st.mode = 'chat';
-    _st.web_chat = false;
-    _st.web_agent = false;
-    Storage.setJSON(Storage.KEYS.TOGGLES, _st);
-    // If the web button is currently on, click it to fully unwind it via the
-    // existing handler (covers any state the click handler tracks that we
-    // can't see from here).
-    const _wbtn = document.getElementById('web-toggle-btn');
-    if (_wbtn && _wbtn.classList.contains('active')) _wbtn.click();
-    _wbtn?.classList.remove('active');
-    const _webCb = document.getElementById('web-toggle');
-    if (_webCb) _webCb.checked = false;
+    // Web is persisted per mode under webmode_chat / webmode_agent (tri-state).
+    // Zero both so the toggle is genuinely off when the user reaches the
+    // "turn it on" step.  Use _setWebMode so button visuals and storage stay
+    // in sync without triggering the cycling click handler.
+    const _st2 = Storage.getJSON(Storage.KEYS.TOGGLES, {});
+    _st2.mode = 'chat';
+    _st2.webmode_chat = 'off';
+    _st2.webmode_agent = 'off';
+    Storage.setJSON(Storage.KEYS.TOGGLES, _st2);
+    if (typeof window._setWebMode === 'function') window._setWebMode('off');
   } catch {}
 
   const sidebar = document.getElementById('sidebar');
