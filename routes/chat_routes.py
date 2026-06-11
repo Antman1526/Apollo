@@ -286,6 +286,13 @@ def setup_chat_routes(
         if memory_response:
             return {"response": memory_response}
 
+        from src.web_decider import resolve_web_access
+        use_web, _ignored_allow_ws, _web_decision = await resolve_web_access(
+            chat_request.web_access, "chat", message, use_web, None,
+        )
+        if _web_decision:
+            logger.info("web_access decision=%s session=%s", _web_decision, session)
+
         # Build shared context (preset, preprocess, preface, compact)
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
@@ -376,6 +383,7 @@ def setup_chat_routes(
         preset_id = form_data.get("preset_id")
         allow_bash = form_data.get("allow_bash")
         allow_web_search = form_data.get("allow_web_search")
+        web_access = form_data.get("web_access")
         use_rag = form_data.get("use_rag")
         search_context = form_data.get("search_context")  # pre-fetched web search results (compare mode)
         compare_mode = str(form_data.get("compare_mode", "")).lower() == "true"
@@ -469,6 +477,17 @@ def setup_chat_routes(
                 pass
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
+
+        # Tri-state web access (off/auto/always). 'auto' runs the decider for
+        # chat mode and enables web tools for agent mode. Legacy clients that
+        # don't send web_access keep the old use_web/allow_web_search behavior.
+        from src.web_decider import resolve_web_access
+        use_web, allow_web_search, _web_decision = await resolve_web_access(
+            web_access, chat_mode, message if isinstance(message, str) else "",
+            use_web, allow_web_search,
+        )
+        if _web_decision:
+            logger.info("web_access decision=%s session=%s", _web_decision, session)
 
         # Build shared context (stream path uses enhanced_message for context preface)
         ctx = await build_chat_context(
