@@ -26,26 +26,38 @@ function Fail($msg) {
     exit 1
 }
 
+# Validate that PORT is a plain integer.
+$portInt = 0
+if (-not [int]::TryParse($PORT, [ref]$portInt)) {
+    Fail "invalid SEARXNG_PORT value: '$PORT' (must be an integer)"
+}
+
+# Pinned, not HEAD -- same discipline as the Docker image pin. This commit was
+# smoke-tested end-to-end (healthz + JSON search) on 2026-06-11. Override with
+# SEARXNG_GIT_REF at your own risk.
+$REF = if ($env:SEARXNG_GIT_REF) { $env:SEARXNG_GIT_REF } else { "4dd0bf48670727f6ae1086ffa72e76f6eb869741" }
+
 # Create data directory
 if (-not (Test-Path $HOME_DIR)) {
     New-Item -ItemType Directory -Path $HOME_DIR | Out-Null
 }
 
 # --- Fetch SearXNG source ---
-Write-Step "Fetching SearXNG source"
+Write-Step ("Fetching SearXNG source (pinned: " + $REF.Substring(0, 9) + ")")
 $gitDir = Join-Path $SRC ".git"
 if (-not (Test-Path $gitDir)) {
-    git clone --depth 1 https://github.com/searxng/searxng $SRC
+    git clone https://github.com/searxng/searxng $SRC
     if ($LASTEXITCODE -ne 0) { Fail "git clone failed." }
-} else {
-    $prevLoc = Get-Location
-    Set-Location $SRC
-    git pull --ff-only
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "(pull failed -- keeping existing checkout)"
-    }
-    Set-Location $prevLoc
 }
+$prevLoc = Get-Location
+Set-Location $SRC
+git fetch --quiet origin $REF --depth 1
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "(fetch failed -- using existing objects)"
+}
+git checkout --quiet FETCH_HEAD
+if ($LASTEXITCODE -ne 0) { Fail "git checkout of pinned ref failed." }
+Set-Location $prevLoc
 
 # --- Locate a suitable Python interpreter ---
 Write-Step "Creating venv"

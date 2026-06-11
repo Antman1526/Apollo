@@ -13,14 +13,24 @@ VENV="$HOME_DIR/venv"
 # Apollo's Settings to match.
 PORT="${SEARXNG_PORT:-8893}"
 
+# Validate that PORT is a plain integer.
+case "$PORT" in
+  (*[!0-9]*|'') echo "ERROR: invalid SEARXNG_PORT value: '$PORT' (must be an integer)"; exit 1;;
+esac
+
+# Pinned, not HEAD — same discipline as the Docker image pin. This commit was
+# smoke-tested end-to-end (healthz + JSON search) on 2026-06-11. Override with
+# SEARXNG_GIT_REF at your own risk.
+REF="${SEARXNG_GIT_REF:-4dd0bf48670727f6ae1086ffa72e76f6eb869741}"
+
 mkdir -p "$HOME_DIR"
 
-echo "==> Fetching SearXNG source"
+echo "==> Fetching SearXNG source (pinned: ${REF:0:9})"
 if [ ! -d "$SRC/.git" ]; then
-  git clone --depth 1 https://github.com/searxng/searxng "$SRC"
-else
-  git -C "$SRC" pull --ff-only || echo "(pull failed — keeping existing checkout)"
+  git clone https://github.com/searxng/searxng "$SRC"
 fi
+git -C "$SRC" fetch --quiet origin "$REF" --depth 1 || echo "(fetch failed -- using existing objects)"
+git -C "$SRC" checkout --quiet FETCH_HEAD
 
 echo "==> Creating venv"
 if [ ! -x "$VENV/bin/python" ]; then
