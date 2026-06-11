@@ -1670,6 +1670,7 @@ async function initSearchSettings() {
       var s = await res.json();
       var labels = {
         running: '● running at ' + s.url,
+        starting: '⟳ starting…',
         not_installed: '○ not installed',
         stopped: '○ installed, not running',
         failed: '✕ failed to start',

@@ -85,6 +85,9 @@ class SearxngRuntime:
             return "not_installed"
         if self.is_serving():
             return "running"
+        # Process is alive but not yet healthy → still booting.
+        if self._proc is not None and self._proc.poll() is None:
+            return "starting"
         if self._failed:
             return "failed"
         return "stopped"

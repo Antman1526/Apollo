@@ -312,6 +312,56 @@ def test_sidecar_stdout_points_at_log_file(tmp_path, monkeypatch):
     assert stdout_arg.closed, "log file handle should be closed after stop()"
 
 
+# ── Task 14: "starting" status while sidecar boots ───────────────────────
+
+def test_status_starting_when_proc_alive_but_unhealthy(tmp_path):
+    """status() returns 'starting' when the process is alive but not yet healthy."""
+    spawned = []
+
+    def spawn(*a, **kw):
+        p = FakeProc(*a, **kw)
+        spawned.append(p)
+        return p
+
+    # health_check always False so is_serving() never becomes True.
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path),
+                        spawn=spawn,
+                        health_check=lambda u, t=2.0: False)
+
+    # Manually set _proc to a live (not-killed) FakeProc to simulate the
+    # window between spawn and the boot-wait succeeding — as if we were
+    # checking status() mid-boot without going through start().
+    fake = FakeProc()
+    rt._proc = fake
+    rt._failed = False
+
+    # poll() returns None → process is alive, health is False → "starting"
+    assert fake.poll() is None
+    assert rt.status() == "starting"
+
+
+def test_status_failed_when_proc_exited(tmp_path):
+    """status() returns 'failed' when the process has exited and _failed is set."""
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path),
+                        spawn=FakeProc,
+                        health_check=lambda u, t=2.0: False)
+    fake = FakeProc()
+    fake.killed = True   # poll() returns 1 (non-None)
+    rt._proc = fake
+    rt._failed = True
+    assert rt.status() == "failed"
+
+
+def test_status_stopped_when_no_proc(tmp_path):
+    """status() returns 'stopped' when enabled+installed but no proc and not failed."""
+    rt = SearxngRuntime(cfg_provider=lambda: _cfg(tmp_path),
+                        spawn=FakeProc,
+                        health_check=lambda u, t=2.0: False)
+    rt._proc = None
+    rt._failed = False
+    assert rt.status() == "stopped"
+
+
 # ── Task 13: _http_ok requires a SearXNG OK body ──────────────────────────
 
 class _FakeResponse:
