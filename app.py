@@ -775,7 +775,32 @@ build_and_include_router(app, "System status", setup_system_status_routes,
 )
 
 from routes.browser_routes import setup_browser_routes
-build_and_include_router(app, "Browser", setup_browser_routes, logger=logger)
+
+
+def _browser_ws_authorize(token):
+    """True when the cookie's user may use the embedded browser. Mirrors
+    require_privilege's fail-open semantics (admins + missing-key default to
+    allowed); the /api/browser/ws handler calls this after ws_validate."""
+    username = auth_manager.get_username_for_token(token)
+    if not username:
+        # Valid-but-anonymous / single-user mode: privileges aren't enforced
+        # (same as require_privilege returning "" → no gate).
+        return True
+    try:
+        privs = auth_manager.get_privileges(username) or {}
+    except Exception:
+        return True
+    return bool(privs.get("can_use_browser", True))
+
+
+build_and_include_router(
+    app,
+    "Browser",
+    setup_browser_routes,
+    ws_validate=lambda token: auth_manager.validate_token(token),
+    ws_authorize=_browser_ws_authorize,
+    logger=logger,
+)
 
 # Local-model OpenAI proxy: a stable localhost endpoint Paperclip's opencode
 # agents use, forwarding to whichever GGUF model Apollo currently has warm.

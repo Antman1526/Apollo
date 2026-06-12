@@ -207,6 +207,16 @@ class EmbeddedBrowserSession:
         self._page = None
         self._event_seq = 0
         self._events: deque[BrowserEvent] = deque(maxlen=200)
+        # Live-view (screencast / input) state. Kept OUTSIDE self._lock so the
+        # CDP screencast-frame callback (which fires on Playwright's event loop
+        # while navigate() may be holding self._lock during a page load) never
+        # has to contend for the lock — taking it there would stall or deadlock
+        # the frame stream.
+        self._cdp = None            # active CDPSession bound to _screencast_page
+        self._screencast_page = None  # the page the screencast is armed on
+        self._on_frame = None       # caller's frame callback (data_b64, metadata)
+        self._url_listeners: list = []  # framenavigated callbacks (main frame)
+        self._listener_page = None  # page the url listeners are attached to
 
     def _record(self, kind: str, message: str, url: str = "") -> None:
         self._event_seq += 1
@@ -234,7 +244,202 @@ class EmbeddedBrowserSession:
         page.on("pageerror", lambda exc: self._record("pageerror", str(exc), page.url))
         page.on("dialog", lambda dialog: asyncio.create_task(dialog.dismiss()))
         self._page = page
+        # A brand-new page invalidates any live-view bindings. Re-attach url
+        # listeners immediately; re-arm the screencast if one was running. Both
+        # run as fire-and-forget tasks so _ensure_page stays cheap and never
+        # blocks page creation on CDP round-trips.
+        self._attach_url_listeners(page)
+        if self._on_frame is not None:
+            asyncio.create_task(self._rearm_screencast(page))
         return page
+
+    # ── Live view: screencast + input forwarding ──────────────────────────
+
+    def _attach_url_listeners(self, page) -> None:
+        """Wire ONE framenavigated handler on `page` that fans out to every
+        registered url listener (main frame only). Idempotent per page: the
+        handler is installed at most once, so re-registering a listener never
+        double-fires."""
+        if self._listener_page is page:
+            return  # handler already installed on this page
+
+        def _on_nav(frame):
+            # Main-frame navigations only — subframe loads must not move the
+            # address bar.
+            if frame.parent_frame is not None:
+                return
+            for cb in list(self._url_listeners):
+                try:
+                    cb(frame.url)
+                except Exception:
+                    pass
+
+        page.on("framenavigated", _on_nav)
+        self._listener_page = page
+
+    def add_url_listener(self, cb) -> None:
+        """Register cb(url) fired on main-frame navigation. Re-attached
+        automatically when the page is recreated (see _ensure_page)."""
+        if cb not in self._url_listeners:
+            self._url_listeners.append(cb)
+        if self._page is not None and not self._page.is_closed():
+            self._attach_url_listeners(self._page)
+
+    def remove_url_listener(self, cb) -> None:
+        try:
+            self._url_listeners.remove(cb)
+        except ValueError:
+            pass
+
+    async def _rearm_screencast(self, page) -> None:
+        """Restart the screencast on a freshly-created page. Tolerant of races
+        (the page may already be gone / a newer page may have superseded it)."""
+        if self._on_frame is None or page is not self._page:
+            return
+        try:
+            await self._start_screencast_on(page)
+        except Exception as exc:  # never crash page creation
+            self._record("screencast-error", f"re-arm failed: {exc}", page.url)
+
+    async def _start_screencast_on(self, page) -> None:
+        """Attach a CDP session to `page` and start a JPEG screencast. The
+        per-frame callback acks immediately and forwards to self._on_frame
+        WITHOUT touching self._lock."""
+        # Tear down any stale CDP session first (page swap / restart).
+        await self._detach_cdp()
+        cdp = await page.context.new_cdp_session(page)
+
+        def _on_screencast_frame(params: dict) -> None:
+            session_id = params.get("sessionId")
+            # Ack first so Chromium keeps sending frames; create_task because
+            # the event fires synchronously on the loop.
+            if session_id is not None:
+                asyncio.create_task(self._ack_frame(cdp, session_id))
+            on_frame = self._on_frame
+            if on_frame is None:
+                return
+            metadata = params.get("metadata") or {}
+            try:
+                on_frame(params.get("data", ""), metadata)
+            except Exception:
+                pass  # a viewer-side error must never break the stream
+
+        cdp.on("Page.screencastFrame", _on_screencast_frame)
+        await cdp.send(
+            "Page.startScreencast",
+            {
+                "format": "jpeg",
+                "quality": 70,
+                "maxWidth": 1280,
+                "maxHeight": 1280,
+                "everyNthFrame": 1,
+            },
+        )
+        self._cdp = cdp
+        self._screencast_page = page
+
+    async def _ack_frame(self, cdp, session_id) -> None:
+        try:
+            await cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
+        except Exception:
+            pass  # session may have been detached between frame and ack
+
+    async def _detach_cdp(self) -> None:
+        cdp, self._cdp, self._screencast_page = self._cdp, None, None
+        if cdp is None:
+            return
+        try:
+            await cdp.send("Page.stopScreencast")
+        except Exception:
+            pass
+        try:
+            await cdp.detach()
+        except Exception:
+            pass
+
+    async def start_screencast(self, on_frame) -> None:
+        """Begin streaming JPEG frames. `on_frame(data_b64, metadata)` is
+        invoked per frame on Playwright's event loop and MUST be non-blocking.
+        metadata carries deviceWidth/deviceHeight for input coordinate scaling.
+        """
+        self._on_frame = on_frame
+        page = await self._ensure_page()
+        await self._start_screencast_on(page)
+
+    async def stop_screencast(self) -> None:
+        self._on_frame = None
+        await self._detach_cdp()
+
+    # ── Input forwarding (mouse / keyboard) ───────────────────────────────
+
+    def _live_page(self):
+        """Page reference for input/screencast WITHOUT taking self._lock.
+
+        Input must not deadlock against a navigate()/load that holds the lock;
+        a click landing mid-load is harmless. We read the current page directly
+        and rely on _ensure_page (under the lock) to have created one. If no
+        page exists yet, raise BrowserUnavailable rather than blocking.
+        """
+        page = self._page
+        if page is None or page.is_closed():
+            raise BrowserUnavailable("browser page is not ready")
+        return page
+
+    async def input_mouse(self, kind, x, y, *, button="left", clicks=1, dx=0, dy=0) -> None:
+        page = self._live_page()
+        mouse = page.mouse
+        if kind == "move":
+            await mouse.move(x, y)
+        elif kind == "down":
+            await mouse.move(x, y)
+            await mouse.down(button=button, click_count=clicks)
+        elif kind == "up":
+            await mouse.move(x, y)
+            await mouse.up(button=button, click_count=clicks)
+        elif kind == "click":
+            await mouse.move(x, y)
+            await mouse.down(button=button, click_count=clicks)
+            await mouse.up(button=button, click_count=clicks)
+        elif kind == "wheel":
+            await mouse.wheel(dx, dy)
+        else:
+            raise ValueError(f"unknown mouse kind: {kind}")
+
+    async def input_key(self, kind, key) -> None:
+        page = self._live_page()
+        if kind == "down":
+            await page.keyboard.down(key)
+        elif kind == "up":
+            await page.keyboard.up(key)
+        else:
+            raise ValueError(f"unknown key kind: {kind}")
+
+    # ── History navigation ────────────────────────────────────────────────
+
+    async def _nav_result(self, page) -> dict[str, Any]:
+        current = page.url
+        return {"ok": True, "url": current, "title": await page.title()}
+
+    async def go_back(self) -> dict[str, Any]:
+        async with self._lock:
+            page = await self._ensure_page()
+            await page.go_back(wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+            self._record("navigation", "go_back", page.url)
+            return await self._nav_result(page)
+
+    async def go_forward(self) -> dict[str, Any]:
+        async with self._lock:
+            page = await self._ensure_page()
+            await page.go_forward(wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+            self._record("navigation", "go_forward", page.url)
+            return await self._nav_result(page)
+
+    async def reload_page(self) -> dict[str, Any]:
+        async with self._lock:
+            page = await self._ensure_page()
+            await page.reload(wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
+            self._record("navigation", "reload", page.url)
+            return await self._nav_result(page)
 
     async def close(self) -> None:
         async with self._lock:
