@@ -36346,6 +36346,10 @@ body.theme-frosted .modal {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
+  /* One definite row filling the modal body. Without this the implicit
+     auto row grows to the console column's full unscrolled height and the
+     canvas stretches with it (thousands of px tall). */
+  grid-template-rows: minmax(0, 1fr);
   background: var(--bg);
 }
 
@@ -36358,10 +36362,13 @@ body.theme-frosted .modal {
 }
 
 .browser-canvas {
-  flex: 1 1 auto;
+  /* flex-basis 0: unlike the old iframe, a canvas has an intrinsic size
+     (its bitmap, e.g. 1366x900) which would otherwise inflate the flex
+     layout far beyond the panel. Grow from zero and letterbox instead. */
+  flex: 1 1 0;
   min-height: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
   display: block;
   border: 0;
   background: #fff;

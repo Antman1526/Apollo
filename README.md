@@ -186,10 +186,15 @@ scripts/apollo-integrations agent-workbench --pretty
 #### Embedded browser panel and agent tool
 
 Apollo is a FastAPI/static-web app, not an Electron shell, so the IDE browser is
-implemented as a sandboxed in-app panel plus a shared Playwright Chromium
-session for agents. Open the panel from **Browser** in the sidebar or icon rail.
-It includes back, forward, reload, an address bar, Go, external-open, and a
-console rail fed by the agent browser session.
+a **live interactive screencast** of the shared server-side Playwright Chromium:
+frames stream over a WebSocket (`/api/browser/ws`, CDP `Page.startScreencast`)
+onto a canvas, and your clicks, scrolls, and keystrokes are forwarded back —
+every site works, including ones that block iframes (X-Frame-Options / CSP
+frame-ancestors). Because the session is shared with the agent's `browser`
+tool, you can literally watch and assist while an agent browses. Open the panel
+from **Browser** in the sidebar or icon rail. It includes back, forward, reload,
+an address bar, Go, external-open, and a console rail fed by the same session.
+Click the page to interact; Esc releases keyboard focus.
 
 Agent mode exposes a native `browser` tool:
 

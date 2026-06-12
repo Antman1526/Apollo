@@ -797,8 +797,11 @@ build_and_include_router(
     app,
     "Browser",
     setup_browser_routes,
-    ws_validate=lambda token: auth_manager.validate_token(token),
-    ws_authorize=_browser_ws_authorize,
+    # With auth disabled there is no session cookie at all — mirror the HTTP
+    # middleware (which simply isn't installed in that mode) by allowing the
+    # stream; with auth enabled the cookie must validate.
+    ws_validate=lambda token: (not AUTH_ENABLED) or auth_manager.validate_token(token),
+    ws_authorize=lambda token: (not AUTH_ENABLED) or _browser_ws_authorize(token),
     logger=logger,
 )
 
