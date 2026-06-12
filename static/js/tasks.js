@@ -1320,19 +1320,22 @@ function _showForm(existing, initTaskType, initTriggerType) {
       const curKey = existing?.endpoint_url && existing?.model
         ? `${existing.endpoint_url}::${existing.model}`
         : '';
+      const _icc = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
       for (const it of items) {
         if (it.offline || !it.models || it.models.length === 0) continue;
         const group = document.createElement('optgroup');
         group.label = it.endpoint_name || it.host || 'endpoint';
         const all = sortModelIds([...(it.models || []), ...(it.models_extra || [])]);
         for (const m of all) {
+          if (!_icc(it, m)) continue; // skip non-chat models
           const opt = document.createElement('option');
           opt.value = `${it.url}::${m}`;
           opt.textContent = m;
           if (opt.value === curKey) opt.selected = true;
           group.appendChild(opt);
         }
-        modelSel.appendChild(group);
+        if (group.children.length > 0) modelSel.appendChild(group);
       }
       // Preserve a previously-set pairing even if /api/models doesn't list it
       // anymore (e.g. endpoint disabled). Shows so the user knows it's set.
@@ -2093,15 +2096,18 @@ async function _openResultInChat(entry) {
     if (!url) {
       // Skip embedding/tts/whisper/moderation/image models — they can't chat,
       // and an endpoint may list one first (e.g. text-embedding-ada-002).
-      const _isChatModel = (m) => {
+      const _iccFn = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? window.modelsModule.isChatCapable.bind(window.modelsModule) : null;
+      const _isChatModel = (it, m) => {
+        if (_iccFn) return _iccFn(it, m);
         const l = (m || '').toLowerCase();
         return !!l && !['text-embedding', 'embedding', 'tts-', 'whisper', 'text-moderation', 'moderation-', 'dall-e', 'rerank'].some(p => l.includes(p));
       };
-      const online = items.find(it => !it.offline && (it.models || []).some(_isChatModel))
+      const online = items.find(it => !it.offline && (it.models || []).some(m => _isChatModel(it, m)))
         || items.find(it => !it.offline && (it.models || []).length);
       if (online) {
         url = online.url;
-        model = (online.models || []).find(_isChatModel) || (online.models || [])[0];
+        model = (online.models || []).find(m => _isChatModel(online, m)) || (online.models || [])[0];
         epId = online.endpoint_id || '';
       }
     }

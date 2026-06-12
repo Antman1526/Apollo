@@ -874,10 +874,14 @@ async function _cmdSessionNew(args, ctx) {
     try {
       const mRes = await fetch(`${API_BASE}/api/models`, { credentials: 'same-origin' });
       const mData = await mRes.json();
+      const _iccSlash = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
       for (const ep of (mData.items || [])) {
         if (ep.models && ep.models.length && ep.url) {
+          const firstChat = ep.models.find(m => _iccSlash(ep, m));
+          if (!firstChat) continue;
           endpointUrl = ep.url;
-          model = ep.models[0];
+          model = firstChat;
           endpointId = ep.endpoint_id || '';
           break;
         }

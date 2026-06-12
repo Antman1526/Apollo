@@ -26,6 +26,21 @@ export function init(apiBase) {
   API_BASE = apiBase;
 }
 
+/**
+ * Returns true when a model from a given endpoint item is chat-capable.
+ * Embedding and unsupported models must not appear in chat-model pickers.
+ *
+ * @param {Object|null} endpointItem - item from /api/models (may carry model_meta)
+ * @param {string} modelName - the model id to check
+ * @returns {boolean}
+ */
+export function isChatCapable(endpointItem, modelName) {
+  const meta = endpointItem && endpointItem.model_meta;
+  if (!meta || !meta[modelName]) return true; // absent meta → assume chat
+  const kind = meta[modelName].kind;
+  return kind === 'chat' || !kind;
+}
+
 // ── Collapse state persistence ──
 function _loadCollapsed() {
   return Storage.getJSON(COLLAPSE_KEY, {});
@@ -207,6 +222,9 @@ export async function refreshModels(force = false) {
         const displayNames = item.models_display || item.models || [];
         const epModelType = item.model_type || 'llm';
         (item.models || []).forEach((mid, i) => {
+          // Skip non-chat models (embedding / unsupported) from the chat sidebar.
+          // Image-typed endpoints are already handled separately via modelType.
+          if (epModelType !== 'image' && !isChatCapable(item, mid)) return;
           groups[cat][epName].push({
             mid, url: item.url,
             displayName: displayNames[i] || mid,
@@ -218,6 +236,7 @@ export async function refreshModels(force = false) {
         // Extra (non-curated) models from server
         const extraDisplayNames = item.models_extra_display || item.models_extra || [];
         (item.models_extra || []).forEach((mid, i) => {
+          if (epModelType !== 'image' && !isChatCapable(item, mid)) return;
           extraGroups[cat][epName].push({
             mid, url: item.url,
             displayName: extraDisplayNames[i] || mid,
@@ -522,11 +541,14 @@ export async function refreshModels(force = false) {
           if (item.offline) return;
           const allModels = (item.models || []).concat(item.models_extra || []);
           const allDisplay = (item.models_display || []).concat(item.models_extra_display || item.models_extra || []);
+          const epModelType = item.model_type || 'llm';
           allModels.forEach((mid, i) => {
             const display = allDisplay[i] || mid;
             if (!mid.toLowerCase().includes(q) && !display.toLowerCase().includes(q)) return;
+            // Exclude non-chat models from search results (same rule as main list)
+            if (epModelType !== 'image' && !isChatCapable(item, mid)) return;
             searchResults.appendChild(
-              _buildModelRow(mid, item.url, display, item.endpoint_id || null, false, item.model_type || 'llm')
+              _buildModelRow(mid, item.url, display, item.endpoint_id || null, false, epModelType)
             );
           });
         });
@@ -628,6 +650,7 @@ const modelsModule = {
   refreshModels,
   refreshProviders,
   getCachedItems,
+  isChatCapable,
 };
 
 export default modelsModule;

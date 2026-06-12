@@ -40,6 +40,35 @@ let _onDocKeydown = null;
 let _apiBase = '';
 let _endpoints = [];
 let _expandedJobId = null;
+
+// ── Non-chat model filtering for the research model dropdown ──
+// /api/model-endpoints (used by _loadEndpoints) does NOT carry model_meta,
+// so we fetch /api/local-models once for kind data and cache it.
+let _localModelKindCache = null; // Map<name, kind> | null
+let _localModelKindFetchedAt = 0;
+const _LOCAL_KIND_TTL = 60000; // 1 min — stale is fine for this guard
+
+async function _ensureLocalKindCache() {
+  const now = Date.now();
+  if (_localModelKindCache && (now - _localModelKindFetchedAt) < _LOCAL_KIND_TTL) return;
+  try {
+    const r = await fetch(`${_apiBase}/api/local-models`, { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const data = await r.json();
+    _localModelKindCache = new Map();
+    (data.models || []).forEach(m => {
+      if (m.name && m.kind) _localModelKindCache.set(m.name, m.kind);
+    });
+    _localModelKindFetchedAt = now;
+  } catch { /* leave cache null — will try again next time */ }
+}
+
+/** Returns true if a model name is chat-capable (unknown → true for safety). */
+function _isModelChatCapable(modelName) {
+  if (!_localModelKindCache || !_localModelKindCache.has(modelName)) return true;
+  const kind = _localModelKindCache.get(modelName);
+  return kind === 'chat' || !kind;
+}
 let _markdownModule = null;
 let _sessionModule = null;
 let _settingsCollapsed = false;
@@ -639,17 +668,27 @@ async function _loadEndpoints() {
   } catch {}
 }
 
-function _populateModels(endpointId) {
+async function _populateModels(endpointId) {
   const sel = document.getElementById('research-model');
   if (!sel) return;
   sel.innerHTML = '<option value="">Default</option>';
   if (!endpointId) return;
   const ep = _endpoints.find(e => e.id === endpointId);
   if (!ep || !ep.models) return;
+  // Fetch kind data for local models so we can hide/disable non-chat entries.
+  await _ensureLocalKindCache();
   sortModelIds(ep.models).forEach(m => {
+    const chatOk = _isModelChatCapable(m);
+    // Skip pure embedding models silently — they can never run research.
+    const kind = (_localModelKindCache && _localModelKindCache.get(m)) || '';
+    if (kind === 'embedding') return;
     const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = m;
+    opt.value = chatOk ? m : '';        // empty value → backend uses default
+    opt.textContent = chatOk ? m : m + ' (not chat-capable)';
+    if (!chatOk) {
+      opt.disabled = true;
+      opt.style.opacity = '0.5';
+    }
     sel.appendChild(opt);
   });
 }

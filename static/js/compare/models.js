@@ -12,7 +12,20 @@ const NON_CHAT_SUFFIXES = ['deep-research', '-online'];
 const IMAGE_PREFIXES = ['dall-e-3', 'gpt-image', 'chatgpt-image'];
 const DEPRECATED_IMAGE = ['dall-e-2'];
 
-function classifyModel(id) {
+/**
+ * Classify a model id for compare purposes.
+ * @param {string} id - model id
+ * @param {Object|null} [modelMeta] - optional model_meta map from /api/models item
+ * @returns {'chat'|'image'|'other'}
+ */
+function classifyModel(id, modelMeta) {
+  // Use backend-provided kind first — more accurate than prefix heuristics.
+  if (modelMeta && modelMeta[id]) {
+    const kind = modelMeta[id].kind;
+    if (kind === 'embedding' || kind === 'unsupported') return 'other';
+    if (kind === 'chat') return 'chat';
+    // kind absent or unrecognised → fall through to prefix heuristics
+  }
   const lower = id.toLowerCase();
   if (DEPRECATED_IMAGE.some(p => lower.startsWith(p))) return 'other';
   if (IMAGE_PREFIXES.some(p => lower.startsWith(p))) return 'image';
@@ -63,6 +76,7 @@ async function fetchModels() {
       const extraDisplay = item.models_extra_display || item.models_extra || [];
       // Curated list (item.models) takes priority; non-curated extras come
       // after so newer/uncatalogued models (e.g. deepseek-v4-pro) still show.
+      const _meta = item.model_meta || null;
       (item.models || []).forEach((mid, i) => {
         models.push({
           id: mid,
@@ -70,7 +84,7 @@ async function fetchModels() {
           name: (displayNames[i] || mid).split('/').pop(),
           endpointId: item.endpoint_id || null,
           endpointName: item.endpoint_name || '',
-          type: classifyModel(mid),
+          type: classifyModel(mid, _meta),
         });
       });
       (item.models_extra || []).forEach((mid, i) => {
@@ -80,7 +94,7 @@ async function fetchModels() {
           name: (extraDisplay[i] || mid).split('/').pop(),
           endpointId: item.endpoint_id || null,
           endpointName: item.endpoint_name || '',
-          type: classifyModel(mid),
+          type: classifyModel(mid, _meta),
         });
       });
     });

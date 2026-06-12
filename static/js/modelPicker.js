@@ -188,6 +188,11 @@ function _initModelPickerDropdown() {
       allModels.forEach((mid, i) => {
         // Deduplicate by model ID — prefer DB endpoints over env-discovered
         if (seen.has(mid)) return;
+        // Exclude non-chat models (embedding / unsupported) from the chat picker.
+        const _icc = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+          ? window.modelsModule.isChatCapable(item, mid)
+          : true; // defensive: if helper not loaded, include
+        if (!_icc) return;
         seen.add(mid);
         result.push({
           mid,
@@ -528,7 +533,10 @@ function _initModelPickerDropdown() {
       if (targetEndpointId && String(item.endpoint_id || '') !== targetEndpointId) continue;
       const models = (item.models || []).concat(item.models_extra || []);
       const displays = (item.models_display || []).concat(item.models_extra_display || []);
-      const idx = targetModel ? models.indexOf(targetModel) : (models.length ? 0 : -1);
+      // When auto-selecting the first available model, skip non-chat entries.
+      const _iccFn = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? (m) => window.modelsModule.isChatCapable(item, m) : () => true;
+      const idx = targetModel ? models.indexOf(targetModel) : models.findIndex(_iccFn);
       if (idx >= 0) {
         match = {
           mid: models[idx],
@@ -655,20 +663,24 @@ export function updateModelPicker() {
       (item.models || []).concat(item.models_extra || []).forEach(m => allAvailable.push(m));
     });
     if (allAvailable.length > 0 && !allAvailable.includes(modelId)) {
-      // Model no longer available — switch to first available
-      const fallback = items.find(item => !item.offline && (item.models || []).length > 0);
+      // Model no longer available — switch to first available chat model
+      const _iccFn2 = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
+      const fallback = items.find(item => !item.offline && (item.models || []).some(m => _iccFn2(item, m)));
       if (fallback) {
-        modelId = fallback.models[0];
+        modelId = (item => (item.models || []).find(m => _iccFn2(item, m)))(fallback) || fallback.models[0];
         _deps.setPendingChat({ url: fallback.url, modelId, endpointId: fallback.endpoint_id });
       }
     }
   }
   if (!modelId && !_autoSelectingDefault && window.modelsModule && window.modelsModule.getCachedItems) {
     const items = window.modelsModule.getCachedItems();
-    const first = items.find(item => !item.offline && ((item.models || []).length || (item.models_extra || []).length));
+    const _iccFn3 = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+      ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
+    const first = items.find(item => !item.offline && ((item.models || []).concat(item.models_extra || [])).some(m => _iccFn3(item, m)));
     if (first) {
       const models = (first.models || []).concat(first.models_extra || []);
-      modelId = models[0];
+      modelId = models.find(m => _iccFn3(first, m)) || models[0];
       if (!currentSessionId) {
         _deps.setPendingChat({ url: first.url, modelId, endpointId: first.endpoint_id });
       } else {

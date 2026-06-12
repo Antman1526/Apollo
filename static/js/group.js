@@ -48,10 +48,13 @@ function _initGroupTab() {
     }
     const result = [];
     const seen = new Set();
+    const _icc = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+      ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
     items.forEach(item => {
       if (item.offline) return;
       (item.models || []).concat(item.models_extra || []).forEach((mid, i) => {
         if (seen.has(mid)) return;
+        if (!_icc(item, mid)) return; // exclude non-chat models from group-chat
         seen.add(mid);
         const display = ((item.models_display || []).concat(item.models_extra_display || []))[i] || mid;
         result.push({ mid, display: display.split('/').pop(), url: item.url, endpointId: item.endpoint_id });
@@ -400,10 +403,13 @@ export async function showModelPicker() {
       }
       const result = [];
       const seen = new Set();
+      const _icc2 = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
       items.forEach(item => {
         if (item.offline) return;
         (item.models || []).concat(item.models_extra || []).forEach((mid, i) => {
           if (seen.has(mid)) return;
+          if (!_icc2(item, mid)) return; // exclude non-chat models from group-chat
           seen.add(mid);
           const display = ((item.models_display || []).concat(item.models_extra_display || []))[i] || mid;
           result.push({ mid, display: display.split('/').pop(), url: item.url, endpointId: item.endpoint_id, epName: item.endpoint_name || '' });

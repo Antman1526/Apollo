@@ -344,7 +344,11 @@ async function _refreshAfterEndpointChange(deletedEndpointId) {
 }
 
 async function _selectAddedModelInChat(endpoint) {
-  const modelId = endpoint && Array.isArray(endpoint.models) ? endpoint.models[0] : '';
+  const _iccAdmin = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+    ? window.modelsModule.isChatCapable.bind(window.modelsModule) : () => true;
+  const modelId = endpoint && Array.isArray(endpoint.models)
+    ? (endpoint.models.find(m => _iccAdmin(endpoint, m)) || endpoint.models[0])
+    : '';
   if (!modelId) return;
   try {
     if (window.modelsModule && window.modelsModule.refreshModels) {

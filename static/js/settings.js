@@ -221,8 +221,20 @@ function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
   }
 }
 
-function _fillModelSelect(selectEl, models, selected, keepBlank) {
+/**
+ * Fill a <select> with model options.
+ * @param {HTMLSelectElement} selectEl
+ * @param {string[]} models
+ * @param {string|undefined} selected
+ * @param {boolean} keepBlank - keep the existing blank first option
+ * @param {Object} [opts]
+ * @param {boolean} [opts.chatOnly=false] - hide embedding models, disable unsupported ones
+ * @param {Object} [opts.modelMeta] - model_meta map from /api/models endpoint item
+ */
+function _fillModelSelect(selectEl, models, selected, keepBlank, opts) {
   if (!selectEl) return;
+  var chatOnly = opts && opts.chatOnly;
+  var modelMeta = (opts && opts.modelMeta) || null;
   const previous = selected !== undefined ? selected : selectEl.value;
   const blankText = keepBlank && selectEl.options[0] && selectEl.options[0].value === ''
     ? selectEl.options[0].textContent
@@ -235,6 +247,20 @@ function _fillModelSelect(selectEl, models, selected, keepBlank) {
     selectEl.appendChild(blank);
   }
   sortModelIds(models).forEach(function(m) {
+    var kind = modelMeta && modelMeta[m] ? modelMeta[m].kind : '';
+    // For chat-only selects: silently skip embedding models; disable unsupported ones.
+    if (chatOnly) {
+      if (kind === 'embedding') return;
+      if (kind === 'unsupported') {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = String(m).split('/').pop() + ' (not chat-capable)';
+        opt.disabled = true;
+        opt.style.opacity = '0.5';
+        selectEl.appendChild(opt);
+        return;
+      }
+    }
     const opt = document.createElement('option');
     opt.value = m;
     opt.textContent = String(m).split('/').pop();
@@ -512,9 +538,20 @@ function _bindFallbackWidget(opts) {
     if (ep && ep.models) {
       sortModelIds(ep.models).forEach(function(m) {
         if (!modelsFilter(m, ep)) return;
+        // Skip embedding models and disable unsupported ones in all fallback chains
+        // (these are chat-model fallbacks; non-chat entries would break silently).
+        var _kind = ep.model_meta && ep.model_meta[m] ? ep.model_meta[m].kind : '';
+        if (_kind === 'embedding') return;
         var o = document.createElement('option');
-        o.value = m;
-        o.textContent = m.split('/').pop();
+        if (_kind === 'unsupported') {
+          o.value = '';
+          o.textContent = m.split('/').pop() + ' (not chat-capable)';
+          o.disabled = true;
+          o.style.opacity = '0.5';
+        } else {
+          o.value = m;
+          o.textContent = m.split('/').pop();
+        }
         selectEl.appendChild(o);
       });
     }
@@ -620,7 +657,8 @@ async function initDefaultChat() {
   // Fill any <select> with the models for a given endpoint id.
   function fillModels(selectEl, epId, selected) {
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false);
+    _fillModelSelect(selectEl, ep ? ep.models : [], selected, false,
+      { chatOnly: true, modelMeta: ep && ep.model_meta });
   }
 
   try {
@@ -754,7 +792,8 @@ async function initUtilityModel() {
   function refreshModels(selectedModel) {
     var epId = epSel.value;
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true,
+      { chatOnly: true, modelMeta: ep && ep.model_meta });
   }
 
   try {
@@ -824,7 +863,8 @@ async function initTeacherModel() {
   function refreshModels(selectedModel) {
     var epId = epSel.value;
     var ep = _endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true,
+      { chatOnly: true, modelMeta: ep && ep.model_meta });
   }
 
   // Disable / enable the endpoint+model dropdowns based on the
@@ -1787,7 +1827,8 @@ async function initResearchSettings() {
   function refreshModels(selectedModel) {
     var epId = epSel.value;
     var ep = endpoints.find(function(e) { return e.id === epId; });
-    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true);
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true,
+      { chatOnly: true, modelMeta: ep && ep.model_meta });
   }
 
   try {
