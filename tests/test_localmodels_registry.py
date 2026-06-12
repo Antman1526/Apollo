@@ -89,6 +89,28 @@ def test_updates_existing_endpoint(monkeypatch):
     assert "nomic-embed" in existing.cached_models
 
 
+def test_sync_excludes_unsupported_models(monkeypatch):
+    """Models with kind='unsupported' must not appear in cached_models."""
+    import json
+
+    models = [
+        LocalModel("a", "Qwen3.5-9B-Q4_K_M", "/m/a.gguf", "Q4_K_M", "chat", 1, "/m"),
+        LocalModel("d", "google.diffusiongemma-2b-Q4_K_M", "/m/d.gguf", "Q4_K_M",
+                   "unsupported", 1, "/m", "diffusion-gemma"),
+        LocalModel("e", "nomic-embed", "/m/e.gguf", "F16", "embedding", 1, "/m"),
+    ]
+    existing = _FakeEP(base_url=registry.LOCAL_BASE_URL, cached_models="[]",
+                       is_enabled=True)
+    sess = _FakeSession(rows=[existing])
+    monkeypatch.setattr(registry, "SessionLocal", lambda: sess)
+    monkeypatch.setattr(registry, "ModelEndpoint", _FakeEP)
+    registry.sync_managed_endpoint(models)
+    names = json.loads(existing.cached_models)
+    assert "google.diffusiongemma-2b-Q4_K_M" not in names
+    assert "Qwen3.5-9B-Q4_K_M" in names
+    assert "nomic-embed" in names
+
+
 def test_sync_dedupes_same_model_on_two_drives(monkeypatch):
     """The same GGUF in two configured dirs must list once in the picker."""
     import json

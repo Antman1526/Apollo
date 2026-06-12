@@ -120,6 +120,11 @@ class LocalModelServer:
             m = self._resolve(ref)
         if m is None:
             raise LookupError(f"Unknown local model: {ref!r}")
+        if m.kind == "unsupported":
+            raise ValueError(
+                f"'{m.name}' (architecture: {m.arch or 'unknown'}) is not a "
+                "chat-capable model — llama-server cannot serve it"
+            )
         with self._lock:
             # Embedding GGUFs get an independent slot (served with --embedding)
             # so they can run alongside a chat model. Today this is reachable

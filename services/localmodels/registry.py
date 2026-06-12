@@ -30,6 +30,8 @@ def sync_managed_endpoint(models: list[LocalModel]) -> None:
     seen: set[str] = set()
     for kind in ("chat", "embedding"):
         for m in models:
+            # Unsupported architectures (diffusion, whisper, clip, …) cannot be
+            # served by llama-server at all — exclude them from the picker.
             if m.kind == kind and m.name not in seen:
                 seen.add(m.name)
                 names.append(m.name)

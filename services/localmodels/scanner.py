@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from services.localmodels.gguf_meta import classify_architecture, read_architecture
 
 # Quant regex ported from routes/cookbook_helpers.py (_cached_model_scan_script).
 _QUANT_RE = re.compile(
@@ -25,9 +27,10 @@ class LocalModel:
     name: str
     path: str
     quant: str
-    kind: str  # "chat" | "embedding"
+    kind: str  # "chat" | "embedding" | "unsupported"
     size_bytes: int
     directory: str
+    arch: str = field(default="")
 
 
 def _quant(name: str) -> str:
@@ -40,8 +43,23 @@ def _is_projector(name: str) -> bool:
     return n.startswith("mmproj") or "mmproj" in n
 
 
-def _kind(name: str) -> str:
+def _kind_from_filename(name: str) -> str:
+    """Filename-only heuristic — used as fallback when the GGUF header is unreadable."""
     return "embedding" if _EMBED_HINT.search(name) else "chat"
+
+
+def _resolve_kind(path: str, name: str) -> tuple[str, str]:
+    """Return (kind, arch) for a GGUF file.
+
+    Reads the GGUF header for a reliable architecture tag; falls back to the
+    filename heuristic when the header is unreadable (e.g. a zero-byte stub in
+    tests, a freshly-downloaded partial file).
+    """
+    arch = read_architecture(path) or ""
+    kind = classify_architecture(arch) if arch else None
+    if kind is None:
+        kind = _kind_from_filename(name)
+    return kind, arch
 
 
 def _model_id(path: str) -> str:
@@ -78,14 +96,17 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                 mid = _model_id(fp)
                 if mid in out:
                     continue
+                model_name = fn[:-5]  # strip ".gguf"
+                kind, arch = _resolve_kind(fp, model_name)
                 out[mid] = LocalModel(
                     id=mid,
-                    name=fn[:-5],  # strip ".gguf"
+                    name=model_name,
                     path=fp,
                     quant=_quant(fn),
-                    kind=_kind(fn),
+                    kind=kind,
                     size_bytes=size,
                     directory=base,
+                    arch=arch,
                 )
     return list(out.values())
 

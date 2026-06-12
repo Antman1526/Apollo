@@ -2,9 +2,10 @@ from services.localmodels.scanner import LocalModel
 from services.localmodels.server_manager import LocalModelServer, _Proc
 
 
-def _model(mid, name, kind="chat"):
+def _model(mid, name, kind="chat", arch=""):
     return LocalModel(id=mid, name=name, path=f"/m/{name}.gguf",
-                      quant="Q4_K_M", kind=kind, size_bytes=1, directory="/m")
+                      quant="Q4_K_M", kind=kind, size_bytes=1, directory="/m",
+                      arch=arch)
 
 
 class _FakeProcess:
@@ -76,6 +77,23 @@ def test_unknown_model_raises():
         assert False, "expected LookupError"
     except LookupError:
         pass
+
+
+def test_unsupported_model_raises_value_error():
+    """ensure_running must raise ValueError (not launch) for unsupported architectures."""
+    launched = []
+    srv = _server_with(
+        [_model("d", "google.diffusiongemma-2b-Q4_K_M",
+                kind="unsupported", arch="diffusion-gemma")],
+        launched,
+    )
+    try:
+        srv.ensure_running("google.diffusiongemma-2b-Q4_K_M")
+        assert False, "expected ValueError"
+    except ValueError as e:
+        assert "diffusion-gemma" in str(e)
+        assert "llama-server" in str(e)
+    assert len(launched) == 0  # nothing was launched
 
 
 def test_serving_context_uses_known_window_capped(monkeypatch):

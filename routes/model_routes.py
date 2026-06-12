@@ -784,7 +784,7 @@ def setup_model_routes(model_discovery):
             if model_ids:
                 curated_key = _match_provider_curated(base, None)
                 curated, extra = _curate_models(model_ids, curated_key)
-                items.append({
+                item: dict = {
                     "host": "custom",
                     "port": 0,
                     "url": chat_url,
@@ -796,7 +796,29 @@ def setup_model_routes(model_discovery):
                     "endpoint_name": ep.name,
                     "category": category,
                     "model_type": ep_model_type,
-                })
+                }
+                # For the local llama.cpp managed endpoint, enrich each model
+                # with kind and arch from the live scanner catalog so the UI
+                # can filter out embedding/unsupported models from the chat picker.
+                if _is_local_managed(ep.base_url):
+                    try:
+                        from services.localmodels.server_manager import get_server
+                        catalog_by_name = {
+                            m.name: m for m in get_server().catalog()
+                        }
+                        item["model_meta"] = {
+                            name: {
+                                k: v for k, v in
+                                [("kind", catalog_by_name[name].kind),
+                                 ("arch", catalog_by_name[name].arch)]
+                                if v  # omit empty arch
+                            }
+                            for name in (curated + extra)
+                            if name in catalog_by_name
+                        }
+                    except Exception:
+                        pass  # catalog unavailable — UI treats absent meta as chat
+                items.append(item)
             else:
                 # Endpoint unreachable but still show it greyed out
                 items.append({
