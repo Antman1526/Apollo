@@ -1,4 +1,5 @@
-// Apollo Browser panel — sandboxed UI iframe + agent browser route sync.
+// Apollo Browser panel — live canvas screencast of the agent's server-side
+// Chromium over a WebSocket, with full mouse/keyboard input forwarding.
 
 const BLOCKED_SCHEMES = new Set([
   'about:', 'apollo:', 'chrome:', 'chrome-extension:', 'data:', 'devtools:',
@@ -7,11 +8,26 @@ const BLOCKED_SCHEMES = new Set([
 const LOCALHOST_RE = /((?:https?:\/\/)?(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(?::\d{1,5})(?:\/[^\s"'<>]*)?)/ig;
 const HOST_PORT_RE = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\]):\d{1,5}(?:[/?#].*)?$/;
 
+// Local history stack is the FALLBACK path only (used when the WS is not
+// connected and we drive the agent browser over POST). When the stream is
+// live, the SERVER owns history and we just reflect {type:"url"} pushes.
 let historyStack = [];
 let historyIndex = -1;
 let eventsTimer = null;
 let lastEventId = 0;
 let initialized = false;
+
+// ── WebSocket / screencast state ──
+let ws = null;
+let wsConnected = false;
+let deviceW = 0; // latest screencast device width (for input scaling)
+let deviceH = 0;
+let frameImg = null; // reused Image for decode (latest-wins)
+let frameBusy = false; // true while frameImg is decoding
+let pendingFrame = null; // most-recent frame data dropped while busy
+let lastMoveSent = 0; // timestamp gate for mousemove throttle
+const MOVE_THROTTLE_MS = 33; // ~30/s
+
 const LOCALHOST_OUTPUT_SELECTOR = [
   '.code-runner-output',
   '.doc-run-output',
@@ -61,8 +77,15 @@ function setStatus(text, warning) {
 }
 
 function syncButtons() {
+  // When the stream is live the server owns history (buttons stay enabled);
+  // otherwise the local fallback stack governs availability.
   const back = el('browser-back');
   const forward = el('browser-forward');
+  if (wsConnected) {
+    if (back) back.disabled = false;
+    if (forward) forward.disabled = false;
+    return;
+  }
   if (back) back.disabled = historyIndex <= 0;
   if (forward) forward.disabled = historyIndex < 0 || historyIndex >= historyStack.length - 1;
 }
@@ -75,77 +98,229 @@ function pushHistory(url) {
   syncButtons();
 }
 
-function setFrameUrl(url, { record = true } = {}) {
-  const frame = el('browser-frame');
+function setAddress(url, { record = true } = {}) {
   const address = el('browser-address');
-  if (!frame || !address) return;
-  frame.src = url;
-  address.value = url;
+  if (address && document.activeElement !== address) address.value = url;
   if (record) pushHistory(url);
 }
 
-// ── Screenshot preview fallback ──
-// Sites that send X-Frame-Options / CSP frame-ancestors refuse to render in
-// the panel's iframe (it stays blank). The agent browser has the page anyway,
-// so we show its live screenshot instead, with a banner explaining why.
-let previewMode = false;
+// ── WebSocket lifecycle ───────────────────────────────────────────────
 
-function previewEls() {
-  const frame = el('browser-frame');
-  if (!frame || !frame.parentElement) return {};
-  let wrap = el('browser-preview-wrap');
-  let img = el('browser-preview-img');
-  let note = el('browser-preview-note');
-  if (!wrap) {
-    // .browser-body is a grid; a single hidden wrapper slots into the
-    // iframe's cell when the iframe is display:none.
-    wrap = document.createElement('div');
-    wrap.id = 'browser-preview-wrap';
-    wrap.style.cssText = 'display:none;flex-direction:column;width:100%;height:100%;min-height:0;overflow:auto;';
-    note = document.createElement('div');
-    note.id = 'browser-preview-note';
-    note.style.cssText = 'padding:6px 10px;font-size:12px;opacity:.75;flex:0 0 auto;';
-    img = document.createElement('img');
-    img.id = 'browser-preview-img';
-    img.alt = 'Agent browser preview';
-    img.style.cssText = 'flex:1 1 auto;min-height:0;width:100%;object-fit:contain;object-position:top;background:#fff;';
-    wrap.appendChild(note);
-    wrap.appendChild(img);
-    frame.parentElement.insertBefore(wrap, frame);
-  }
-  return { frame, wrap, img, note };
+function wsUrl() {
+  const scheme = location.protocol === 'https:' ? 'wss://' : 'ws://';
+  return `${scheme}${location.host}/api/browser/ws`;
 }
 
-async function showPreviewFallback() {
-  const { frame, wrap, img, note } = previewEls();
-  if (!img) return;
+function wsSend(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   try {
-    const res = await fetch('/api/browser/screenshot', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ full_page: false }),
-    });
-    if (!res.ok) throw new Error('screenshot ' + res.status);
-    const shot = await res.json();
-    img.src = `data:${shot.mime || 'image/png'};base64,${shot.base64}`;
-    previewMode = true;
-    frame.style.display = 'none';
-    wrap.style.display = 'flex';
-    note.textContent = 'This site blocks embedding — showing a read-only agent-browser preview. Use ↗ to open it in your browser.';
-  } catch (_err) {
-    // No screenshot available (agent browser down) — leave the iframe as-is.
-    previewMode = false;
+    ws.send(JSON.stringify(obj));
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 
-function hidePreviewFallback() {
-  if (!previewMode) return;
-  const { frame, wrap } = previewEls();
-  previewMode = false;
-  if (frame) frame.style.display = '';
-  if (wrap) wrap.style.display = 'none';
+function connectWs() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  let socket;
+  try {
+    socket = new WebSocket(wsUrl());
+  } catch (err) {
+    setStatus('Stream unavailable', err.message || String(err));
+    return;
+  }
+  ws = socket;
+  setStatus('Connecting to browser stream...');
+
+  socket.onopen = () => {
+    if (socket !== ws) return;
+    wsConnected = true;
+    setStatus('Browser stream connected');
+    syncButtons();
+  };
+
+  socket.onmessage = (event) => {
+    if (socket !== ws) return;
+    let msg;
+    try {
+      msg = JSON.parse(event.data);
+    } catch (_) {
+      return;
+    }
+    handleWsMessage(msg);
+  };
+
+  socket.onerror = () => {
+    if (socket !== ws) return;
+    // onclose fires next; surface the disconnect there.
+  };
+
+  socket.onclose = () => {
+    if (socket !== ws) return;
+    wsConnected = false;
+    ws = null;
+    syncButtons();
+    setStatus('Stream disconnected — press reload to reconnect');
+  };
 }
+
+function closeWs() {
+  const socket = ws;
+  ws = null;
+  wsConnected = false;
+  if (socket) {
+    try { socket.onclose = null; socket.onerror = null; socket.onmessage = null; } catch (_) {}
+    try { socket.close(); } catch (_) {}
+  }
+}
+
+function handleWsMessage(msg) {
+  const kind = msg && msg.type;
+  if (kind === 'frame') {
+    drawFrame(msg);
+  } else if (kind === 'url') {
+    const url = msg.url || '';
+    if (url) setAddress(url, { record: false });
+    setStatus(msg.title || url || 'Loaded');
+  } else if (kind === 'error') {
+    // Non-fatal stream error; show it without tearing down.
+    setStatus('Browser stream', msg.message || 'error');
+  }
+}
+
+// ── Frame rendering (latest-wins, single reused Image) ────────────────
+
+function drawFrame(msg) {
+  const canvas = el('browser-canvas');
+  if (!canvas) return;
+  const data = msg.data;
+  if (!data) return;
+  // Track device size for input scaling; guard nulls.
+  if (typeof msg.w === 'number' && msg.w > 0) deviceW = msg.w;
+  if (typeof msg.h === 'number' && msg.h > 0) deviceH = msg.h;
+
+  if (frameBusy) {
+    // Drop all but the most recent frame while the previous decode runs.
+    pendingFrame = msg;
+    return;
+  }
+  paint(canvas, data, msg.w, msg.h);
+}
+
+function paint(canvas, data, w, h) {
+  if (!frameImg) frameImg = new Image();
+  const img = frameImg;
+  frameBusy = true;
+  img.onload = () => {
+    frameBusy = false;
+    const ctx = canvas.getContext('2d');
+    const cw = (typeof w === 'number' && w > 0) ? w : img.naturalWidth;
+    const ch = (typeof h === 'number' && h > 0) ? h : img.naturalHeight;
+    if (cw && ch) {
+      if (canvas.width !== cw) canvas.width = cw;
+      if (canvas.height !== ch) canvas.height = ch;
+    }
+    if (ctx) ctx.drawImage(img, 0, 0);
+    // Drain a frame that arrived mid-decode (latest-wins).
+    const next = pendingFrame;
+    pendingFrame = null;
+    if (next) paint(canvas, next.data, next.w, next.h);
+  };
+  img.onerror = () => {
+    frameBusy = false;
+    const next = pendingFrame;
+    pendingFrame = null;
+    if (next) paint(canvas, next.data, next.w, next.h);
+  };
+  img.src = `data:image/jpeg;base64,${data}`;
+}
+
+// ── Input forwarding ──────────────────────────────────────────────────
+
+function buttonName(code) {
+  return code === 2 ? 'right' : code === 1 ? 'middle' : 'left';
+}
+
+function canvasCoords(e) {
+  const canvas = el('browser-canvas');
+  if (!canvas) return null;
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  const dw = deviceW || canvas.width || rect.width;
+  const dh = deviceH || canvas.height || rect.height;
+  const x = (e.clientX - rect.left) * (dw / rect.width);
+  const y = (e.clientY - rect.top) * (dh / rect.height);
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+// Keys we capture so they act on the page instead of scrolling/acting on Apollo.
+const CAPTURE_KEYS = new Set([
+  ' ', 'Spacebar', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+  'Tab', 'Backspace', 'Enter', '/', "'", '"',
+]);
+
+function bindCanvasInput() {
+  const canvas = el('browser-canvas');
+  if (!canvas || canvas._apolloInputBound) return;
+  canvas._apolloInputBound = true;
+
+  canvas.addEventListener('mousemove', (e) => {
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (now - lastMoveSent < MOVE_THROTTLE_MS) return;
+    lastMoveSent = now;
+    const c = canvasCoords(e);
+    if (!c) return;
+    wsSend({ type: 'mouse', kind: 'move', x: c.x, y: c.y });
+  });
+
+  canvas.addEventListener('mousedown', (e) => {
+    canvas.focus();
+    const c = canvasCoords(e);
+    if (!c) return;
+    wsSend({ type: 'mouse', kind: 'down', x: c.x, y: c.y, button: buttonName(e.button), clicks: e.detail || 1 });
+  });
+
+  canvas.addEventListener('mouseup', (e) => {
+    const c = canvasCoords(e);
+    if (!c) return;
+    wsSend({ type: 'mouse', kind: 'up', x: c.x, y: c.y, button: buttonName(e.button), clicks: e.detail || 1 });
+  });
+
+  canvas.addEventListener('contextmenu', (e) => {
+    // Let the right-click reach the page, not Apollo's context menu.
+    e.preventDefault();
+  });
+
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const c = canvasCoords(e);
+    if (!c) return;
+    wsSend({ type: 'mouse', kind: 'wheel', x: c.x, y: c.y, dx: e.deltaX, dy: e.deltaY });
+  }, { passive: false });
+
+  canvas.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      // Esc releases keyboard focus rather than forwarding.
+      e.preventDefault();
+      canvas.blur();
+      return;
+    }
+    // Let host-browser combos through un-forwarded (e.g. Cmd+L/Cmd+R on Mac).
+    if (e.metaKey) return;
+    if (CAPTURE_KEYS.has(e.key) || e.ctrlKey) e.preventDefault();
+    wsSend({ type: 'key', kind: 'down', key: e.key });
+  });
+
+  canvas.addEventListener('keyup', (e) => {
+    if (e.key === 'Escape') return;
+    if (e.metaKey) return;
+    if (CAPTURE_KEYS.has(e.key) || e.ctrlKey) e.preventDefault();
+    wsSend({ type: 'key', kind: 'up', key: e.key });
+  });
+}
+
+// ── Agent-browser POST fallback (no live stream) ──────────────────────
 
 async function syncAgentBrowser(url) {
   try {
@@ -157,15 +332,13 @@ async function syncAgentBrowser(url) {
     });
     if (!res.ok) {
       const text = await res.text();
-      setStatus('Rendered in panel; agent browser unavailable', text.slice(0, 180));
+      setStatus('Agent browser unavailable', text.slice(0, 180));
       return;
     }
     const data = await res.json();
     setStatus(data.title || 'Loaded', data.warning === 'non_secure_http' ? 'Non-secure HTTP' : '');
-    if (data.frameable === false) await showPreviewFallback();
-    else hidePreviewFallback();
   } catch (err) {
-    setStatus('Rendered in panel; agent browser unavailable', err.message || String(err));
+    setStatus('Agent browser unavailable', err.message || String(err));
   }
 }
 
@@ -178,40 +351,49 @@ async function navigate(raw, options = {}) {
     return;
   }
   setStatus('Loading...');
-  setFrameUrl(url, options);
+  if (wsConnected && wsSend({ type: 'navigate', url })) {
+    setAddress(url, { record: false });
+    return;
+  }
+  // Fallback: drive the agent browser over POST and track local history.
+  setAddress(url, options);
   await syncAgentBrowser(url);
 }
 
 function goBack() {
+  if (wsConnected) {
+    wsSend({ type: 'back' });
+    return;
+  }
   if (historyIndex <= 0) return;
   historyIndex -= 1;
   const url = historyStack[historyIndex];
-  setFrameUrl(url, { record: false });
+  setAddress(url, { record: false });
   syncAgentBrowser(url);
   syncButtons();
 }
 
 function goForward() {
+  if (wsConnected) {
+    wsSend({ type: 'forward' });
+    return;
+  }
   if (historyIndex < 0 || historyIndex >= historyStack.length - 1) return;
   historyIndex += 1;
   const url = historyStack[historyIndex];
-  setFrameUrl(url, { record: false });
+  setAddress(url, { record: false });
   syncAgentBrowser(url);
   syncButtons();
 }
 
 function reload() {
-  if (previewMode) {
-    setStatus('Refreshing preview...');
-    showPreviewFallback().then(() => setStatus('Preview refreshed'));
+  if (wsConnected) {
+    setStatus('Reloading...');
+    wsSend({ type: 'reload' });
     return;
   }
-  const frame = el('browser-frame');
-  if (frame && frame.src) {
-    setStatus('Reloading...');
-    frame.src = frame.src;
-    syncAgentBrowser(frame.src);
-  }
+  // Not connected: a reload click re-establishes the stream (single retry).
+  connectWs();
 }
 
 async function pollEvents() {
@@ -252,6 +434,8 @@ function open(url) {
   const modal = el('browser-modal');
   if (!modal) return;
   modal.classList.remove('hidden');
+  bindCanvasInput();
+  connectWs();
   startEventPolling();
   if (url) navigate(url);
   else el('browser-address')?.focus();
@@ -260,6 +444,7 @@ function open(url) {
 function close() {
   const modal = el('browser-modal');
   if (modal) modal.classList.add('hidden');
+  closeWs();
   stopEventPolling();
 }
 
@@ -363,17 +548,11 @@ function init() {
   el('browser-forward')?.addEventListener('click', goForward);
   el('browser-reload')?.addEventListener('click', reload);
   el('browser-open-external')?.addEventListener('click', () => {
-    const url = el('browser-frame')?.src || el('browser-address')?.value;
+    const url = el('browser-address')?.value;
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
   });
   el('close-browser-modal')?.addEventListener('click', close);
-  el('browser-frame')?.addEventListener('load', () => {
-    const url = el('browser-frame')?.src;
-    if (url) {
-      el('browser-address').value = url;
-      setStatus('Loaded');
-    }
-  });
+  bindCanvasInput();
   initLocalhostObserver();
   syncButtons();
 }

@@ -36349,11 +36349,36 @@ body.theme-frosted .modal {
   background: var(--bg);
 }
 
-.browser-frame {
+.browser-viewport {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.browser-canvas {
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   height: 100%;
+  display: block;
   border: 0;
   background: #fff;
+  object-fit: contain;
+}
+
+.browser-canvas:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.browser-hint {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
 }
 
 .browser-console {

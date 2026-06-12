@@ -1378,13 +1378,15 @@
         <span id="browser-security" class="browser-security"></span>
       </div>
       <div class="browser-body">
-        <iframe
-          id="browser-frame"
-          class="browser-frame"
-          title="Apollo Browser"
-          referrerpolicy="no-referrer"
-          sandbox="allow-forms allow-scripts allow-same-origin"
-        ></iframe>
+        <div class="browser-viewport">
+          <canvas
+            id="browser-canvas"
+            class="browser-canvas"
+            tabindex="0"
+            aria-label="Embedded browser viewport"
+          ></canvas>
+          <div id="browser-hint" class="browser-hint">Click the page to interact — Esc releases keyboard focus.</div>
+        </div>
         <aside class="browser-console" aria-label="Browser console">
           <div class="browser-console-title">Console</div>
           <div id="browser-console-log" class="browser-console-log"></div>
