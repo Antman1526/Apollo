@@ -140,6 +140,29 @@ def security_warning(url: str) -> str:
     return ""
 
 
+def _is_frameable(headers: dict) -> bool:
+    """Can this response render inside a cross-origin iframe?
+
+    False for X-Frame-Options DENY/SAMEORIGIN and for any CSP
+    frame-ancestors directive other than '*'. Unknown/absent values are
+    treated as frameable — let the iframe try rather than guess.
+    """
+    lowered = {str(k).lower(): str(v) for k, v in (headers or {}).items()}
+    xfo = lowered.get("x-frame-options", "").strip().lower()
+    if xfo in ("deny", "sameorigin"):
+        return False
+    csp = lowered.get("content-security-policy", "")
+    m = re.search(r"frame-ancestors([^;]*)", csp, re.I)
+    if m:
+        # Only a BARE * token allows any ancestor. Subdomain wildcards like
+        # https://*.example.com still restrict embedding (yahoo.com ships a
+        # long allowlist of those), so a substring check is not enough.
+        sources = m.group(1).split()
+        if "*" not in sources:
+            return False
+    return True
+
+
 def detect_localhost_urls(text: str) -> list[str]:
     found: list[str] = []
     for match in LOCALHOST_RE.finditer(text or ""):
@@ -236,12 +259,27 @@ class EmbeddedBrowserSession:
             warning = security_warning(current)
             if warning:
                 self._record("security-warning", warning, current)
+            try:
+                # all_headers() includes security headers delivered via the
+                # network stack's extra-info; response.headers (the
+                # preliminary set) misses e.g. yahoo's CSP entirely.
+                headers = (await response.all_headers()) if response else {}
+            except Exception:
+                try:
+                    headers = response.headers if response else {}
+                except Exception:
+                    headers = {}
             return {
                 "ok": True,
                 "url": current,
                 "title": await page.title(),
                 "status": response.status if response else None,
                 "warning": warning,
+                # The Browser panel renders pages in a plain iframe; sites that
+                # forbid framing (X-Frame-Options / CSP frame-ancestors) blank
+                # out there. Tell the panel so it can fall back to an
+                # agent-browser screenshot preview instead.
+                "frameable": _is_frameable(headers),
             }
 
     async def get_current_url(self) -> dict[str, Any]:

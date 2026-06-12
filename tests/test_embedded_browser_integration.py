@@ -136,3 +136,42 @@ async def test_browser_tool_dispatches_visible_text(monkeypatch):
 
     assert out["exit_code"] == 0
     assert out["browser"]["text"] == "Rendered app"
+
+
+# ── Frameability detection (X-Frame-Options / CSP frame-ancestors) ──
+
+def test_frameable_no_headers():
+    from services.browser.embedded_browser import _is_frameable
+    assert _is_frameable({}) is True
+
+
+def test_frameable_xfo_deny_and_sameorigin():
+    from services.browser.embedded_browser import _is_frameable
+    assert _is_frameable({"x-frame-options": "SAMEORIGIN"}) is False
+    assert _is_frameable({"x-frame-options": "DENY"}) is False
+    assert _is_frameable({"X-Frame-Options": "deny"}) is False  # case-insensitive
+
+
+def test_frameable_csp_frame_ancestors():
+    from services.browser.embedded_browser import _is_frameable
+    assert _is_frameable({"content-security-policy": "frame-ancestors 'self'"}) is False
+    assert _is_frameable({"content-security-policy": "frame-ancestors 'none'"}) is False
+    assert _is_frameable({"content-security-policy": "default-src 'self'"}) is True
+    assert _is_frameable({"content-security-policy": "frame-ancestors *"}) is True
+
+
+def test_frameable_unknown_xfo_value_is_permissive():
+    from services.browser.embedded_browser import _is_frameable
+    # ALLOW-FROM and garbage values: let the iframe try rather than guess.
+    assert _is_frameable({"x-frame-options": "ALLOW-FROM https://x"}) is True
+
+
+def test_frameable_csp_subdomain_wildcards_are_not_allow_all():
+    from services.browser.embedded_browser import _is_frameable
+    # Yahoo-style allowlist: contains '*' chars but only as SUBDOMAIN wildcards.
+    yahoo_csp = ("frame-ancestors 'self' https://*.builtbygirls.com "
+                 "https://*.yahoo.com https://*.aol.com; sandbox allow-forms")
+    assert _is_frameable({"content-security-policy": yahoo_csp}) is False
+    # A bare * token genuinely allows all ancestors.
+    assert _is_frameable({"content-security-policy": "frame-ancestors *"}) is True
+    assert _is_frameable({"content-security-policy": "frame-ancestors * 'self'"}) is True

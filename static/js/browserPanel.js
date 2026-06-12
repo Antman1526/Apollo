@@ -84,6 +84,69 @@ function setFrameUrl(url, { record = true } = {}) {
   if (record) pushHistory(url);
 }
 
+// ── Screenshot preview fallback ──
+// Sites that send X-Frame-Options / CSP frame-ancestors refuse to render in
+// the panel's iframe (it stays blank). The agent browser has the page anyway,
+// so we show its live screenshot instead, with a banner explaining why.
+let previewMode = false;
+
+function previewEls() {
+  const frame = el('browser-frame');
+  if (!frame || !frame.parentElement) return {};
+  let wrap = el('browser-preview-wrap');
+  let img = el('browser-preview-img');
+  let note = el('browser-preview-note');
+  if (!wrap) {
+    // .browser-body is a grid; a single hidden wrapper slots into the
+    // iframe's cell when the iframe is display:none.
+    wrap = document.createElement('div');
+    wrap.id = 'browser-preview-wrap';
+    wrap.style.cssText = 'display:none;flex-direction:column;width:100%;height:100%;min-height:0;overflow:auto;';
+    note = document.createElement('div');
+    note.id = 'browser-preview-note';
+    note.style.cssText = 'padding:6px 10px;font-size:12px;opacity:.75;flex:0 0 auto;';
+    img = document.createElement('img');
+    img.id = 'browser-preview-img';
+    img.alt = 'Agent browser preview';
+    img.style.cssText = 'flex:1 1 auto;min-height:0;width:100%;object-fit:contain;object-position:top;background:#fff;';
+    wrap.appendChild(note);
+    wrap.appendChild(img);
+    frame.parentElement.insertBefore(wrap, frame);
+  }
+  return { frame, wrap, img, note };
+}
+
+async function showPreviewFallback() {
+  const { frame, wrap, img, note } = previewEls();
+  if (!img) return;
+  try {
+    const res = await fetch('/api/browser/screenshot', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ full_page: false }),
+    });
+    if (!res.ok) throw new Error('screenshot ' + res.status);
+    const shot = await res.json();
+    img.src = `data:${shot.mime || 'image/png'};base64,${shot.base64}`;
+    previewMode = true;
+    frame.style.display = 'none';
+    wrap.style.display = 'flex';
+    note.textContent = 'This site blocks embedding — showing a read-only agent-browser preview. Use ↗ to open it in your browser.';
+  } catch (_err) {
+    // No screenshot available (agent browser down) — leave the iframe as-is.
+    previewMode = false;
+  }
+}
+
+function hidePreviewFallback() {
+  if (!previewMode) return;
+  const { frame, wrap } = previewEls();
+  previewMode = false;
+  if (frame) frame.style.display = '';
+  if (wrap) wrap.style.display = 'none';
+}
+
 async function syncAgentBrowser(url) {
   try {
     const res = await fetch('/api/browser/navigate', {
@@ -99,6 +162,8 @@ async function syncAgentBrowser(url) {
     }
     const data = await res.json();
     setStatus(data.title || 'Loaded', data.warning === 'non_secure_http' ? 'Non-secure HTTP' : '');
+    if (data.frameable === false) await showPreviewFallback();
+    else hidePreviewFallback();
   } catch (err) {
     setStatus('Rendered in panel; agent browser unavailable', err.message || String(err));
   }
@@ -136,6 +201,11 @@ function goForward() {
 }
 
 function reload() {
+  if (previewMode) {
+    setStatus('Refreshing preview...');
+    showPreviewFallback().then(() => setStatus('Preview refreshed'));
+    return;
+  }
   const frame = el('browser-frame');
   if (frame && frame.src) {
     setStatus('Reloading...');
