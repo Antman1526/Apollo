@@ -40,20 +40,38 @@ def _get_search_settings() -> dict:
         return {}
 
 
+_LEGACY_DEFAULT_INSTANCE = "http://localhost:8080"
+
+
+def _explicit_env_instance() -> str:
+    """SEARXNG_INSTANCE env, but only when it carries real signal.
+
+    .env.example has long shipped `SEARXNG_INSTANCE=http://localhost:8080`,
+    so many native installs have the legacy default sitting in .env. That
+    value is boilerplate, not intent — treating it as an explicit override
+    would shadow the working managed sidecar. Only a NON-default env value
+    (e.g. Docker compose's http://searxng:8080) counts as deployment intent.
+    """
+    env_url = (os.environ.get("SEARXNG_INSTANCE") or "").strip().rstrip("/")
+    if env_url and env_url != _LEGACY_DEFAULT_INSTANCE:
+        return env_url
+    return ""
+
+
 def _get_search_instance() -> str:
     """Active search API URL.
 
-    Precedence: explicit search_url setting > explicit SEARXNG_INSTANCE env
-    (deployment-level, e.g. Docker compose) > managed sidecar when actually
-    installed > built-in default constant.
+    Precedence: explicit search_url setting > non-default SEARXNG_INSTANCE
+    env (deployment-level, e.g. Docker compose) > managed sidecar when
+    actually installed > built-in default constant.
     """
     settings = _get_search_settings()
     url = (settings.get("search_url") or "").strip()
     if url:
         return url.rstrip("/")
-    env_url = (os.environ.get("SEARXNG_INSTANCE") or "").strip()
+    env_url = _explicit_env_instance()
     if env_url:
-        return env_url.rstrip("/")
+        return env_url
     if settings.get("searxng_managed", True):
         try:
             from services.searxng.runtime import get_runtime

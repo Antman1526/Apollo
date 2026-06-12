@@ -103,7 +103,8 @@ def _searxng_definitely_down() -> bool:
     settings = _get_search_settings()
     if (settings.get("search_url") or "").strip():
         return False
-    if (os.environ.get("SEARXNG_INSTANCE") or "").strip():
+    from services.search.providers import _explicit_env_instance
+    if _explicit_env_instance():
         return False  # explicit deployment instance (e.g. Docker) — let HTTP decide
     if not settings.get("searxng_managed", True):
         return False

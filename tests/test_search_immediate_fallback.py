@@ -99,3 +99,26 @@ def test_managed_but_not_installed_falls_to_env_default(monkeypatch):
          patch("services.searxng.runtime.get_runtime") as rt:
         rt.return_value.installed = False
         assert _get_search_instance() == SEARXNG_INSTANCE
+
+
+def test_legacy_default_env_does_not_shadow_sidecar(monkeypatch):
+    """.env.example boilerplate (SEARXNG_INSTANCE=http://localhost:8080) must
+    not override the managed sidecar — caught live during UI verification."""
+    from services.search.providers import _get_search_instance
+    monkeypatch.setenv("SEARXNG_INSTANCE", "http://localhost:8080")
+    with patch("services.search.providers._get_search_settings",
+               return_value=_settings()), \
+         patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.installed = True
+        rt.return_value.url = "http://127.0.0.1:8893"
+        assert _get_search_instance() == "http://127.0.0.1:8893"
+
+
+def test_legacy_default_env_does_not_block_chain_skip(monkeypatch):
+    monkeypatch.setenv("SEARXNG_INSTANCE", "http://localhost:8080")
+    with patch("services.search.core._get_search_settings", return_value=_settings()), \
+         patch("services.searxng.runtime.get_runtime") as rt:
+        rt.return_value.installed = True
+        rt.return_value.is_serving.return_value = False
+        chain = _build_provider_chain("searxng")
+    assert chain == ["duckduckgo"]
