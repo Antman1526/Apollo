@@ -96,3 +96,6 @@ _scratch/
 
 # Security residual-weakness doc — kept local-only (repo is public)
 docs/recreation/14-security-implementation.md
+
+# Private security fix-list — never publish
+SECURITY-FIXLIST.local.md

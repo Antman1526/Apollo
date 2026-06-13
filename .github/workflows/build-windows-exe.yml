@@ -1,0 +1,37 @@
+name: Build Windows EXE
+
+# Manual only — run from the Actions tab when you want a fresh Apollo.exe.
+# (Kept off push/PR so it never slows normal CI.)
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip pyinstaller
+
+      - name: Build Apollo.exe (launcher)
+        # --console keeps the window open so the first-run admin password and
+        # server logs are visible. --onefile produces a single Apollo.exe.
+        run: pyinstaller --onefile --console --name Apollo scripts/windows_launcher.py
+
+      - name: Upload Apollo.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Apollo-windows-exe
+          path: dist/Apollo.exe
+          if-no-files-found: error
+          retention-days: 90
