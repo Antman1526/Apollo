@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from src.subproc_env import build_agent_env
+
 
 DEFAULT_RALPH_DIR = ".apollo/ralph"
 DEFAULT_CHECK_COMMAND = "./scripts/check.sh"
@@ -310,6 +312,10 @@ def run_quality_check(
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             timeout=timeout_seconds,
+            # Minimal allowlisted env — the verification command runs with no
+            # host secrets (SECURITY-FIXLIST P1 #2). A check that needs an extra
+            # var can opt in via build_agent_env(passthrough=...).
+            env=build_agent_env(),
         )
     except subprocess.TimeoutExpired as exc:
         return {

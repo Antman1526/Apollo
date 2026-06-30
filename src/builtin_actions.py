@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
+from src.subproc_env import build_agent_env
 from core.platform_compat import IS_WINDOWS, find_bash
 
 logger = logging.getLogger(__name__)
@@ -286,8 +287,15 @@ async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, labe
     import asyncio
     import subprocess
     try:
+        # Minimal allowlisted env — these actions run agent/scheduler-supplied
+        # commands (run_local, run_script, ssh_command), so they must not inherit
+        # the host's secrets (SECURITY-FIXLIST P1 #2). A command that genuinely
+        # needs an extra var can opt in via build_agent_env(passthrough=...).
         result = await asyncio.to_thread(
-            subprocess.run, argv, shell=shell, capture_output=True, text=True, timeout=timeout,
+            lambda: subprocess.run(
+                argv, shell=shell, capture_output=True, text=True, timeout=timeout,
+                env=build_agent_env(),
+            )
         )
         output = (result.stdout or "").strip()
         if result.returncode != 0 and result.stderr:

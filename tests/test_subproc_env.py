@@ -16,6 +16,8 @@ import pytest
 # import chain initializes its DB engine from the real sqlite default rather than
 # the fake postgres DATABASE_URL the fixture injects.
 import src.bg_jobs as bg
+import src.builtin_actions as builtin_actions
+import src.ralph_loop as ralph_loop
 from src.subproc_env import build_agent_env
 
 
@@ -123,3 +125,18 @@ def test_bg_job_does_not_leak_secret(_seeded_secrets, tmp_path, monkeypatch):
     out = bg.result_text(bg.get(job_id))
     assert "sk-secret-openai" not in out
     assert "OPENAI_API_KEY" not in out
+
+
+async def test_builtin_action_run_local_does_not_leak_secret(_seeded_secrets):
+    """The agent-reachable run_local action executes `env`; no host secret leaks."""
+    out, ok = await builtin_actions.action_run_local("owner", script="env")
+    assert "sk-secret-openai" not in out
+    assert "OPENAI_API_KEY" not in out
+
+
+def test_ralph_quality_check_does_not_leak_secret(_seeded_secrets, tmp_path):
+    """The Ralph verification command runs with a scrubbed env (no host secrets)."""
+    result = ralph_loop.run_quality_check("env", cwd=tmp_path)
+    blob = str(result)
+    assert "sk-secret-openai" not in blob
+    assert "OPENAI_API_KEY" not in blob
