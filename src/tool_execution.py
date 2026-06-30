@@ -16,6 +16,7 @@ import sys
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
+from src.subproc_env import build_agent_env
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
 MAX_OUTPUT_CHARS = 10_000
@@ -448,20 +449,21 @@ async def _direct_fallback(
     """
     import json as _json
 
-    # Inherit env + force a sane terminal so subprocesses that touch
-    # terminfo (anything calling `clear`, `tput`, `os.system("clear")`,
-    # or scripts that probe $TERM) don't spam "TERM environment variable
-    # not set" errors. The agent's bash/python tool calls run with PIPE
-    # stdin/stdout (no real TTY), so curses/termios still won't work —
-    # but at least non-interactive code with incidental TERM lookups
-    # stops failing. COLUMNS/LINES give terminal-width-aware tools (less,
-    # rich, etc.) reasonable defaults instead of 0×0.
-    _subproc_env = {
-        **os.environ,
+    # Minimal allowlisted env — do NOT inherit the host's secrets (provider API
+    # keys, DATABASE_URL, decrypted mail passwords, etc.). A prompt-injected
+    # agent could otherwise `env | curl` them out (SECURITY-FIXLIST P1 #2).
+    # Force a sane terminal so subprocesses that touch terminfo (anything
+    # calling `clear`, `tput`, or scripts that probe $TERM) don't spam "TERM
+    # environment variable not set" errors. The agent's bash/python tool calls
+    # run with PIPE stdin/stdout (no real TTY), so curses/termios still won't
+    # work — but non-interactive code with incidental TERM lookups stops
+    # failing. COLUMNS/LINES give terminal-width-aware tools (less, rich, etc.)
+    # reasonable defaults instead of 0×0.
+    _subproc_env = build_agent_env(extra={
         "TERM": "xterm-256color",
         "COLUMNS": "120",
         "LINES": "40",
-    }
+    })
 
     try:
         if tool == "bash":

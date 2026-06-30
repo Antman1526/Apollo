@@ -6,6 +6,8 @@ from typing import Optional, AsyncIterator
 import asyncio
 from pathlib import Path
 
+from src.subproc_env import build_agent_env
+
 
 @dataclass
 class ShellResult:
@@ -58,6 +60,7 @@ class ShellService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=cwd,
+                env=build_agent_env(),
             )
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(), timeout=timeout
@@ -106,6 +109,7 @@ class ShellService:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=self.cwd,
+                env=build_agent_env(),
             )
 
             q: asyncio.Queue = asyncio.Queue()

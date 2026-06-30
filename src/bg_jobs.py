@@ -36,6 +36,7 @@ from core.platform_compat import (
     kill_process_tree,
     pid_alive,
 )
+from src.subproc_env import build_agent_env
 
 _DATA_DIR = Path(os.environ.get("DATA_DIR", "data"))
 _JOBS_DIR = _DATA_DIR / "bg_jobs"
@@ -131,6 +132,9 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,
         cwd=cwd or None,
+        # Minimal allowlisted env — background jobs are agent-launched bash, so
+        # they must not inherit the host's secrets (SECURITY-FIXLIST P1 #2).
+        env=build_agent_env(),
         **detached_popen_kwargs(),  # detach from the request lifecycle (setsid / DETACHED_PROCESS)
     )
 

@@ -33,15 +33,22 @@ def _format_mcp_connection_error(name: str, command: str = "", args: Optional[Li
 
 
 def _stdio_env(command: str, env: Dict[str, str] | None = None) -> Dict[str, str] | None:
-    """Build stdio child env, silencing npm/npx chatter that breaks MCP JSON-RPC."""
-    merged = {**os.environ, **(env or {})}
+    """Build stdio child env, silencing npm/npx chatter that breaks MCP JSON-RPC.
+
+    Uses a minimal allowlisted base (no host secrets — SECURITY-FIXLIST P1 #2)
+    instead of inheriting the full ``os.environ``. Any env the server was
+    explicitly configured with (``env`` arg) is intentional and preserved.
+    """
+    from src.subproc_env import build_agent_env
+
+    extra = dict(env or {})
     executable = pathlib.Path(command or "").name.lower()
     if executable in {"npx", "npm", "npm.cmd", "npx.cmd"}:
-        merged.setdefault("NPM_CONFIG_LOGLEVEL", "silent")
-        merged.setdefault("NPM_CONFIG_FUND", "false")
-        merged.setdefault("NPM_CONFIG_AUDIT", "false")
-        merged.setdefault("NO_UPDATE_NOTIFIER", "1")
-    return merged if merged else None
+        extra.setdefault("NPM_CONFIG_LOGLEVEL", "silent")
+        extra.setdefault("NPM_CONFIG_FUND", "false")
+        extra.setdefault("NPM_CONFIG_AUDIT", "false")
+        extra.setdefault("NO_UPDATE_NOTIFIER", "1")
+    return build_agent_env(extra=extra)
 
 
 

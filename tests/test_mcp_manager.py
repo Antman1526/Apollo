@@ -31,8 +31,11 @@ def test_stdio_env_quiets_npx_without_overriding_user_values(monkeypatch):
 
     env = _stdio_env("npx", {"NPM_CONFIG_LOGLEVEL": "warn", "CUSTOM": "yes"})
 
-    assert env["EXISTING"] == "1"
+    # Arbitrary host env is NO LONGER inherited (secret-leak fix, P1 #2).
+    assert "EXISTING" not in env
+    # Explicitly-configured server env IS preserved.
     assert env["CUSTOM"] == "yes"
+    # npx quieting is applied without overriding caller-provided values.
     assert env["NPM_CONFIG_LOGLEVEL"] == "warn"
     assert env["NPM_CONFIG_FUND"] == "false"
     assert env["NPM_CONFIG_AUDIT"] == "false"
@@ -44,5 +47,8 @@ def test_stdio_env_keeps_non_npm_commands_simple(monkeypatch):
 
     env = _stdio_env("uvx", {})
 
-    assert env["EXISTING"] == "1"
+    # Arbitrary host env is NOT inherited (secret-leak fix); allowlisted vars
+    # like PATH still flow so the command can actually run.
+    assert "EXISTING" not in env
+    assert env.get("PATH")
     assert "NPM_CONFIG_LOGLEVEL" not in env
