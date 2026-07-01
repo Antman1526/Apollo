@@ -36441,3 +36441,37 @@ body.theme-frosted .modal {
     display: none;
   }
 }
+
+/* ── Voice call mode overlay ── */
+.voice-call-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1.5rem; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px);
+}
+.voice-call-overlay[data-state]:not([data-state="idle"]) { display: flex; }
+.vc-status { display: flex; align-items: center; gap: 8px; color: #9aa0a6; font-size: 13px; }
+.vc-dot { width: 8px; height: 8px; border-radius: 50%; background: #34a853; }
+.vc-orb {
+  width: 150px; height: 150px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(55,138,221,0.15); border: 2px solid rgba(55,138,221,0.6);
+  transition: transform .12s ease, background .2s ease, border-color .2s ease;
+}
+.vc-orb-inner {
+  width: 96px; height: 96px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  background: #378add;
+}
+.voice-call-overlay[data-state="listening"] .vc-orb { animation: vc-pulse 1.4s ease-in-out infinite; }
+.voice-call-overlay[data-state="thinking"] .vc-orb-inner { background: #7f77dd; }
+.voice-call-overlay[data-state="speaking"] .vc-orb-inner { background: #1d9e75; }
+.voice-call-overlay[data-state="capturing"] .vc-orb { transform: scale(1.08); border-color: #34a853; }
+@keyframes vc-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+.vc-caption { text-align: center; }
+.vc-state-label { margin: 0; font-size: 16px; font-weight: 500; color: #f1f3f4; }
+.vc-transcript { margin: 4px 0 0; font-size: 14px; color: #bdc1c6; min-height: 20px; }
+.vc-controls { display: flex; gap: 12px; }
+.vc-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid #5f6368; background: transparent; color: #e8eaed; cursor: pointer; }
+.vc-btn:hover { background: rgba(255,255,255,0.06); }
+.vc-btn.vc-active { border-color: #378add; color: #8ab4f8; }
+.vc-btn-danger { border-color: #a3312d; color: #f28b82; }
