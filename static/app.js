@@ -3774,6 +3774,7 @@ function startApolloApp() {
         sendBtn.addEventListener('animationend', () => sendBtn.classList.remove('anim-spin'), { once: true });
       }
     }
+    try { if (window._syncCallModeBtn) window._syncCallModeBtn(); } catch {}
     sendBtn.dataset.mode = newMode;
   }
 
@@ -3838,6 +3839,19 @@ function startApolloApp() {
     try { _updateSendBtnIcon(); } catch {}
     handleSubmit(new Event('submit'));
   };
+
+  // Call-mode entry button — visible only when STT is enabled (same gate as
+  // the send/mic button). Opens the call overlay and starts the loop.
+  const callBtn = el('call-mode-btn');
+  function _syncCallBtn() {
+    if (!callBtn) return;
+    callBtn.style.display = _isSttEnabled() ? '' : 'none';
+  }
+  if (callBtn) {
+    callBtn.addEventListener('click', () => window.voiceCallModule?.startCall());
+  }
+  window._syncCallModeBtn = _syncCallBtn;
+  _syncCallBtn();
 
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
