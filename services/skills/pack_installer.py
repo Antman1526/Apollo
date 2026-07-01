@@ -140,3 +140,54 @@ def install_skills(found_list, opts, skills_root, src_root=""):
             fh.write(render_skill_md(f, opts))
         installed.append(f.name)
     return {"installed": installed, "skipped": skipped, "errored": errored}
+
+
+import io
+import tarfile
+import tempfile
+from urllib.parse import urlparse
+
+
+def safe_extract_tar(tar, dest: str, max_bytes: int) -> str:
+    total = 0
+    for m in tar.getmembers():
+        # Reject absolute paths and traversal.
+        if m.name.startswith("/") or ".." in m.name.split("/"):
+            raise ValueError(f"unsafe path in archive: {m.name}")
+        total += max(0, m.size)
+        if total > max_bytes:
+            raise ValueError("archive too large")
+    tar.extractall(dest)  # nosec - members validated above
+    return dest
+
+
+_MAX_PACK_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _github_tarball_url(repo_url: str, ref: str = "") -> str:
+    """Map a github.com repo URL to the API tarball endpoint (default branch if
+    no ref). api.github.com is a public host, so _get_public_url allows it."""
+    p = urlparse(repo_url)
+    parts = [x for x in p.path.split("/") if x]
+    if p.hostname not in ("github.com", "www.github.com") or len(parts) < 2:
+        raise ValueError("expected a https://github.com/<owner>/<repo> URL")
+    owner, repo = parts[0], parts[1].removesuffix(".git")
+    base = f"https://api.github.com/repos/{owner}/{repo}/tarball"
+    return f"{base}/{ref}" if ref else base
+
+
+def fetch_pack(source: str, ref: str = "", *, timeout: int = 30) -> str:
+    """Download a GitHub repo tarball (SSRF-guarded) and extract to a temp dir.
+    Returns the extraction root. Raises on non-public URL / oversize / traversal."""
+    from src.search.content import _get_public_url
+
+    url = _github_tarball_url(source, ref)
+    resp = _get_public_url(url, headers={"Accept": "application/vnd.github+json",
+                                         "User-Agent": "Apollo-SkillInstaller"}, timeout=timeout)
+    resp.raise_for_status()
+    if len(resp.content) > _MAX_PACK_BYTES:
+        raise ValueError("pack download too large")
+    dest = tempfile.mkdtemp(prefix="apollo-skillpack-")
+    with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as t:
+        safe_extract_tar(t, dest, _MAX_PACK_BYTES)
+    return dest

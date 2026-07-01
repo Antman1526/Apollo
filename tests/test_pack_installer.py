@@ -122,3 +122,30 @@ def test_install_skips_existing_without_overwrite(tmp_path):
     res = install_skills(found, _opts(category="writing", overwrite=False), root, src_root=str(tmp_path / "pack"))
     assert res["skipped"] == ["humanizer"]
     assert open(os.path.join(root, "writing", "humanizer", "SKILL.md")).read() == "existing"
+
+
+import io, tarfile
+from services.skills.pack_installer import safe_extract_tar
+
+
+def test_safe_extract_rejects_path_traversal(tmp_path):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        data = b"x"
+        info = tarfile.TarInfo("../evil.txt"); info.size = len(data)
+        t.addfile(info, io.BytesIO(data))
+    buf.seek(0)
+    import pytest
+    with pytest.raises(ValueError):
+        safe_extract_tar(tarfile.open(fileobj=buf, mode="r:gz"), str(tmp_path), max_bytes=1000)
+
+
+def test_safe_extract_ok(tmp_path):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        data = b"hello"
+        info = tarfile.TarInfo("repo/skills/x/SKILL.md"); info.size = len(data)
+        t.addfile(info, io.BytesIO(data))
+    buf.seek(0)
+    root = safe_extract_tar(tarfile.open(fileobj=buf, mode="r:gz"), str(tmp_path), max_bytes=10_000)
+    assert os.path.exists(os.path.join(root, "repo/skills/x/SKILL.md"))
