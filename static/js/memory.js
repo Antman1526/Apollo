@@ -1411,6 +1411,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (target === 'skills') {
         import('./skills.js').then(m => { if (m.loadSkills) m.loadSkills(true); else if (m.default?.loadSkills) m.default.loadSkills(true); });
       }
+      // Lazy-load the knowledge graph on first open (module renders once itself)
+      if (target === 'graph') {
+        import('./memoryGraph.js').then(m => { if (m.openGraphTab) m.openGraphTab(); });
+      }
     });
   });
 
