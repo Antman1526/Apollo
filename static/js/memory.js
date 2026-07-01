@@ -1328,6 +1328,69 @@ async function handleImportFile(file) {
   }
 }
 
+function importChatExport() {
+  const fileInput = document.getElementById('memory-import-chat-file');
+  if (!fileInput) return;
+  fileInput.click();
+}
+
+// Import a ChatGPT/Claude export archive (.json) as distilled memories via a
+// single multipart POST. The server parses, distills, dedups, and indexes;
+// we just surface the added/skipped counts and refresh the list.
+async function handleImportChatExport(file) {
+  if (!file) return;
+
+  const btn = document.getElementById('memory-import-chat-btn');
+  const _origHtml = btn ? btn.innerHTML : '';
+  let spin = null;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '';
+    spin = spinnerModule.createWhirlpool(12);
+    spin.element.style.cssText = 'width:12px;height:12px;margin:0 5px 0 0;display:inline-flex;vertical-align:-2px;transform:translateY(-1px);';
+    btn.appendChild(spin.element);
+    btn.appendChild(document.createTextNode('Importing'));
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const res = await fetch(`${window.location.origin}/api/memory/import-chat-export`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Import failed');
+    }
+
+    const data = await res.json();
+    const added = data.added || 0;
+    const skipped = data.skipped || 0;
+    const convos = data.conversations || 0;
+    if (!convos) {
+      showToast(data.message || 'No conversations found in export');
+    } else {
+      showToast(`Imported ${convos} conversation${convos === 1 ? '' : 's'}: ${added} added, ${skipped} skipped`);
+    }
+    await loadMemories();
+    document.querySelector('.memory-tab[data-memory-tab="browse"]')?.click();
+  } catch (error) {
+    console.error('Chat-export import failed:', error);
+    showError('Import failed — ' + error.message);
+  } finally {
+    if (spin) spin.destroy();
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = _origHtml;
+    }
+    const fileInput = document.getElementById('memory-import-chat-file');
+    if (fileInput) fileInput.value = '';
+  }
+}
+
 // Utility aliases (canonical implementations live in uiModule)
 var showToast = uiModule.showToast;
 var showError = uiModule.showError;
@@ -1395,6 +1458,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.target.files[0]) handleImportFile(e.target.files[0]);
   });
 
+  const importChatBtn = document.getElementById('memory-import-chat-btn');
+  if (importChatBtn) importChatBtn.addEventListener('click', importChatExport);
+
+  const importChatFile = document.getElementById('memory-import-chat-file');
+  if (importChatFile) importChatFile.addEventListener('change', (e) => {
+    if (e.target.files[0]) handleImportChatExport(e.target.files[0]);
+  });
+
   window.addEventListener('memory-refresh', () => {
     loadMemories();
   });
@@ -1411,7 +1482,8 @@ const memoryModule = {
   buildCategoryChips,
   tidyMemories,
   importMemories,
-  exportMemories
+  exportMemories,
+  importChatExport
 };
 
 export default memoryModule;

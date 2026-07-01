@@ -533,6 +533,33 @@ function createSessionItem(s) {
     }
   });
 
+  // "Distill to memory" — extract durable facts from this chat into the brain.
+  const _distillIcon = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 2.4-1.2 4.5-3 5.7V17a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-2.3C6.2 13.5 5 11.4 5 9a7 7 0 0 1 7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg>';
+  const distillItem = document.createElement('div');
+  distillItem.className = 'dropdown-item-compact';
+  distillItem.innerHTML = _icon(_distillIcon) + '<span>Distill to memory</span>';
+  distillItem.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    dropdown.style.display = 'none';
+    uiModule.showToast('Distilling to memory…');
+    try {
+      const fd = new FormData();
+      fd.append('session_id', s.id);
+      const res = await fetch(`${API_BASE}/api/memory/distill-session`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Distill failed');
+      }
+      const data = await res.json();
+      const added = data.added || 0;
+      const skipped = data.skipped || 0;
+      uiModule.showToast(`Distilled: ${added} added, ${skipped} skipped`);
+    } catch (err) {
+      console.error('Distill to memory failed:', err);
+      uiModule.showError(err.message || 'Distill to memory failed');
+    }
+  });
+
   // Rename is already appended above (line 393)
 
   // "Select" — enter bulk select mode with this session pre-selected
@@ -559,6 +586,7 @@ function createSessionItem(s) {
   // Copy & Move to folder
   const folderItem = buildFolderSubmenu(s.id, s.folder, dropdown);
   dropdown.appendChild(copyItem);
+  dropdown.appendChild(distillItem);
   dropdown.appendChild(folderItem);
 
   // Separator before destructive actions
