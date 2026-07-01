@@ -6,7 +6,7 @@ real source tree at `/Users/Antman/Apollo`. Code excerpts are verbatim;
 secrets are never embedded (the relevant config keys are described in
 `08-integrations-external-services.md`).
 
-The five subsystems:
+The subsystems:
 
 | # | Subsystem | Primary source |
 |---|-----------|----------------|
@@ -15,6 +15,11 @@ The five subsystems:
 | c | Deep-research loop | `src/deep_research.py`, `src/research_handler.py` |
 | d | Model capability classification | `services/localmodels/gguf_meta.py`, `services/localmodels/server_manager.py` |
 | e | Search provider chain + DDG fallback | `services/search/core.py` |
+| f | Voice-call VAD gate + state machine | `static/js/vad.js`, `static/js/voiceCall.js` |
+| g | Knowledge-graph builder + force layout | `services/memory/graph.py`, `static/js/graphLayout.js` |
+| h | Chat distiller + export parsers + dedup store | `services/memory/distiller.py`, `chat_import.py`, `brain.py` |
+| i | Skill-pack trust-tier + SSRF/tar-safe fetch | `services/skills/pack_installer.py` |
+| j | Adversarial review prompt/parse | `services/review/reviewer.py` |
 
 ---
 
@@ -719,3 +724,303 @@ A typical "what's the latest on X?" chat message flows:
 For a heavier "research X thoroughly" request, **`ResearchHandler`** (c) spins
 up a **`DeepResearcher`** that runs the same provider chain (e) round after
 round, synthesising an evolving report until the LLM decides to stop.
+
+---
+
+## (f) Voice-call algorithms — VAD gate + call state machine
+
+Both live in `static/js/` and are written "pure core, thin wiring": the core
+imports cleanly in Node (no DOM/mic at module top level) for unit tests.
+
+### VAD energy gate — `createVadGate` (`static/js/vad.js:9`)
+
+A hysteresis gate that converts a stream of RMS energy samples into
+speech-start/speech-end events. It rises above `threshold` (0.02) to *start*
+speech immediately, but only *ends* after `silenceMs` (1200 ms) of continuous
+quiet — so a brief pause mid-sentence doesn't cut the utterance:
+
+```js
+push(rms, nowMs) {
+  const loud = rms >= threshold;
+  if (loud) lastLoudMs = nowMs;
+  if (!speaking) {
+    if (loud) { speaking = true; return 'speechstart'; }
+    return null;
+  }
+  if (!loud && nowMs - lastLoudMs >= silenceMs) {
+    speaking = false;
+    return 'speechend';
+  }
+  return null;
+}
+```
+
+Returns `'speechstart' | 'speechend' | null`. The lowercase event names are
+deliberate (DOM-event style); the call wiring bridges them to the machine's
+camelCase names (`vad.js:11-15`). `createMicVad` (`vad.js:49`) is the browser-only
+wrapper that computes RMS from an `AnalyserNode` each animation frame and drives
+a gate — it resumes a `suspended` AudioContext first (otherwise the loop reads
+silence forever, `vad.js:58-59`).
+
+### Call state machine — `createCallMachine` (`static/js/voiceCall.js:9`)
+
+A pure finite-state machine over injected effects. The transition table:
+
+```
+idle       start           → listening
+listening  speechStart     → startCapture(); capturing
+listening  end             → teardown(); idle
+capturing  speechEnd       → stopCapture(); transcribing
+capturing  end             → stopCapture(); teardown(); idle
+transcribing transcribed   → text? submitMessage(text); thinking  :  listening
+transcribing error         → listening
+thinking   assistantComplete → text? set(speaking); speak(text)   :  listening
+thinking   error           → listening
+speaking   speakEnd        → listening
+speaking   speechStart     → stopSpeak(); startCapture(); capturing   (barge-in)
+(any)      end             → teardown(); idle
+```
+
+Two subtle invariants encoded in the code:
+
+- The machine enters **`speaking` before calling `speak()`**
+  (`voiceCall.js:73-76`) so a `speak()` that fires `speakEnd` synchronously (TTS
+  disabled) still lands in `speaking` rather than parking there forever.
+- **Barge-in:** `speechStart` during `speaking` stops TTS and jumps to
+  `capturing`, letting the user interrupt the assistant (`voiceCall.js:91-94`).
+
+The wiring (`startCall`, `voiceCall.js:143`) supplies real effects: `startCapture`
+records mic to a WebM blob and POSTs it to `/api/stt/transcribe`, `submitMessage`
+calls `window.apolloSendMessage`, and `speak` drives `window.aiTTSManager`. It
+advances on the `apollo:assistant-complete` window event fired at the end of each
+assistant turn.
+
+---
+
+## (g) Knowledge-graph builder + force layout
+
+### Graph builder — `build_graph` (`services/memory/graph.py:7`)
+
+Pure (no DB): given the owner's memories and a `neighbor_fn(mem) → [{memory_id,
+score}]` (backed by the vector store), it emits `{nodes, edges}` with **two**
+edge kinds. Nodes are newest-first and capped at `max_nodes` (300) to bound cost;
+labels truncate at 80 chars.
+
+**Semantic edges** — symmetric-deduped (via `frozenset` keys), thresholded
+(`score ≥ threshold`, 0.6), top-`max_neighbors` (4) per node:
+
+```python
+sem_seen = set()
+for m in mems:
+    nbrs = [n for n in (neighbor_fn(m) or [])
+            if n.get("memory_id") in kept and n.get("memory_id") != m["id"]
+            and (n.get("score") or 0) >= threshold]
+    nbrs.sort(key=lambda n: n.get("score") or 0, reverse=True)
+    for n in nbrs[:max_neighbors]:
+        key = frozenset((m["id"], n["memory_id"]))
+        if key in sem_seen: continue
+        sem_seen.add(key)
+        edges.append({"source": m["id"], "target": n["memory_id"],
+                      "weight": round(float(n.get("score") or 0), 3), "type": "semantic"})
+```
+
+**Session edges** — every pair of memories that share a `session_id` gets a
+fixed-weight (0.5) `"session"` edge (deduped among themselves,
+`graph.py:38-51`). When the vector store is unhealthy the route passes a
+`neighbor_fn` that returns `[]`, so the graph degrades to session-only edges
+(`routes/memory_routes.py:128-136`).
+
+### Force-directed layout — `graphLayout.js`
+
+Deterministic, DOM-free math used by `memoryGraph.js`.
+
+- **`seedPositions(nodes, w, h, seed)`** (`graphLayout.js:24`) places nodes with a
+  glibc LCG (`state = (1103515245*state + 12345) mod 2^31`) — same seed →
+  identical layout, so the graph looks the same every open. Never touches
+  `Math.random`.
+- **`stepLayout(nodes, edges, opts)`** (`graphLayout.js:37`) integrates one tick:
+  O(n²) Coulomb repulsion (`force = repulsion/d²`, with a deterministic nudge for
+  coincident nodes to avoid divide-by-zero), Hooke edge springs toward
+  `springLen` (edges referencing unknown ids are skipped), a mild center pull, and
+  velocity integration with `damping`, clamped to `[0,width]×[0,height]`.
+
+`memoryGraph.js` runs this to convergence headlessly:
+`seedPositions(...)` then `for (i<300) stepLayout(...)` (`memoryGraph.js:87-88`).
+
+---
+
+## (h) Chat distiller + export parsers + dedup store
+
+### Distiller — `distill_transcript` (`services/memory/distiller.py:38`)
+
+Pure: the LLM is injected as `llm_caller(messages) → str`. It prompts a model to
+emit **one durable, atomic fact per line** (no first-person, no chit-chat; `NONE`
+when nothing durable) and parses the reply, stripping bullet/number markers and
+skip-tokens:
+
+```python
+_SKIP = {"none", "(none)", "n/a", "(no durable facts)", "no durable facts"}
+
+def parse_facts(llm_text):
+    out = []
+    for line in (llm_text or "").splitlines():
+        s = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line.strip()).strip()
+        if not s or s.lower() in _SKIP:
+            continue
+        out.append(s)
+    return out
+```
+
+### Export parsers — `chat_import.py`
+
+Pure, never-raise parsers that normalize ChatGPT and Claude export archives into a
+common `{"title", "messages":[{"role","text"}]}` shape (role `human`→`user`,
+empty-text messages skipped, a malformed conversation skipped rather than
+aborting the import):
+
+- **ChatGPT** (`parse_chatgpt_export`, `chat_import.py:62`): a *list* of
+  conversations, each with a `mapping` dict; nodes are sorted by
+  `message.create_time` and text pulled from the `content.parts` array
+  (`_text_from_parts`).
+- **Claude** (`parse_claude_export`, `chat_import.py:98`): a dict with
+  `conversations: [...]`, each with a `chat_messages` list (`sender`/`role`,
+  `text` or `content`).
+- **`parse_export(obj)`** (`chat_import.py:128`) auto-detects the shape
+  (`_looks_like_chatgpt` = list containing a dict with `"mapping"`;
+  `_looks_like_claude` = dict with a `conversations` list) and dispatches;
+  unknown → `[]`.
+
+### Dedup store — `distill_and_store` (`services/memory/brain.py:17`)
+
+Pure w.r.t. infrastructure (`memory_manager`/`memory_vector` injected). It loads
+the owner's memories **once** into a working list, and for each fact skips
+duplicates (truthy `find_duplicates` result — real manager returns a `List`, a
+fake may return a `bool`), else creates+tags+indexes it. Loading once means
+intra-batch duplicates are also caught. It persists the full list a single time
+at the end:
+
+```python
+entries = list(memory_manager.load(owner) or [])
+for fact in facts:
+    text = (fact or "").strip()
+    if not text: continue
+    if memory_manager.find_duplicates(text, entries):
+        skipped += 1; continue
+    entry = memory_manager.add_entry(text=text, source=source, category="fact", owner=owner)
+    if session_id is not None and isinstance(entry, dict):
+        entry["session_id"] = session_id
+    entries.append(entry); dirty = True; added += 1
+    if getattr(memory_vector, "healthy", False):
+        try: memory_vector.add(entry.get("id"), text)
+        except Exception: pass          # indexing is best-effort
+if dirty: memory_manager.save(entries)
+return {"added": added, "skipped": skipped}
+```
+
+`import_conversations` (`brain.py:80`) distills each parsed conversation into
+facts and calls `distill_and_store(source="import", session_id=None)`, aggregating
+the counts. `distill_session` (`brain.py:134`) is the thin side-effecting wrapper
+that loads a session, distills its transcript with the session's own model, and
+stores with `source="agent"` + the `session_id`.
+
+---
+
+## (i) Skill-pack install — trust-tier classifier + SSRF/tar-safe fetch
+
+Lives in `services/skills/pack_installer.py`. Safe-by-default: prose-only skills
+install `published`; skills that ship executable code are quarantined as `draft`
+and never run during import.
+
+### Trust-tier classifier — `classify_tier` (`pack_installer.py:15`)
+
+Inspects **file names only** (never executes anything). Any script extension,
+`scripts`/`hooks`/`bin` directory, or `.mcp.json` file downgrades the skill to
+`"script"`:
+
+```python
+_CODE_EXTS = (".py", ".js", ".mjs", ".ts", ".sh", ".rb", ".php", ".pl", ".ps1")
+_CODE_DIRS = ("scripts", "hooks", "bin")
+_CODE_FILES = (".mcp.json",)
+
+def classify_tier(skill_dir):
+    for root, dirs, files in os.walk(skill_dir):
+        parts = set(os.path.relpath(root, skill_dir).split(os.sep))
+        if parts & set(_CODE_DIRS):
+            return "script"
+        for f in files:
+            if f in _CODE_FILES or os.path.splitext(f)[1].lower() in _CODE_EXTS:
+                return "script"
+    return "prose"
+```
+
+`render_skill_md` (`pack_installer.py:102`) sets `status: published` for `prose`,
+`draft` for `script`, and writes provenance frontmatter (`imported_from`,
+`imported_ref`, `imported_at`, `imported_tier`).
+
+### Category normalization — `install_skills` (`pack_installer.py:134`)
+
+The caller-supplied `category` is **slugified** before use so a crafted value
+like `"../../etc"` can't escape `skills_root` (`slugify` collapses
+separators/dots); skill `name`s are already slugified in `discover_skills`.
+Script-tier skills copy their own (inert) files alongside the normalized
+`SKILL.md` so the quarantined draft is complete.
+
+### SSRF-guarded, tar-safe fetch — `fetch_pack` / `safe_extract_tar`
+
+`fetch_pack` (`pack_installer.py:214`) maps a `github.com/<owner>/<repo>` URL to
+the `api.github.com/.../tarball` endpoint (`_github_tarball_url`), downloads via
+`_get_public_url` (**SSRF guard** — rejects non-public hosts), enforces a 50 MB
+cap, and extracts through `safe_extract_tar`.
+
+`safe_extract_tar` (`pack_installer.py:176`) is defense-in-depth against tar
+attacks:
+
+```python
+def safe_extract_tar(tar, dest, max_bytes):
+    members = tar.getmembers()
+    if len(members) > _MAX_PACK_MEMBERS:            # 5000 — inode-exhaustion guard
+        raise ValueError("archive has too many entries")
+    total = 0
+    for m in members:
+        if m.name.startswith("/") or ".." in m.name.split("/"):
+            raise ValueError(f"unsafe path in archive: {m.name}")
+        total += max(0, m.size)
+        if total > max_bytes:
+            raise ValueError("archive too large")
+    try:
+        # filter="data" (3.12+) blocks symlink/hardlink escapes, absolute paths,
+        # device nodes — closing the gap the name-only check above misses.
+        tar.extractall(dest, filter="data")
+    except tarfile.FilterError as e:
+        raise ValueError(f"unsafe archive member: {e}") from e
+    return dest
+```
+
+Three independent guards: a member-count cap (inode exhaustion), a name-based
+traversal/absolute-path check plus a cumulative-size cap, and Python 3.12's vetted
+`filter="data"` extraction policy for symlink/hardlink/device-node escapes.
+
+---
+
+## (j) Adversarial review — prompt + parse
+
+`services/review/reviewer.py` is pure (the LLM call lives in the route,
+`routes/chat_routes.py:1365`). `build_review_prompt(question, answer)` frames a
+second model as an adversarial critic and pins the output format:
+
+```python
+_SYSTEM = (
+    "You are an adversarial reviewer. Critically check an assistant's answer for "
+    "factual errors, missing caveats, unsupported claims, and gaps. Be concise and "
+    "specific. Respond in this format:\n"
+    "Verdict: <accurate|incomplete|incorrect|needs context>\n"
+    "Issues:\n- <issue>\n- <issue>\n"
+    "Suggestion: <one-line fix, or 'none'>"
+)
+```
+
+`parse_review(text)` (`reviewer.py:24`) scans the reply line-by-line with
+case-insensitive regex: a `Verdict:` line, a `Suggestion:` line (`"none"` →
+empty), and any bullet/numbered line becomes an issue. Returns
+`{verdict, issues, suggestion, raw}`; the route adds `model`. The frontend
+`review.js` renders the verdict as a color-coded badge (§05).

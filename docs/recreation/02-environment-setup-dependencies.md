@@ -17,10 +17,16 @@
 | **Git Bash** (Windows) | Optional — needed only for full Cookbook background downloads and the agent shell tool. Core app works without it. | `launch-windows.ps1:123-130` |
 | **Homebrew** (macOS) | Required to install Python/tmux/llama.cpp; the script will not auto-install it. | `start-macos.sh:54-63` |
 | **Docker + Compose** | Only for the Docker install path. | `docker-compose.yml` |
+| **PyInstaller** | Build-time only, for the **self-contained** macOS bundle (`build-macos-bundle.sh`). Auto-installed into the build venv if absent. `6.21.0` in the current venv. | `build-macos-bundle.sh:31-35`, `packaging/apollo.spec` |
 
 > No `ffmpeg` requirement was found in the setup scripts. Audio features use
 > `faster-whisper` (CTranslate2, CPU, no torch) for STT and `piper-tts` (ONNX) for TTS — both
 > pure-Python optional installs (`requirements-optional.txt:7-19`).
+>
+> **Model/voice assets are downloaded, not vendored:** `llama.cpp` serves user-supplied GGUF
+> chat models (Metal on macOS); Piper needs an on-disk `*.onnx` voice + sibling `*.onnx.json`
+> that the admin points `tts_voice` at; faster-whisper pulls its Whisper model on first use;
+> fastembed pulls the ~50MB ONNX embedding model on first run.
 
 `pyproject.toml` only configures pytest (no build-system / package metadata there):
 ```toml
@@ -87,13 +93,24 @@ These are not version-pinned in the file (pins are mostly transitive). Key packa
 Install only if you use the feature; the app gives a clear "install to use" message otherwise
 (`requirements-optional.txt:1-43`):
 
+> Versions below marked _(venv)_ are the resolved versions in the repo `venv/`
+> (`venv/bin/pip show …`), not pins in the requirements file.
+
 | Package | Pin | Feature / Notes |
 |---------|-----|-----------------|
-| `faster-whisper` | — | Local STT ("local" provider). CPU-only via CTranslate2 (no torch). Add `torch` for CUDA GPU accel. |
-| `piper-tts` | — | Local TTS ("piper" provider). CPU-only, Mac/Metal-friendly; point at an on-disk `*.onnx` voice. |
+| `faster-whisper` | — · `1.2.1` _(venv)_ | Local STT ("local" provider), `services/stt/stt_service.py`. Inference on **CTranslate2**, not torch: CPU `int8` by default; a `torch.cuda.is_available()` probe upgrades to `cuda`/`float16` when present, else stays CPU (`stt_service.py:79-87`). Model size from the `stt_model` setting (`base`, `small`, …). |
+| `piper-tts` | — · `1.4.2` _(venv)_ | Local TTS ("piper" provider), `services/tts/tts_service.py` `_PiperPipeline`. CPU-only ONNX (no CUDA/torch) — the local-TTS path on Apple Silicon/Metal. Point `tts_voice` at an on-disk `*.onnx` voice; the matching `*.onnx.json` must sit beside it. |
 | `duckduckgo-search` | — | DDG as a search provider option / fallback. |
 | `PyMuPDF` | — | PDF **form-filling** (AcroForm detection, stamping, rendering). **AGPL-3.0** — see `ACKNOWLEDGMENTS.md`; the MIT core (pypdf text) works without it. |
 | `markitdown[docx,pptx,xlsx,xls]` | `==0.1.5` | Office/EPUB text extraction for chat attachments + personal-docs RAG. Only file in this set with a hard pin (release >30 days old per dependency-age policy). Lazy-imported via `src/markitdown_runtime.py`. |
+
+> **Kokoro (Kokoro-82M)** is the other local-TTS engine ("local" TTS provider) — a GPU path
+> loaded at runtime by `services/tts/tts_service.py` (`_KokoroPipeline`), not declared in the
+> requirements files.
+>
+> **Voicebox** is an *optional external* voice studio, not a Python package: set `tts_provider` /
+> `stt_provider` to `voicebox` and point `voicebox_url` (default `http://127.0.0.1:17493`) at the
+> running Voicebox desktop app. STT/TTS then proxy to it over HTTP.
 
 ---
 
@@ -171,10 +188,34 @@ python3.11 -m venv venv
 ./venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 7860
 ```
 
-### Packaged desktop app
-`build-macos-app.sh` builds `dist/Apollo.app` / `dist/Apollo.dmg` (both present in `dist/`).
-Windows: `update_windows.bat`, `scripts/windows-launcher`. systemd unit `apollo-ui.service` +
-`install-service.sh` for Linux service installs.
+### Packaged desktop app — two macOS build paths
+
+1. **Launcher app** (`build-macos-app.sh`): builds `dist/Apollo.app` + `dist/Apollo.dmg` that
+   **drive this repo's `venv/`** — Python is not bundled, the install path is baked in at build
+   time, so rebuild if you move the repo. The clickable app boots `uvicorn app:app` on port
+   `7860`, opens the UI in a chrome-less browser window, and stops the server on quit. It pins
+   `DATABASE_URL=sqlite:///…/data/app.db` and sets `PAPERCLIP_MODE=native`,
+   `PAPERCLIP_ENABLED=true` in the launcher env.
+2. **Self-contained bundle** (`build-macos-bundle.sh` + `packaging/apollo.spec` +
+   `packaging/apollo_boot.py`): bundles **Python + all deps via PyInstaller** so the `.app`
+   runs on any Apple-Silicon Mac with no repo/venv.
+   - Requires **`pyinstaller`** in the build venv (`6.21.0` _(venv)_; auto-`pip install`ed if
+     missing, `build-macos-bundle.sh:31-35`). The spec runs a `target_arch="arm64"` onedir
+     build, `collect_all`s native/data-heavy deps PyInstaller's static analysis misses
+     (chromadb, onnxruntime, fastembed, tokenizers, crawl4ai, mcp, cryptography, …), pulls whole
+     `routes/services/core/src/companion/mcp_servers/config` trees as hidden imports, and ships
+     `static/` + `config/` + small seed JSON as data.
+   - `apollo_boot.py` is the frozen entrypoint: it picks a writable home
+     (`~/Library/Application Support/Apollo`, override `APOLLO_HOME`), seeds it from the
+     read-only bundle on first run (symlinks `static/`, copies seed JSON, creates writable
+     dirs), `chdir`s there, monkeypatches `core.constants` BASE/DATA/STATIC before app import,
+     defaults `DATABASE_URL`/`HF_HOME`/`FASTEMBED_CACHE_PATH` into the home, then imports the
+     ASGI `app` object directly (string re-import fails inside a frozen bundle) and runs uvicorn
+     on `7860`. The build ad-hoc-codesigns the `.app` for Gatekeeper.
+
+Windows: `update_windows.bat`, `scripts/windows-launcher` (locate Python, set up venv, launch
+uvicorn — pins `DATABASE_URL` to the app's SQLite DB and sets `PAPERCLIP_MODE=native`). systemd
+unit `apollo-ui.service` + `install-service.sh` for Linux service installs.
 
 ---
 

@@ -151,7 +151,17 @@ Source: `/Users/Antman/Apollo/src/settings.py`.
 `app_public_url`(""), `tts_enabled`(True), `tts_provider`("disabled"),
 `tts_model`("tts-1"), `tts_voice`("alloy"), `tts_speed`("1"),
 `stt_enabled`(False), `stt_provider`("disabled"), `stt_model`("base"),
-`stt_language`("").
+`stt_language`(""), `voicebox_url`("http://127.0.0.1:17493").
+
+- `tts_provider` values (`services/tts/tts_service.py`): `disabled`, `browser`, `local`
+  (Kokoro-82M, GPU), `piper` (piper-tts, ONNX CPU/Metal — voice = an on-disk `*.onnx` path),
+  `voicebox`, `endpoint:<id>` (OpenAI-compatible `/audio/speech`).
+- `stt_provider` values (`services/stt/stt_service.py`): `disabled`, `browser`, `local`
+  (faster-whisper, CTranslate2 CPU/CUDA), `voicebox`, `endpoint:<id>`
+  (`/audio/transcriptions`).
+- `voicebox_url` (`:53`) is the base URL for the optional **Voicebox** local voice studio,
+  shared by both the `voicebox` TTS and STT providers; the Voicebox desktop app must be running
+  for those providers to report `available`.
 
 **Search & web access** — the core of the no-Docker SearXNG architecture:
 - `search_provider` = `"searxng"` (`:51`).
@@ -188,6 +198,14 @@ Source: `/Users/Antman/Apollo/src/settings.py`.
 
 **Skills** (`:147-150`): `skill_autosave_min_confidence`(0.85),
 `skill_max_injected`(3).
+
+**Adversarial reviewer endpoint** — not seeded in `DEFAULT_SETTINGS`; the keys
+`reviewer_endpoint_id` / `reviewer_model` are optional overrides an admin sets in Settings
+(registered as the "Adversarial Reviewer" endpoint role in
+`routes/model_routes.py:42`). `POST /api/review` resolves the model via
+`resolve_endpoint("reviewer", owner=…)`, which reads those keys and **falls back to the utility
+model** when unset (`src/endpoint_resolver.py:245-253`) — so the reviewer works out of the box
+with no reviewer-specific config once a utility model exists.
 
 **Reminders & email triage** (`:152-165`): `reminder_channel`("browser"),
 `reminder_llm_synthesis`(False), `reminder_ntfy_topic`("Reminders"),
@@ -261,3 +279,25 @@ within 2 seconds. `load_features` uses the same cache mechanism (`:278-280`).
 dataclass, which derives `venv_python`, `settings_path`, `url`, and `installed`
 (`config.py:25-40`). The search provider chain reads the same settings to decide
 whether to probe or skip SearXNG (`services/search/core.py:96-145`).
+
+---
+
+## 6. Environment pinned by the desktop launchers
+
+The macOS/Windows desktop entry points set environment **before** the app imports, because a
+stray value inherited from the GUI/login environment would otherwise break startup:
+
+| Var | Set by | Value / reason |
+|---|---|---|
+| `DATABASE_URL` | `build-macos-app.sh:114`, `build-macos-bundle.sh:109`, Windows launcher | Hard-pinned to the app's own `sqlite:///…/data/app.db`. The desktop app is a self-contained SQLite install; a leftover `DATABASE_URL` (e.g. a dev machine's prisma/postgres var) would crash startup with a SQLAlchemy `NoSuchModuleError`. The frozen `apollo_boot.py` instead uses `setdefault` (`apollo_boot.py:146`), so an unset-or-correct value is required. |
+| `PAPERCLIP_MODE` / `PAPERCLIP_ENABLED` | launcher scripts | `native` / `true` by default in the desktop app (Apollo supervises Paperclip + auto-provisions Node). Override with `PAPERCLIP_ENABLED=false`. |
+| `APOLLO_PORT` | launchers | `7860` (macOS AirPlay holds 7000). |
+| `HF_HOME`, `FASTEMBED_CACHE_PATH` | `apollo_boot.py:150-151` | Defaulted into the writable app home so model/embedding downloads stay inside `~/Library/Application Support/Apollo`. |
+| `AUTH_ENABLED` | `.env` / process env (`app.py`) | Auth middleware is installed unless `AUTH_ENABLED == "false"` (`app.py:130`); default `true`. Loaded BOM-tolerantly via `load_dotenv(encoding="utf-8-sig")` (`app.py:37`) so `AUTH_ENABLED=false` written by Notepad isn't silently ignored. |
+
+### Service Worker cache version (frontend)
+
+`static/sw.js` pins `CACHE_NAME` (currently `apollo-v329`). It is **bumped whenever the
+precache list or SW logic changes** — including when call-mode assets (`voiceCall.js`,
+`vad.js`) or other precached modules change — so clients pick up new code instead of serving a
+stale cached bundle. Old caches are deleted on `activate` (`sw.js:88`).

@@ -341,6 +341,88 @@ next provider in the chain (e.g. DuckDuckGo) without burning the retry budget.
 
 ---
 
+## 8b. Service-worker precache (versioned)
+
+`static/sw.js` precaches the app shell so repeat loads are instant and the UI
+works offline-ish. The cache is **versioned by a single constant** that is
+bumped whenever the precache list or SW logic changes:
+
+```js
+// static/sw.js:9-10
+// Bump CACHE_NAME whenever the precache list or SW logic changes.
+const CACHE_NAME = 'apollo-v329';
+```
+
+The `activate` handler deletes every cache whose key isn't the current
+`CACHE_NAME` (`sw.js:88`), so bumping the version is what forces clients to drop
+stale precached assets and re-fetch — e.g. after shipping new
+`voiceCall.js`/`vad.js`, the version bump is what guarantees the browser picks
+up the new files instead of serving the cached old ones. The performance
+trade-off: a served-from-cache shell (fast, offline-tolerant) at the cost of a
+one-version lag that the bump exists to flush.
+
+---
+
+## 8c. TTS disk cache
+
+`services/tts/tts_service.py` caches synthesized audio on disk under
+`data/tts_cache/` (`:27-28`), keyed by a SHA-256 of
+`(text, provider, model, voice, speed)` (`_cache_key`, `:69-71`). On
+`synthesize(..., use_cache=True)` a hit reads the stored `.mp3`/`.wav` bytes and
+returns immediately — no provider round-trip — logging `TTS cache hit`
+(`:226-231`); a miss synthesizes and writes the result back, choosing the
+extension by sniffing the audio magic bytes (ID3/MPEG frame → `.mp3`, else
+`.wav`) (`_put_cache`, `:80-82, 258-260`). Because the key includes voice/model/
+speed, changing any of them is a distinct entry rather than a stale hit. This is
+the dominant latency win for repeated speech (e.g. call-mode re-reading the same
+reply, or a fixed prompt), turning a network TTS call into a local file read.
+`clear_cache()` (`:84-89`) and the `cache_entries`/size stats (`:279-290`) let
+the UI manage it.
+
+---
+
+## 8d. Memory-graph endpoint caps (node + neighbor bounds)
+
+`GET /api/memory/graph` (`routes/memory_routes.py:119-136`) builds an
+owner-scoped knowledge graph over the user's memories, and it is bounded so a
+large memory store can't blow up the response or the embedding work:
+
+```python
+# routes/memory_routes.py:136
+return build_graph(mems, neighbor_fn, threshold=0.6, max_neighbors=4, max_nodes=300)
+```
+
+`build_graph` (`services/memory/graph.py:7-9`) first sorts memories by timestamp
+descending and **truncates to `max_nodes=300`** *before* doing any neighbor
+work, so only the 300 most-recent memories become nodes. Crucially the neighbor
+lookup (`neighbor_fn` → `memory_vector.search(text, k=6)`) runs **only for the
+kept nodes** — pinned by
+`tests/test_memory_graph.py::test_max_nodes_caps_and_neighbor_fn_only_called_for_kept_nodes`
+— so the expensive per-node vector search is O(300), not O(all memories). Each
+node's semantic edges are further capped at `max_neighbors=4` and thresholded at
+`0.6`, and symmetric edges are deduped. The endpoint also **degrades**: if the
+vector store is absent or `unhealthy`, `neighbor_fn` returns `[]` and the graph
+falls back to session-only edges (no vector search, no crash). Net: a fixed,
+small compute budget regardless of memory-store size.
+
+---
+
+## 8e. Distillation is on-demand, not per-message
+
+The second-brain distillation (`services/memory/brain.py`) runs an LLM pass to
+extract durable facts from a chat session, and it is deliberately **not** wired
+into the per-message hot path. It fires only when explicitly invoked —
+`POST /api/memory/distill-session` for a chosen session, or
+`POST /api/memory/import-chat-export` for an uploaded export — so the extra LLM
+call and the ChromaDB indexing never tax an ordinary chat turn. Within a
+distill run the cost is further bounded by `MemoryManager.find_duplicates`
+(a re-distill of the same session doesn't re-index existing facts) and by the
+`healthy`-gate on vector indexing (an unhealthy vector store stores the row but
+skips the embed). This keeps steady-state chat latency independent of the
+memory subsystem; distillation cost is paid only when the user asks for it.
+
+---
+
 ## 9. Honest scalability limits
 
 These are real ceilings, stated plainly:

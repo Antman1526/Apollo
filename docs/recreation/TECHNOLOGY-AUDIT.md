@@ -70,9 +70,9 @@ Conventions: **Version** is shown only when pinned in a manifest; `unpinned` mea
 | **fastembed** | unpinned | Local ONNX embeddings (default `sentence-transformers/all-MiniLM-L6-v2`) — pulls `onnxruntime`. |
 | **sentence-transformers/all-MiniLM-L6-v2** | model id (default `FASTEMBED_MODEL`) | Default embedding model name used by fastembed. |
 | **crawl4ai** | unpinned (core) | Mandatory web-agent integration — research / source extraction into Markdown. |
-| **faster-whisper** | unpinned (optional) | Local speech-to-text (CTranslate2 backend, CPU default) — the "local" STT provider (`services/stt/stt_service.py`). |
+| **faster-whisper** | unpinned (optional); `1.2.1` in repo venv | Local speech-to-text (CTranslate2 backend, CPU `int8` default; upgrades to CUDA/`float16` when a torch probe finds a GPU) — the "local" STT provider (`services/stt/stt_service.py`). Also drives hands-free **voice call mode** via `POST /api/stt/transcribe`. |
 | **CTranslate2** | transitive (via faster-whisper) | Inference backend for faster-whisper. |
-| **piper-tts** | unpinned (optional) | Local CPU/Metal text-to-speech from Piper ONNX voices ("piper" TTS provider). |
+| **piper-tts** | unpinned (optional); `1.4.2` in repo venv | Local CPU/Metal text-to-speech from Piper ONNX voices ("piper" TTS provider, `_PiperPipeline`) — needs an on-disk `*.onnx` + sibling `*.onnx.json`. |
 | **Kokoro (Kokoro-82M)** | runtime-detected (optional) | Local GPU TTS provider ("local" TTS, `services/tts/tts_service.py`). |
 | **diffusers** | runtime-detected | Image generation — `scripts/diffusion_server.py` (OpenAI-compatible image API; copied to remote Cookbook hosts). Loads SD/SDXL/SD3 pipelines. |
 | **PyTorch (torch)** | runtime-detected (optional GPU) | GPU tensor backend for diffusers / GPU-accelerated whisper. |
@@ -195,6 +195,7 @@ All built on the Python **mcp** SDK; exposed as in-process tool servers.
 |---|---|
 | **hdiutil** | macOS `.dmg` creation in `build-macos-app.sh` (`hdiutil create ... -format UDZO`). |
 | **macOS `.app` launcher** | `build-macos-app.sh` builds a clickable `.app` wrapper that drives the repo venv (does not bundle Python). |
+| **PyInstaller** | `6.21.0` in repo venv — builds the **self-contained** macOS bundle (`build-macos-bundle.sh` + `packaging/apollo.spec`, arm64 onedir, `collect_all` for native deps). Bundles Python + all deps so `Apollo.app` runs with no repo/venv. Frozen entrypoint `packaging/apollo_boot.py` seeds a writable `~/Library/Application Support/Apollo` home and runs uvicorn. |
 | **Python venv** | Native installs use a repo-local `venv/` (bootstrapped by `start-macos.sh` / build script; Windows launcher creates its own). |
 | **PowerShell launcher** | `launch-windows.ps1` locates Python 3.11+, sets up venv, launches uvicorn on Windows. |
 | **Docker / Docker Compose** | Container build (multi-service) and orchestration. |
@@ -236,12 +237,19 @@ Brave (`DATA_BRAVE_API_KEY`), Tavily (`TAVILY_API_KEY`), Serper (`SERPER_API_KEY
 | **ntfy** | Push-notification integration (and bundled sidecar) — keyed/topic endpoints. |
 | **Outbound webhooks** | HMAC-signed HTTP POSTs fired on app events (`webhook.*`), URL-validated against SSRF. |
 
+### Voice services (STT / TTS)
+| Service | Detection / config | Role |
+|---|---|---|
+| **Voicebox** (optional external app) | `voicebox_url` setting (default `http://127.0.0.1:17493`); `tts_provider`/`stt_provider = voicebox` | Local voice-studio desktop app Apollo proxies to over HTTP for both TTS (`/synthesize`, profile-based voices) and STT. Not a Python dep — the app must be running for the `voicebox` providers to report `available` (`services/tts/tts_service.py`, `services/stt/stt_service.py`). |
+| **OpenAI-compatible audio** | `tts_provider`/`stt_provider = endpoint:<id>` | `/audio/speech` and `/audio/transcriptions` via a configured `ModelEndpoint`. |
+
 ### Model hosting / downloads
 | Service | Role |
 |---|---|
 | **HuggingFace Hub** | Model/voice/embedding downloads (`HF_TOKEN`/`HUGGING_FACE_HUB_TOKEN`, `scripts/hf_download.py`, cached under `data/huggingface`). |
 | **nodejs.org** | Native Paperclip Node runtime download (checksum-verified). |
 | **github.com/paperclipai/paperclip** | Paperclip sidecar source (pinned tag `v2026.529.0`). |
+| **github.com (Agent Skills packs)** | Skill-pack installer fetches repo tarballs via the GitHub API, SSRF-guarded (`services/skills/pack_installer.py`, `routes/skill_pack_routes.py`). |
 
 ---
 

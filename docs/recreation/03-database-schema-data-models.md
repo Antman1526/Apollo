@@ -303,6 +303,45 @@ Each `Memory.id` is mirrored into the `apollo_memories` Chroma collection (the
 vector entry's id == the SQL row id), so semantic search returns ids that map
 back to these rows.
 
+#### Second-brain features add NO new tables — they reuse `Memory`
+
+The "second brain" additions (session distillation, chat-export import) are
+built **entirely on the existing `memories` table** — a rebuilder must **not**
+invent a `facts`/`distilled_facts` table. The orchestrator
+`services/memory/brain.py:distill_and_store` calls the *same*
+`MemoryManager.add_entry(...)` used by manual memory saves, only varying the
+existing columns:
+
+- **`source`** distinguishes provenance using values already allowed by the
+  `Memory.source` column: `"agent"` for a distilled chat session
+  (`brain.py:172`), `"import"` for a parsed ChatGPT/Claude export
+  (`brain.py:104`). (Manual memories keep the default `"user"`.)
+- **`category`** stays `"fact"` (`brain.py:56`).
+- **`session_id`** backlinks a distilled fact to the originating chat session
+  (set on the entry dict at `brain.py:58-59`, `172`); imports pass
+  `session_id=None` (`brain.py:105`) since there's no local session. This is the
+  existing `Memory.session_id` FK (`SET NULL` on session delete, §2).
+- Distilled ids flow into the `apollo_memories` Chroma collection exactly like
+  any other memory (only when the vector store is `healthy`; otherwise the row
+  is still stored, just not indexed).
+
+De-duplication reuses `MemoryManager.find_duplicates` before insert, so a
+re-distill of the same session doesn't multiply rows. In short: distilled facts
+are **ordinary `Memory` rows with `source in {"agent","import"}` and a
+`session_id` backlink** — no schema change.
+
+#### Skills are files on disk, NOT database rows
+
+Agent Skills (including packs installed via the skill-pack installer) live as
+**Markdown files**, not in SQLite or Chroma. The on-disk layout is
+`<skills_root>/<category>/<name>/SKILL.md`
+(`services/skills/pack_installer.py:144`), i.e. `data/skills/<category>/<name>/
+SKILL.md` under the default data dir. Each `SKILL.md` carries YAML frontmatter
+(`status`, `source`, `category`, `imported_from`/`imported_ref` provenance) plus
+the skill body; script-tier skills may carry sibling files (`scripts/…`,
+`.mcp.json`). A rebuilder should treat the skills store as a **filesystem**
+concern — there is no skills table, no ORM model, and no migration for it.
+
 ### `Note`, `CalendarCal`, `CalendarEvent`, `Integration` — `:1360-1438`
 
 - `Note` (Google-Keep-style): `items` is a JSON string of `[{text, done}]`;

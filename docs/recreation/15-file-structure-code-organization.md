@@ -22,13 +22,17 @@ Apollo/
 ├── Dockerfile / .dockerignore
 ├── start-macos.sh               # Native macOS quick-start (venv + brew deps + uvicorn)
 ├── launch-windows.ps1           # Native Windows launcher
-├── build-macos-app.sh           # Builds dist/Apollo.app + Apollo.dmg
+├── build-macos-app.sh           # Builds dist/Apollo.app + Apollo.dmg (LAUNCHER: drives repo venv)
+├── build-macos-bundle.sh        # Builds SELF-CONTAINED dist/Apollo.app via PyInstaller
+├── packaging/                   # PyInstaller spec + frozen entrypoint for the bundle
+│   ├── apollo.spec              #   onedir arm64 spec (collect_all native deps, ship static/config/seed)
+│   └── apollo_boot.py           #   frozen entrypoint: writable home seed + constants patch + uvicorn
 ├── install-service.sh / apollo-ui.service   # Linux systemd install
 ├── update_windows.bat
 ├── .env / .env.example          # Config (secrets commented out as placeholders)
 │
-├── routes/      (53 *.py)       # TIER 2 — HTTP boundary (APIRouter factories)
-├── src/         (79 *.py)       # TIER 2 — app logic, managers, handlers, agent loop
+├── routes/      (54 *.py)       # TIER 2 — HTTP boundary (APIRouter factories)
+├── src/         (80 *.py)       # TIER 2 — app logic, managers, handlers, agent loop
 ├── services/    (subsystems)    # TIER 2 — self-contained subsystems w/ own runtimes
 ├── core/        (10 *.py)       # TIER 2 — cross-cutting primitives (db, auth, session)
 ├── static/                      # TIER 1 — vanilla-JS frontend (ES modules, no build)
@@ -68,7 +72,8 @@ routes/
 ├── localmodels_routes.py     lmproxy_routes.py         model ... (proxy + serving)
 ├── document_routes.py        document_helpers.py       editor_draft_routes.py
 ├── gallery_routes.py         gallery_helpers.py        upload_routes.py
-├── memory_routes.py          skills_routes.py          assistant_routes.py
+├── memory_routes.py          skills_routes.py          skill_pack_routes.py
+├── assistant_routes.py
 ├── task_routes.py            note_routes.py            calendar_routes.py
 ├── email_routes.py           email_helpers.py          email_pollers.py
 ├── contacts_routes.py        personal_routes.py        vault_routes.py
@@ -123,6 +128,7 @@ src/
 ├── task_scheduler.py         task_endpoint.py     bg_jobs.py              bg_monitor.py
 ├── caldav_sync.py            caldav_writeback.py  integrations.py         webhook_manager.py
 ├── mcp_manager.py            cleanup_service.py   rate_limiter.py         prompt_security.py
+├── subproc_env.py            settings_scrub.py    endpoint_resolver.py    # build_agent_env() env allowlist
 ├── auth_helpers.py           session_actions.py   email_thread_parser.py  ...
 │
 ├── search/                   # Mirror of services/search (analytics, cache, content, core,
@@ -166,15 +172,26 @@ services/
 │   ├── config.py  runtime.py  proxy.py  collector.py  events.py
 │   ├── agent_tokens.py  node_bootstrap.py  browser_use_verifier.py
 │
-├── memory/                   # Semantic memory + skills
+├── memory/                   # Semantic memory + second-brain + skills
 │   ├── memory.py  memory_vector.py  memory_extractor.py  service.py
+│   ├── distiller.py          #   pure distill_transcript(transcript, llm_caller) → atomic facts
+│   ├── brain.py              #   distill_and_store / import_conversations / distill_session
+│   ├── chat_import.py        #   parse ChatGPT/Claude export archives → common shape
+│   ├── graph.py              #   pure build_graph(): semantic + session-shared edges
 │   ├── skills.py  skill_extractor.py  skill_format.py
+│
+├── skills/                   # Agent Skills PACK installer (import external SKILL.md packs)
+│   └── pack_installer.py     #   fetch_pack(SSRF) · classify_tier · discover/install_skills
+│
+├── review/                   # Adversarial answer reviewer
+│   └── reviewer.py           #   pure build_review_prompt / parse_review (LLM call in route)
 │
 ├── research/                 # crawl4ai-backed research
 │   ├── research_handler.py  service.py  crawl4ai_adapter.py
 │
 ├── integrations/             # agent_workbench.py
-├── tts/  tts_service.py       stt/  stt_service.py
+├── tts/  tts_service.py       # multi-provider TTS: Kokoro/piper/voicebox/endpoint
+├── stt/  stt_service.py       # multi-provider STT: faster-whisper/voicebox/endpoint
 ├── faces/ · hwfit/ · shell/ · youtube/ · docs/ · cache/
 ```
 
@@ -219,10 +236,11 @@ static/
     ├── editor/  (40+ modules: canvas-*, layer-*, ai-* tools, fx/, filters/, tools/, wire-*)
     ├── cookbook.js  cookbook-hwfit.js  cookbook-diagnosis.js  cookbookDownload/Serve/Running.js
     ├── paperclip.js  browserPanel.js              # Floor + embedded browser UI
-    ├── memory.js  rag.js  skills.js  presets.js  models.js  modelPicker.js  providers.js
+    ├── memory.js  memoryGraph.js  graphLayout.js  rag.js  skills.js  presets.js
+    ├── models.js  modelPicker.js  providers.js  review.js
     ├── emailInbox.js  emailLibrary/  calendar.js  calendar/  notes.js  tasks.js
     ├── settings.js  admin.js  theme.js  signature.js  gallery.js  galleryEditor.js
-    ├── tts-ai.js  voiceRecorder.js  document.js  documentLibrary.js  fileHandler.js
+    ├── tts-ai.js  voiceRecorder.js  voiceCall.js  vad.js  document.js  documentLibrary.js  fileHandler.js
     ├── slashCommands.js  slashAutocomplete.js  keyboard-shortcuts.js  tourAutoplay.js
     ├── markdown.js  markdown/  color/  util/  systemStatusCard.js  systemStatusActions.js
     └── MODULE_SUMMARY.md                         # in-tree module index
@@ -317,6 +335,10 @@ data/
 | Local models | `cookbook*.js`, `modelPicker.js` | `routes/localmodels_routes.py`, `lmproxy_routes.py` | `services/localmodels/server_manager.py` | GGUF dirs, HF cache |
 | Research | `research/`, `researchSynapse.js` | `routes/research_routes.py` | `src/research_handler.py`, `services/research/` | `data/deep_research/` |
 | Memory / RAG | `memory.js`, `rag.js` | `routes/memory_routes.py`, `embedding_routes.py` | `src/memory*.py`, `services/memory/` | ChromaDB |
+| Second brain / graph | `memoryGraph.js`, `graphLayout.js` | `GET /api/memory/graph`, `POST /api/memory/{distill-session,import-chat-export}` | `services/memory/{distiller,brain,chat_import,graph}.py` | `Memory` (SQLite) + ChromaDB |
+| Voice call / STT / TTS | `voiceCall.js`, `vad.js`, `tts-ai.js` | `routes/stt_routes.py`, `routes/tts_routes.py` | `services/stt/stt_service.py`, `services/tts/tts_service.py` | `data/tts_cache/` |
+| Adversarial reviewer | `review.js` | `POST /api/review` (`chat_routes.py`) | `services/review/reviewer.py`, `src/endpoint_resolver.py` | — |
+| Skill packs | `skills.js` (admin) | `routes/skill_pack_routes.py` | `services/skills/pack_installer.py` | `data/skills/` (SKILL.md) |
 | Agents / Paperclip | `paperclip.js` | `routes/paperclip_routes.py` | `services/paperclip/`, `src/agent_loop.py` | Postgres (Docker) |
 | Embedded browser | `browserPanel.js` | `routes/browser_routes.py` | `services/browser/embedded_browser.py` | Playwright |
 | Email / Calendar | `emailInbox.js`, `calendar.js` | `email_routes.py`, `calendar_routes.py` | `src/caldav_sync.py`, `email_thread_parser.py` | `EmailAccount`, `CalendarEvent` |

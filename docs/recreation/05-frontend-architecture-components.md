@@ -310,3 +310,219 @@ Globals bus:  window._isAdmin, _userPrivileges, _setWebMode,
 ```
 
 The throughline: **no framework, no store, no build** — coordination is done with ES-module imports, a default-export-object convention, a single localStorage gateway (`storage.js`), a handful of guarded `window.*` globals, and a line-delimited-JSON SSE protocol that lets the server reach back into the UI.
+
+---
+
+## 9. Voice call mode (`voiceCall.js` + `vad.js`)
+
+Call mode is hands-free voice chat: mic → VAD → STT → normal chat send → TTS →
+back to listening. Both modules follow the same "pure core, thin browser wiring"
+split as the backend pure modules, so the state machine and the VAD gate import
+cleanly in Node for unit tests and only touch the DOM/mic when their wiring
+functions are called.
+
+### 9.1 The pure state machine — `createCallMachine` (`voiceCall.js:9`)
+
+`createCallMachine(effects)` returns `{dispatch(event, payload), state}` over
+injected effects (`startCapture`, `stopCapture`, `submitMessage`, `speak`,
+`stopSpeak`, `teardown`, `onState`). States and the events that move between
+them:
+
+```
+idle ──start──▶ listening
+listening ──speechStart──▶ (startCapture) capturing
+capturing ──speechEnd──▶ (stopCapture) transcribing
+transcribing ──transcribed(text)──▶ (submitMessage) thinking   [empty text → listening]
+thinking ──assistantComplete(text)──▶ (speak) speaking          [empty text → listening]
+speaking ──speakEnd──▶ listening
+speaking ──speechStart (barge-in)──▶ (stopSpeak, startCapture) capturing
+(any state) ──end──▶ (teardown) idle
+```
+
+Two load-bearing details in the transitions:
+
+- **`speaking` is entered *before* `speak()` is invoked** (`voiceCall.js:73-76`):
+  a `speak()` that fires `speakEnd` synchronously (e.g. TTS disabled) must land
+  in `speaking`, or the machine would park there forever.
+- **Barge-in:** a `speechStart` while `speaking` stops TTS and jumps straight to
+  `capturing` so the user can interrupt the assistant.
+
+### 9.2 The VAD gate — `createVadGate` (`vad.js:9`)
+
+A pure RMS→event gate with hysteresis. `push(rms, nowMs)` returns
+`'speechstart'`, `'speechend'`, or `null`. It rises above a `threshold` (0.02)
+to start speech and only ends after `silenceMs` (1200 ms) of quiet:
+
+```js
+push(rms, nowMs) {
+  const loud = rms >= threshold;
+  if (loud) lastLoudMs = nowMs;
+  if (!speaking) { if (loud) { speaking = true; return 'speechstart'; } return null; }
+  if (!loud && nowMs - lastLoudMs >= silenceMs) { speaking = false; return 'speechend'; }
+  return null;
+}
+```
+
+Note the **deliberate lowercase** `speechstart`/`speechend` (DOM-event style):
+the call wiring bridges these to the machine's camelCase `speechStart`/`speechEnd`
+at `voiceCall.js:211` (`ev === 'speechstart' ? 'speechStart' : 'speechEnd'`) —
+the casing is intentionally different on the two sides.
+
+### 9.3 The Web Audio wrapper — `createMicVad` (`vad.js:49`)
+
+Browser-only. Wires a mic `MediaStream` through an `AnalyserNode`
+(`fftSize = 512`), computes RMS off `getFloatTimeDomainData` each
+`requestAnimationFrame` tick, and feeds it to a gate; emits `onEvent(ev, rms)`.
+It resumes a `suspended` AudioContext (one created outside a user gesture reads
+silence forever otherwise, `vad.js:58-59`) and returns `{pause, resume, destroy}`
+so the overlay's Mute button can gate the loop.
+
+### 9.4 Browser wiring — `startCall`/`endCall` (`voiceCall.js:143`, `:237`)
+
+`startCall()`:
+1. Guards `window.isSecureContext` (mic needs HTTPS/localhost), then
+   `getUserMedia({audio:{echoCancellation, noiseSuppression}})`.
+2. **Refreshes TTS availability** (`await window.aiTTSManager.checkAvailability()`,
+   `:163`) so a provider enabled mid-session isn't seen as unavailable — the
+   manager only probes once at page load.
+3. Takes over TTS: saves `aiTTSManager.autoPlay`, sets it `false` (the call drives
+   TTS explicitly via the machine's `speak` effect).
+4. Builds the machine with real effects. `startCapture` spins up a
+   `MediaRecorder(stream, {mimeType:'audio/webm'})`, buffering chunks **in the
+   closure** (not on `_active`) so a mid-utterance teardown can't leave `onstop`
+   dereferencing a nulled `_active`; `onstop` POSTs the blob to
+   `/api/stt/transcribe` and dispatches `transcribed`. `submitMessage(text)` calls
+   `window.apolloSendMessage(text)`. `speak(text)` short-circuits to `speakEnd`
+   when TTS is unavailable/disabled, else `aiTTSManager.enqueue(text, ..., () => dispatch('speakEnd'))`.
+5. Creates the `createMicVad`, subscribes to the `apollo:assistant-complete`
+   window event (§9.5), wires the overlay Mute/End buttons, and `dispatch('start')`.
+
+`endCall()` removes the event listener, destroys the mic, stops the stream
+tracks, stops TTS, **restores** `autoPlay`, resets the overlay to `idle`, and
+nulls `_active`. Guarded `window.voiceCallModule` assignment keeps the module
+Node-importable.
+
+### 9.5 The `apollo:assistant-complete` bridge
+
+The chat stream fires this window `CustomEvent` **unconditionally** at the end of
+every assistant turn (`chat.js:2500-2504`), *outside* the TTS-button guard so the
+call machine still advances past `thinking` when TTS is unavailable:
+
+```js
+window.dispatchEvent(new CustomEvent('apollo:assistant-complete', {
+  detail: { text: accumulated || '' },
+}));
+```
+
+Call mode listens (`voiceCall.js:221`) and dispatches `assistantComplete`;
+Review mode listens too (§11).
+
+### 9.6 Overlay markup + call button
+
+- **Overlay** (`index.html:2506`): `#voice-call-overlay[data-state]` with a status
+  line ("call mode · local whisper · on-device"), an animated orb,
+  `#vc-state-label` + `#vc-transcript`, and `#vc-mute-btn` / `#vc-end-btn`. The
+  wiring writes `overlay.dataset.state` and the label text per state
+  (`voiceCall.js:118-128`).
+- **Call button** (`index.html:1118`, `#call-mode-btn`) in the input bar. It's
+  **always visible**; the click is gated on STT being enabled rather than hiding
+  the button (which left it invisible when STT status loaded late). If STT is off
+  it toasts "Enable Speech-to-Text in Settings"; else `voiceCallModule.startCall()`
+  (`app.js:3862-3882`). `window._syncCallModeBtn` toggles a `.tool-disabled`
+  class as STT status changes.
+- **`window.apolloSendMessage(text)`** (`app.js:3851`): the programmatic-send
+  entry. It fills `#message`, fires an `input` event, and calls `handleSubmit` so
+  the transcript goes through the *normal* chat path (a real turn, not a special
+  case).
+
+---
+
+## 10. The Voicebox TTS option (settings)
+
+The TTS settings block adds a **`voicebox`** provider option alongside
+`disabled`/`browser`/`local`/`piper`/`endpoint:*`. When selected
+(`settings.js:1104` `isVoicebox()`):
+- A base-URL row (`#set-ttsVoiceboxUrlRow`, default `http://127.0.0.1:17493`) is
+  shown (`settings.js:1121`).
+- The voice field becomes a free-text **profile id** ("leave blank for first
+  available", `settings.js:1128`).
+- `loadVoiceboxProfiles()` (`settings.js:1137`) GETs `<base>/profiles` with the
+  `X-Voicebox-Client-Id: apollo` header and populates the voice datalist,
+  tolerating a bare list / `{profiles}` / `{data}` shape. On failure the
+  free-text profile id still works.
+
+Saving posts `{tts_provider:'voicebox', voicebox_url, tts_voice, ...}` to
+`POST /api/auth/settings` (the app-settings route, doc 04 §10.3), which the
+backend `TTSService` reads on every call.
+
+---
+
+## 11. Adversarial reviewer (`review.js`)
+
+`review.js` mirrors the AI-TTS-button pattern: it appends a small "Review" icon
+button to an assistant message's `.msg-actions`, and supports a persisted
+**Review mode** that auto-reviews every answer.
+
+- **`addReviewButton(messageElement, question, answer)`** (`review.js:128`):
+  dedup-guarded, appends the icon button. On click it resolves the question
+  (`findPrecedingQuestion` walks back to the preceding `.msg-user` bubble,
+  falling back to the last one in history) and the answer (`dataset.raw` or the
+  `.body` text), then `runReview`. `chat.js:2494` calls `addReviewButton` on
+  every completed answer.
+- **`runReview`** (`review.js:82`) POSTs `/api/review` `{question, answer}`
+  (JSON), then renders `{verdict, issues, suggestion}` into a collapsible
+  `<details class="review-box">` under the message. `verdictColor` maps the
+  verdict to a badge color: `incorrect`→red, `accurate`→green,
+  `incomplete`/`needs`→amber, else neutral (`review.js:18-24`). Errors render in
+  red inside the same box.
+- **Review mode** (`review.js:157`): a window listener on
+  `apollo:assistant-complete` (§9.5) checks `loadToggleState().reviewMode`; when
+  on, it finds the last `.msg-ai` bubble and auto-runs a review for it.
+
+---
+
+## 12. Knowledge graph (`memoryGraph.js` + `graphLayout.js`)
+
+The Brain/memory modal's **Graph tab** renders a self-contained force-directed
+SVG of the user's memories — no D3/CDN, CSP-nonce safe.
+
+### 12.1 Lazy tab activation
+
+`memory.js:1414-1417` lazy-`import()`s `memoryGraph.js` and calls
+`openGraphTab()` the first time the `graph` tab opens. `memoryGraph.js` is also
+loaded once as a module `<script>` (`index.html:2472`). `openGraphTab()`
+(`memoryGraph.js:38`) is idempotent (renders once per page load; the Refresh
+button re-renders).
+
+### 12.2 Fetch → pure layout → SVG (`render`, `memoryGraph.js:51`)
+
+1. `fetch('/api/memory/graph')` → `{nodes, edges}` (doc 04 §13.2). Empty nodes →
+   an empty-state message ("No memories yet — distill a chat first").
+2. Runs the **pure** force layout headlessly (no DOM in the loop):
+   ```js
+   seedPositions(nodes, width, height, SEED);              // SEED=1337 → deterministic
+   for (let i = 0; i < TICKS; i++) stepLayout(nodes, edges, { width, height });
+   ```
+   (`SEED=1337`, `TICKS=300`, `memoryGraph.js:13-14,87-88`). Determinism means
+   the graph looks identical every open.
+3. Draws edges first (under nodes): **semantic** edges solid with opacity by
+   weight, **session** edges dashed and fainter (`memoryGraph.js:113-117`).
+   Nodes are colored by category (`CATEGORY_COLORS`, `memoryGraph.js:18-26`,
+   mirroring the `.memory-cat-*` badge palette). Clicking a node highlights it +
+   its neighbors, dims the rest, and shows the fact + a "Go to source chat →"
+   link (`selectNode`/`renderDetail`, `:159`, `:174`) that calls
+   `sessionModule.selectSession(session_id)`.
+
+### 12.3 The pure layout — `graphLayout.js`
+
+No DOM, no `Math.random`, no browser globals at module top level.
+- **`seedPositions(nodes, w, h, seed)`** (`graphLayout.js:24`) places each node at
+  a deterministic pseudo-random point via a small LCG (glibc constants,
+  `state = (1103515245*state + 12345) mod 2^31`) and zeroes velocity.
+- **`stepLayout(nodes, edges, opts)`** (`graphLayout.js:37`) advances one physics
+  tick, mutating `{x,y,vx,vy}`: O(n²) Coulomb repulsion (`repulsion/d²`, with a
+  deterministic nudge for coincident nodes), Hooke edge springs toward
+  `springLen` (edges to unknown ids skipped safely), a mild center pull so
+  disconnected nodes don't drift off, then velocity integration with `damping`
+  and clamping to `[0,width]×[0,height]`. Fine for ≤300 nodes (the graph's node
+  cap). See doc 07 §(e) for the graph *builder* on the backend.

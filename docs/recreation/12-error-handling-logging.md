@@ -246,6 +246,85 @@ The browser live-view WS (`routes/browser_routes.py`) reports problems as
 
 ---
 
+## 7. Safe-by-default patterns (fail-closed / tolerant-parse)
+
+Beyond the graceful-degradation contract above, several newer subsystems bake
+"the safe outcome is the default" into their error handling.
+
+### Env-scrub for agent subprocesses (default-deny)
+
+`src/subproc_env.build_agent_env` builds an **allowlisted** environment for every
+agent-spawned child (bash/python tools, background jobs, the shell service, MCP
+stdio servers) rather than inheriting the full `os.environ`. The safety comes
+from the *shape* of the code: it starts from a fixed `_PASS` allowlist
+(`PATH`, `HOME`, locale/toolchain vars) so host secrets are **never copied
+because they aren't on the list** (`subproc_env.py:68`). An optional
+`passthrough=` opt-in is still run through `is_secret_env()`
+(`subproc_env.py:70-72`), so a denylist (`DATABASE_URL`, `SMTP_*`/`IMAP_*`, plus
+`settings_scrub`'s `_API_KEY`/`_TOKEN`/`_SECRET`/`_PASSWORD` suffix rules)
+**overrides the opt-in** — a secret can't be re-added by mistake. This is the
+error-handling counterpart to leaking credentials: the failure mode of "forgot
+to filter var X" is a *missing* non-secret var, not a leaked key.
+
+### SSRF + tar guards in the skill-pack installer (ValueError → 400)
+
+`services/skills/pack_installer.py` treats an untrusted pack URL and its tarball
+as hostile and raises `ValueError` (surfaced as HTTP **400** by the route) at
+every step rather than trusting input:
+
+- **URL allowlist / SSRF.** `_github_tarball_url` accepts only
+  `github.com`/`www.github.com` and rewrites to the `api.github.com` tarball
+  endpoint; anything else raises `ValueError("expected a https://github.com/…")`
+  (`pack_installer.py:207-208`). `fetch_pack` then downloads via the shared
+  `_get_public_url` SSRF-guard and enforces a 50 MB body cap
+  (`pack_installer.py:214-227`).
+- **`safe_extract_tar`.** Before extracting it rejects a member-count over
+  `_MAX_PACK_MEMBERS = 5000` (inode-exhaustion guard), a total size over the
+  byte cap, and any unsafe path — then extracts with Python 3.12's
+  `filter="data"` policy, which blocks symlink/hardlink escapes, absolute
+  paths, and device files; a rejected member becomes
+  `ValueError("unsafe archive member: …")` (`pack_installer.py:176-195`).
+- **Category sanitization.** `install_skills` sanitizes the caller-supplied
+  category so a crafted `../../ESCAPED` can't write outside `skills_root`
+  (`pack_installer.py:135`). Each guard is pinned by a test in
+  `tests/test_pack_installer.py`.
+
+### Call-mode state machine tolerates stray events
+
+The browser call-mode machine (`static/js/voiceCall.js`) is written so out-of-
+order or re-entrant events don't wedge it. The tests pin the two dangerous
+cases: an **empty transcript** returns to `listening` without submitting, and a
+**synchronous `speakEnd`** fired from inside `speak()` (the TTS-unavailable
+path, where the effect calls `speakEnd` immediately) must not leave the machine
+parked in `speaking` forever — it lands back in `listening`
+(`tests/test_voice_call_machine.mjs:139-154`). Barge-in (`speechStart` while
+`speaking`) cleanly stops TTS and re-captures. The design goal is the same as
+the browser-WS contract: a stray or reordered event degrades gracefully instead
+of deadlocking the call.
+
+### Tolerant JSON / YAML parsing
+
+Import and skill-ingest paths parse untrusted third-party data and **return an
+empty/neutral result instead of raising**:
+
+- Chat-export parsing (`services/memory/chat_import.py`) auto-detects
+  ChatGPT/Claude shapes; unknown or non-JSON input yields `[]`, a bad
+  conversation inside a good file is skipped, and empty messages are dropped —
+  never a raised exception (`tests/test_chat_import.py`).
+- Distillation output parsing (`services/memory/distiller.parse_facts`)
+  normalizes bullets/numbers/blank lines and maps the `NONE` /
+  `(no durable facts)` markers to `[]`.
+- **SKILL.md frontmatter has a PyYAML→regex fallback.**
+  `_parse_frontmatter_robust` (`pack_installer.py:35-49`) first tries
+  `yaml.safe_load` (so a YAML **block-scalar** `description: |` becomes real
+  multi-line text, not the literal `"|"` that Apollo's lightweight regex parser
+  would return), and only falls back to the regex `parse_frontmatter` if PyYAML
+  is unavailable or the parse fails. A malformed `SKILL.md` is *reported* as a
+  `FoundSkill` with an empty/best-effort description rather than aborting the
+  whole pack walk.
+
+---
+
 ## Summary of the contract
 
 | Layer | Failure surface | Behavior |
@@ -256,3 +335,7 @@ The browser live-view WS (`routes/browser_routes.py`) reports problems as
 | Browser HTTP | `HTTPException` 400/503/504/500 | `_handle_browser_error` mapping (`browser_routes.py:145`). |
 | Chat / LLM SSE | `web_search_failed`, `event: error` | Typed events with status codes (`chat_routes.py:712,1358`; `llm_core.py:1109-1184`). |
 | Browser WS | `{"type":"error"}` frame | Keep the stream alive where possible (`browser_routes.py:316-364`). |
+| Agent subprocess env | missing var (never a leaked secret) | Default-deny allowlist; denylist overrides opt-in (`subproc_env.py:68-72`). |
+| Skill-pack installer | `ValueError` → HTTP 400 | SSRF URL allowlist, `filter="data"` tar extraction, member/byte caps, category sanitize (`pack_installer.py:176-227`). |
+| Call-mode machine | stray/re-entrant event | Empty transcript / synchronous `speakEnd` don't deadlock (`voiceCall.js`). |
+| Import / frontmatter parse | `[]` / best-effort dict | Tolerant JSON + PyYAML→regex frontmatter fallback (`chat_import.py`, `pack_installer.py:35-49`). |

@@ -679,7 +679,151 @@ All Apollo streaming endpoints share these conventions:
 
 ---
 
-## 13. Secrets handling notes
+## 13. Reviewer, memory-graph, distill/import & skill-pack endpoints
+
+These are the newer endpoints layered on top of the chat/memory subsystems. The
+*pure* logic they call is documented in `07-business-logic-core-algorithms.md`;
+this section covers the HTTP contract.
+
+### 13.1 `POST /api/review` — adversarial second-model critique (`chat_routes.py:1365`)
+
+Defined inside `setup_chat_routes`, so it shares the chat router's tag/gates.
+JSON body `{question, answer}`; `answer` is required (400 if blank). It resolves
+the **`reviewer`** endpoint role via `resolve_endpoint("reviewer", owner=owner)`
+(`chat_routes.py:1379`) — a *new role* that reads `reviewer_endpoint_id` /
+`reviewer_model` from settings and, being neither `utility` nor `default`, falls
+back **utility → default** (`src/endpoint_resolver.py:251-256`). 400 if nothing
+resolves. It then builds the critique prompt and parses the reply with the pure
+`services/review/reviewer.py` helpers:
+
+```python
+@router.post("/api/review")
+async def review_answer(request: Request):
+    from services.review.reviewer import build_review_prompt, parse_review
+    ...
+    url, model, headers = resolve_endpoint("reviewer", owner=owner)
+    if not url or not model:
+        raise HTTPException(400, "No reviewer/utility model configured — set one in Settings")
+    text = await llm_call_async(url, model, build_review_prompt(question, answer),
+                                temperature=0.2, headers=headers, timeout=60)
+    return {**parse_review(text), "model": model}
+```
+
+**Response:** `{verdict, issues, suggestion, raw, model}` — `verdict` is one of
+`accurate|incomplete|incorrect|needs context`, `issues` a list of bullet
+strings, `suggestion` a one-line fix (`""` when the model said "none"), `raw` the
+unparsed model text, `model` the resolved model id. See §07(f) for the prompt.
+
+### 13.2 Memory graph / distill / import (`routes/memory_routes.py`)
+
+Factory `setup_memory_routes(memory_manager, session_manager, memory_vector=None)`
+(`memory_routes.py:37`), `prefix="/api/memory"`, tag `["memory"]`. Every handler
+resolves the caller via `get_current_user` and scopes to that owner.
+
+| Endpoint | Handler | Line | Body / notes |
+|---|---|---|---|
+| `GET /api/memory/graph` | `memory_graph` | `:118` | Owner-scoped knowledge graph. Loads the owner's memories, defines `neighbor_fn` = `memory_vector.search(text, k=6)` (or `[]` when the vector store is unhealthy → session-only edges), then returns `build_graph(mems, neighbor_fn, threshold=0.6, max_neighbors=4, max_nodes=300)` → `{nodes, edges}` (see §07(e)). |
+| `POST /api/memory/distill-session` | `distill_session_route` | `:487` | `session_id: str = Form(...)`; `require_privilege(request, "can_manage_memory")`. Calls `brain.distill_session(...)` (loads the session, reads its own `endpoint_url`/`model` for the LLM call, extracts atomic facts, dedups, stores with `source="agent"` + `session_id`). Returns `{ok:true, added, skipped}`; 502 on failure. |
+| `POST /api/memory/import-chat-export` | `import_chat_export_route` | `:509` | `file: UploadFile = File(...)`; `require_privilege(..., "can_manage_memory")`. Reads the uploaded JSON, `parse_export(obj)` auto-detects ChatGPT vs Claude and returns conversations; resolves a **utility** endpoint (imports have no session), then `brain.import_conversations(...)` distills+stores each with `source="import"`. Returns `{ok:true, added, skipped, conversations}`; empty/unrecognized → `{ok:true, added:0, ..., message:"No recognizable conversations in export"}`; 400 on non-JSON; 502 on failure. |
+
+`neighbor_fn` (`memory_routes.py:128`):
+
+```python
+def neighbor_fn(mem):
+    if not (memory_vector and getattr(memory_vector, "healthy", False)):
+        return []
+    try:
+        return memory_vector.search(mem.get("text") or "", k=6)
+    except Exception:
+        return []
+```
+
+(The full memory router also has `add`, `search`, `timeline`, `by-session`,
+`extract`, `audit`, `import` (document→facts), `pin`, and the wildcard
+`GET/PUT/DELETE /{memory_id}` CRUD — the wildcards are registered **last** so
+they don't swallow `/graph`, `/import`, `/distill-session`, etc.
+(`memory_routes.py:566`).)
+
+### 13.3 Skill-pack install (`routes/skill_pack_routes.py`)
+
+Factory `setup_skill_pack_routes(skills_manager)`, `prefix="/api/skills/packs"`,
+tag `["skills"]`. Both routes are **`require_admin`**. Pure discover/classify/
+install logic lives in `services/skills/pack_installer.py` (see §07(g)).
+
+| Endpoint | Body model | Line | Behavior |
+|---|---|---|---|
+| `POST /api/skills/packs/preview` | `PreviewRequest{source, ref=""}` | `:40` | `pi.fetch_pack(source, ref)` (SSRF-guarded GitHub tarball → temp dir) → `pi.discover_skills(root)`. Returns `{ok:true, root, skills:[{name, description, tier, rel_dir, error}]}` — **nothing is written**. `tier` is `prose` or `script`. |
+| `POST /api/skills/packs/install` | `InstallRequest{source, ref="", category="imported", names=[], overwrite=false}` | `:49` | Re-fetches + re-discovers, filters to `names` if given, builds `InstallOpts` (owner = current user, `now_iso` = tz-aware UTC), `pi.install_skills(found, opts, skills_root, src_root=root)`. Returns `{ok:true, installed, skipped, errored}`. |
+
+Provenance frontmatter (`imported_from`, `imported_ref`, `imported_at`,
+`imported_tier`) is written into each installed `SKILL.md`; `script`-tier skills
+are installed with `status: draft` (quarantined, never auto-run) while `prose`
+skills install `published`.
+
+---
+
+## 14. Voicebox TTS/STT provider (`/api/tts/*`, `/api/stt/*`)
+
+Apollo's speech services are multi-provider dispatchers that read
+`data/settings.json` on **every** call. Providers: `disabled`, `browser` (client
+Web Speech), `local` (Kokoro/Whisper), `piper` (TTS only), `endpoint:<id>`
+(OpenAI-compatible), and **`voicebox`** — a local "voice studio" sidecar.
+
+### 14.1 Routes
+
+- **TTS** (`routes/tts_routes.py`, `prefix="/api/tts"`): `GET /stats`,
+  `POST /synthesize` (`TTSRequest` body → audio bytes / base64),
+  `POST /clear-cache`.
+- **STT** (`routes/stt_routes.py`, `prefix="/api/stt"`): `GET /stats`,
+  `POST /transcribe` — `file: UploadFile = File(...)` → `{text}`. This is the
+  endpoint `voiceCall.js` posts recorded WebM blobs to (`stt_routes.py:23`).
+
+### 14.2 Voicebox provider behavior
+
+Config keys: `tts_provider`/`stt_provider = "voicebox"` and `voicebox_url`
+(default `http://127.0.0.1:17493`). Every Voicebox request carries the header
+`X-Voicebox-Client-Id: apollo`. The base is normalized with a trailing-slash
+strip (`tts_service.py:148`, `stt_service.py:162`).
+
+**Availability probe** — `_voicebox_reachable` GETs `/profiles` with a 2s timeout
+and treats HTTP 200 as up (`tts_service.py:151`, `stt_service.py:165`). This is
+what `is_available()` returns for the `voicebox` provider.
+
+**TTS synthesis** — `_synthesize_voicebox` (`tts_service.py:186`) POSTs
+`/generate` with `{text, profile_id, language:"en"}` and a 120s timeout,
+returning the raw audio bytes. When `voice` (the profile id) is blank it fetches
+`/profiles` and uses the first profile's id (`_voicebox_profile_id` tolerates a
+bare string or a dict with `id`/`profile_id`/`name`/`slug`):
+
+```python
+def _synthesize_voicebox(self, text, voice, url=None):
+    base = self._voicebox_base(url)
+    profile_id = voice
+    if not profile_id:
+        profiles = self._voicebox_profiles(url)
+        if profiles:
+            profile_id = self._voicebox_profile_id(profiles[0])
+    payload = {"text": text, "profile_id": profile_id, "language": "en"}
+    r = httpx.post(base + "/generate", json=payload,
+                   headers=self._VOICEBOX_HEADERS, timeout=120)
+    r.raise_for_status()
+    return r.content
+```
+
+**STT transcription** — `_transcribe_voicebox` (`stt_service.py:195`) POSTs
+`/transcribe` as multipart (`files={"audio": ("audio.webm", <bytes>, "audio/webm")}`,
+`data={"model": model or "base"}`, 120s). The reply is parsed tolerantly by
+`_parse_voicebox_text` (`stt_service.py:174`): a bare string, `{"text":...}`,
+`{"transcription":...}`, or `{"segments":[{"text":...}]}` (segments joined).
+
+**Profiles for the UI** — `_voicebox_profiles` (`tts_service.py:160`) GETs
+`/profiles` (5s) and tolerates a bare list, `{"profiles":[...]}`, or
+`{"data":[...]}`. The settings UI hits the same `/profiles` endpoint directly to
+populate a voice datalist (`settings.js:1137`).
+
+---
+
+## 15. Secrets handling notes
 
 No secret values appear in this document. Relevant redaction points in the code:
 endpoint listing returns `has_key` only, never `api_key` (`model_routes.py:1195`);

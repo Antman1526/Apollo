@@ -60,7 +60,9 @@ It is explicitly a **three-tier system** (`README.md:48-52`):
 ### Tier 1 — Frontend (`static/`)
 - Entry: `static/index.html` + `static/app.js`; ~90 ES modules under `static/js/`
   (`chat.js`, `chatStream.js`, `research/`, `editor/`, `compare/`, `cookbook*.js`,
-  `paperclip.js`, `browserPanel.js`, `memory.js`, `settings.js`, `theme.js`, …).
+  `paperclip.js`, `browserPanel.js`, `memory.js`, `settings.js`, `theme.js`,
+  `voiceCall.js` + `vad.js` (hands-free call mode), `review.js` (adversarial reviewer UI),
+  `memoryGraph.js` + `graphLayout.js` (knowledge-graph tab), …).
 - No bundler/transpiler. Browsers load raw `.js` modules directly.
 - Cache discipline is handled server-side by `_RevalidatingStatic` (`app.py:398-414`):
   `.js/.css/.html` get `Cache-Control: no-cache` so a code change appears without a hard
@@ -193,12 +195,20 @@ register_router_specs(app, [
     …
 ], logger=logger)                                                              # app.py:572-601
 ```
-Router inventory (selection, from `routes/`): auth, uploads, sessions, memory, skills, chat,
-research, history, search, presets, diagnostics, cleanup, personal, embedding, models, tts,
-stt, documents, signatures, gallery, editor drafts, tasks, assistants, calendar, shell,
-cookbook, hwfit, localmodels, compare, prefs, backup, fonts, mcp, webhooks, api-tokens,
-notes, email, vault, contacts, companion, paperclip (sidecar proxy), integration status,
-system status, browser, lmproxy.
+Router inventory (selection, from `routes/`): auth, uploads, sessions, memory, skills,
+skill-packs (`skill_pack_routes.py`), chat, research, history, search, presets, diagnostics,
+cleanup, personal, embedding, models, tts, stt, documents, signatures, gallery, editor drafts,
+tasks, assistants, calendar, shell, cookbook, hwfit, localmodels, compare, prefs, backup,
+fonts, mcp, webhooks, api-tokens, notes, email, vault, contacts, companion, paperclip
+(sidecar proxy), integration status, system status, browser, lmproxy.
+
+The **adversarial reviewer** endpoint lives on the chat router rather than in its own file:
+`POST /api/review` (`routes/chat_routes.py:1365`) critiques an assistant answer with a second
+model. It resolves the LLM via `resolve_endpoint("reviewer", owner=…)` — reading the
+`reviewer_endpoint_id` / `reviewer_model` settings and **falling back to the utility model**
+when the reviewer role is unset (`src/endpoint_resolver.py:205-253`) — then feeds the pure
+prompt builder/parser in `services/review/reviewer.py` (`build_review_prompt` → LLM →
+`parse_review` yields `{verdict, issues, suggestion}`).
 
 ---
 
@@ -267,6 +277,80 @@ has its own bearer token and is auth-exempt from the cookie middleware (`app.py:
 - Wired at `/api/browser/*` with WS auth that honors `AUTH_ENABLED=false` and a
   `can_use_browser` privilege gate (`app.py:766-808`).
 
+### Voice: STT / TTS providers — `services/stt/`, `services/tts/`
+- **STT** (`services/stt/stt_service.py`) is a multi-provider dispatcher chosen by the
+  `stt_provider` setting: `disabled`, `browser` (client Web Speech API), `local`
+  (**faster-whisper** on CTranslate2 — CPU `int8` by default, `cuda`/`float16` only if a torch
+  probe finds CUDA, `stt_service.py:79-87`), `voicebox` (local Voicebox app), or `endpoint:<id>`
+  (OpenAI-compatible `/audio/transcriptions`). `POST /api/stt/transcribe` returns `{text}`.
+- **TTS** (`services/tts/tts_service.py`) mirrors this: `disabled`, `browser`, `local`
+  (**Kokoro-82M**, GPU), `piper` (**piper-tts**, ONNX voices, CPU/Metal — the local-TTS path on
+  Apple Silicon, `_PiperPipeline`), `voicebox`, or `endpoint:<id>` (`/audio/speech`). Synthesized
+  audio is SHA-256-cached under `data/tts_cache/`.
+- Both read config fresh from `data/settings.json` on every call; the shared
+  `voicebox_url` setting (default `http://127.0.0.1:17493`) points at the optional Voicebox
+  desktop app when either provider is set to `voicebox`.
+
+### Voice call mode (hands-free) — `static/js/voiceCall.js` + `vad.js`
+A pure-frontend orchestration over the STT/TTS routes, layered so the core logic is
+Node-unit-testable (no DOM/mic touched at import):
+- `createVadGate()` (`vad.js`) is a pure RMS→event gate emitting `speechstart`/`speechend`;
+  `createMicVad()` wraps it with Web Audio, reading live mic RMS on a `requestAnimationFrame`
+  loop. Web Audio globals are referenced only inside the function body.
+- `createCallMachine()` (`voiceCall.js`) is a pure state machine:
+  `idle → listening → capturing → transcribing → thinking → speaking → listening`, driving
+  injected effects (`startCapture`/`stopCapture`/`submitMessage`/`speak`/`teardown`). It supports
+  barge-in (a `speechStart` during `speaking` stops TTS and re-captures).
+- `startCall()`/`endCall()` wire it to the browser: `getUserMedia` (HTTPS/localhost only),
+  a `MediaRecorder` → `POST /api/stt/transcribe`, `window.apolloSendMessage(text)`
+  (`static/app.js:3851`) to submit, and `window.aiTTSManager` to speak. The reply is triggered
+  by the **`apollo:assistant-complete`** CustomEvent that `chat.js` fires unconditionally at
+  stream end (`chat.js:2501`) so the machine advances past `thinking` even when TTS is off.
+- Overlay lives in `static/index.html` (`#voice-call-overlay`, `#vc-state-label`,
+  `#vc-transcript`, `#vc-mute-btn`, `#vc-end-btn`); the `#call-mode-btn` entry button is always
+  visible but gated on STT being enabled (`app.js:3862-3870`). SW precache version is bumped
+  when call-mode assets change (`static/sw.js` `CACHE_NAME`).
+
+### Second brain — semantic memory distillation & knowledge graph (`services/memory/`)
+- **Distiller** (`distiller.py`): a pure `distill_transcript(transcript, llm_caller)` that asks
+  a model to extract atomic durable facts (one per line, `NONE` if nothing worth keeping) and
+  parses them.
+- **Brain orchestrator** (`brain.py`): `distill_and_store(...)` dedupes facts
+  (`find_duplicates`), stores new ones via `MemoryManager.add_entry`, tags them with a
+  `session_id`, and best-effort indexes them in the ChromaDB `memory_vector` store — all
+  collaborators injected, so infra-free/unit-testable. `distill_session(...)` is the thin
+  side-effecting entry (`POST /api/memory/distill-session`).
+- **Chat import** (`chat_import.py`): `parse_export(obj)` auto-detects and normalizes ChatGPT
+  (`mapping`) and Claude (`conversations[].chat_messages`) export archives into a common
+  `{title, messages:[{role,text}]}` shape; `import_conversations(...)` distills each into
+  memories (`POST /api/memory/import-chat-export`).
+- **Knowledge graph** (`graph.py`): pure `build_graph(memories, neighbor_fn, …)` builds nodes
+  (facts) and edges — **semantic** (thresholded top-N similarity via injected neighbor lookup)
+  + **session-shared** (chain within a source session). Served owner-scoped at
+  `GET /api/memory/graph` (`routes/memory_routes.py:118`). The Graph tab renders it with a pure
+  force layout (`static/js/graphLayout.js`, deterministic LCG seed) into a self-contained,
+  CSP-nonce-safe SVG — no D3/CDN (`static/js/memoryGraph.js`).
+
+### Skill-pack installer — `services/skills/pack_installer.py` + `routes/skill_pack_routes.py`
+Admin-gated import of external Agent Skills packs into the `SKILL.md` store:
+- `POST /api/skills/packs/preview` and `/install` (`require_admin`). `fetch_pack(source, ref)`
+  maps a `github.com/<owner>/<repo>` URL to the API tarball, downloads it **SSRF-guarded**
+  (`src.search.content._get_public_url`), and extracts with hardened `safe_extract_tar`
+  (member cap 5000, 50 MB limit, path-traversal + `filter="data"` symlink/device guards).
+- **Safe-by-default classification**: `classify_tier()` inspects file names only (never
+  executes) — a pack that ships code (`scripts/`, `hooks/`, `.mcp.json`, or code extensions)
+  is `script`-tier and installed as a quarantined **draft**; prose-only skills install
+  `published`. `install_skills()` slugifies the category to keep writes inside `skills_root`.
+
+### Security: agent-subprocess env scrub — `src/subproc_env.py`
+`build_agent_env()` builds an **allowlisted, default-deny** environment for every
+agent-spawned subprocess (bash/python tools, background jobs, the shell service, MCP stdio
+servers), which previously inherited the full host `os.environ` (every provider key,
+`DATABASE_URL`, decrypted SMTP/IMAP passwords, `SEARXNG_SECRET`). It copies only a `_PASS`
+allowlist of non-secret POSIX/Windows/toolchain vars, plus an optional admin `passthrough`
+list — each still denylist-scrubbed (`is_secret_env`: `DATABASE_URL`, `SMTP_*`/`IMAP_*`
+prefixes, and `settings_scrub.is_secret_key` suffix rules) as defense in depth.
+
 ### Other Docker-only sidecars (`docker-compose.yml`)
 `chromadb` (vector store, :8100→8000), `ntfy` (push notifications, :8091), and a
 `paperclip` + `paperclip-db` (Postgres) pair behind the `paperclip` Compose profile.
@@ -319,4 +403,12 @@ SSE token stream  → chatStream.js → rendered with "Searched the web" + provi
 | Local models           | `services/localmodels/server_manager.py` |
 | Paperclip              | `services/paperclip/`, `routes/paperclip_routes.py` |
 | Embedded browser       | `services/browser/embedded_browser.py`, `routes/browser_routes.py` |
+| Voice STT / TTS        | `services/stt/stt_service.py`, `services/tts/tts_service.py`, `routes/stt_routes.py`, `routes/tts_routes.py` |
+| Voice call mode        | `static/js/voiceCall.js`, `static/js/vad.js`, `#voice-call-overlay` in `static/index.html` |
+| Adversarial reviewer   | `services/review/reviewer.py`, `POST /api/review` (`routes/chat_routes.py`), `static/js/review.js` |
+| Second brain / memory  | `services/memory/{distiller,brain,chat_import,graph}.py`, `routes/memory_routes.py` |
+| Knowledge graph UI     | `static/js/memoryGraph.js`, `static/js/graphLayout.js` |
+| Skill-pack installer   | `services/skills/pack_installer.py`, `routes/skill_pack_routes.py` |
+| Agent env scrub        | `src/subproc_env.py` (`build_agent_env`) |
+| Desktop builds         | `build-macos-app.sh` (launcher), `build-macos-bundle.sh` + `packaging/apollo.spec` + `packaging/apollo_boot.py` (self-contained PyInstaller) |
 | Frontend entry         | `static/index.html`, `static/app.js`, `static/js/` |

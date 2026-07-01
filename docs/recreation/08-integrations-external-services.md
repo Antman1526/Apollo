@@ -13,7 +13,9 @@ settings / env vars that hold them.
 | Search providers | SearXNG, DuckDuckGo, Brave, Tavily, Serper, Google PSE |
 | Crawling | Crawl4AI |
 | Agent sidecar | Paperclip (Node) |
-| MCP | built-in stdio servers, NPX servers, remote SSE servers |
+| MCP | built-in stdio servers, NPX servers, remote SSE servers (incl. Voicebox `/mcp`) |
+| Voice | Voicebox local voice studio (TTS/STT), OpenAI-compatible audio endpoints |
+| Content import | Skill-pack GitHub install, ChatGPT/Claude chat-export import |
 | Comms | Email (IMAP/SMTP), CalDAV calendar, ntfy, generic HTTP integrations |
 
 ---
@@ -405,14 +407,163 @@ Linkding, Home Assistant, …; preset catalog at `src/integrations.py:88-145`):
 
 ---
 
+## 9. Voicebox — local voice studio (TTS + STT) — `services/tts/tts_service.py`, `services/stt/stt_service.py`
+
+- **What:** [Voicebox](https://github.com/jamiepine/voicebox) is an external,
+  locally-running voice studio (voice-cloning + multiple TTS engines) that Apollo
+  talks to as a **client**. It is a *selectable provider* in both the TTS and STT
+  services, sitting alongside `disabled`/`browser`/`local`/`piper`/`endpoint:<id>`
+  — no new infrastructure, the same dispatch shape as the existing `endpoint`
+  branch. It powers voice call mode, read-aloud, and dictation.
+- **Wire protocol:** loopback base `http://127.0.0.1:17493`, no auth, with a
+  client-id header on every request. The header is a class constant on both
+  services (`services/tts/tts_service.py:145`, `services/stt/stt_service.py:159`):
+
+  ```python
+  _VOICEBOX_HEADERS = {"X-Voicebox-Client-Id": "apollo"}
+
+  @staticmethod
+  def _voicebox_base(url: Optional[str]) -> str:
+      return (url or "http://127.0.0.1:17493").rstrip("/")
+  ```
+
+- **Reachability / availability:** `available` for the `voicebox` provider is a
+  short `GET /profiles` probe (2 s timeout, 200 → reachable)
+  (`tts_service.py:151-158`, `stt_service.py:165-172`):
+
+  ```python
+  def _voicebox_reachable(self, url):
+      base = self._voicebox_base(url)
+      try:
+          r = httpx.get(base + "/profiles", headers=self._VOICEBOX_HEADERS, timeout=2.0)
+          return r.status_code == 200
+      except Exception:
+          return False
+  ```
+
+- **TTS synthesis — `POST /generate`** (`services/tts/tts_service.py:186-207`):
+  `profile_id` is the configured `tts_voice`; when unset it falls back to the
+  first entry from `GET /profiles` (`_voicebox_profiles` at `:160`,
+  `_voicebox_profile_id` tolerates `id`/`profile_id`/`name`/`slug`, `:175-184`).
+  Returns raw audio bytes, reusing the shared TTS cache (`:249-250`):
+
+  ```python
+  payload = {"text": text, "profile_id": profile_id, "language": "en"}
+  r = httpx.post(base + "/generate", json=payload,
+                 headers=self._VOICEBOX_HEADERS, timeout=120)
+  ```
+
+- **STT transcription — `POST /transcribe`** (multipart)
+  (`services/stt/stt_service.py:195-217`): the audio is sent as the `audio` file
+  part with `model=stt_model or "base"`; the reply is parsed tolerantly by
+  `_parse_voicebox_text` (`:174-193`), which accepts a bare string, `{"text":…}`,
+  `{"transcription":…}`, or a `segments[]` list:
+
+  ```python
+  files = {"audio": ("audio.webm", io.BytesIO(audio_bytes), "audio/webm")}
+  data = {"model": model or "base"}
+  r = httpx.post(base + "/transcribe", headers=self._VOICEBOX_HEADERS,
+                 files=files, data=data, timeout=120)
+  ```
+
+- **Stats:** `get_stats()` reports `provider: "voicebox"` and a model label of
+  `Voicebox (<voice or 'default profile'>)` so the call-mode UI and toggles light
+  up (`tts_service.py:302-303`; STT `stt_service.py:243-255`).
+- **Config keys:** `voicebox_url` (setting, default `http://127.0.0.1:17493`,
+  `src/settings.py:53`), plus `tts_provider="voicebox"` / `tts_voice=<profile_id>`
+  and `stt_provider="voicebox"`. Both services read `voicebox_url` from settings
+  on every call (`tts_service.py:43`, `stt_service.py:38`).
+- **Note — the other providers:** the same TTS service also dispatches to Kokoro-82M
+  on CUDA (`local`), Piper ONNX voices on CPU/Apple-Silicon (`piper`), and any
+  OpenAI-compatible `POST /audio/speech` via a `ModelEndpoint` row
+  (`endpoint:<id>`, `tts_service.py:107-141`); STT mirrors this with faster-whisper
+  (`local`) and `POST /audio/transcriptions` (`endpoint:<id>`, `stt_service.py:122-155`).
+
+### Voicebox MCP — optional agent-tools integration
+
+Voicebox additionally exposes an **HTTP/SSE MCP endpoint at
+`http://127.0.0.1:17493/mcp`**. Wiring it up **requires no Apollo code** — it is
+added like any other remote MCP server through Apollo's MCP settings (stored as a
+DB row, connected by `connect_all_enabled`, §5). The remote transport path is
+`_connect_sse` → `_run_sse_connection` (`src/mcp_manager.py:199-251`), which opens
+an `sse_client(url)` and an MCP `ClientSession`, then `session.initialize()`. This
+surfaces Voicebox's voice tools to the agent alongside the built-in servers.
+(Design intent recorded in `docs/superpowers/plans/2026-07-01-voicebox-integration.md`.)
+
+---
+
+## 10. Skill-pack GitHub install — `services/skills/pack_installer.py`
+
+- **What:** Apollo can import [Agent Skills](https://github.com) packs directly
+  from a GitHub repo into its `SKILL.md` store. Discover/classify/normalize/install
+  are pure local-dir operations; **only `fetch_pack` touches the network**, and it
+  is SSRF-guarded (`services/skills/pack_installer.py:1-7`).
+- **GitHub tarball fetch** — `fetch_pack(source, ref)` (`:214`) maps a
+  `https://github.com/<owner>/<repo>` URL to the API tarball endpoint via
+  `_github_tarball_url` (`:202-211`, default branch when no `ref`) and downloads it
+  through the shared SSRF-safe fetcher `_get_public_url`
+  (`src/search/content.py`, the same one deep-research uses):
+
+  ```python
+  # services/skills/pack_installer.py:214-228
+  url = _github_tarball_url(source, ref)
+  resp = _get_public_url(url, headers={"Accept": "application/vnd.github+json",
+                                       "User-Agent": "Apollo-SkillInstaller"}, timeout=timeout)
+  resp.raise_for_status()
+  if len(resp.content) > _MAX_PACK_BYTES:          # 50 MB cap
+      raise ValueError("pack download too large")
+  dest = tempfile.mkdtemp(prefix="apollo-skillpack-")
+  with tarfile.open(fileobj=io.BytesIO(resp.content), mode="r:gz") as t:
+      safe_extract_tar(t, dest, _MAX_PACK_BYTES)
+  ```
+
+- **Safe extraction** — `safe_extract_tar` (`:176-196`) caps members at 5000
+  (`_MAX_PACK_MEMBERS`), rejects absolute/`..` paths up front, enforces the total
+  size budget, and extracts with **`filter="data"`** (Python 3.12+) so
+  symlink/hardlink traversal and device nodes are blocked. (Full hardening detail is
+  in `14-security-implementation.md`.)
+- **Safe-by-default classification** — `classify_tier` (`:15-26`) inspects *file
+  names only* (never executes): a skill folder that ships code
+  (`scripts`/`hooks`/`bin` dirs, `.py`/`.js`/`.sh`/… files, or a `.mcp.json`) is
+  tiered `script` and installed as a **quarantined `draft`**; prose-only skills are
+  installed `published` (`render_skill_md` status flag, `:102-110`).
+- **Config keys:** none required beyond the caller-supplied `source` URL / `ref`.
+
+---
+
+## 11. Chat-export import (ChatGPT / Claude) — `services/memory/chat_import.py`
+
+- **What:** parses external chat-export archives from **ChatGPT** and **Claude**
+  into one common shape so past conversations can be imported (e.g. into memory).
+  Pure: no network, no DB (`services/memory/chat_import.py:1-10`). Each parser
+  returns `[{"title": str, "messages": [{"role", "text"}, …]}]`.
+- **Format auto-detection** — `parse_export(obj)` (`:128-134`) dispatches:
+  a top-level **list** whose items carry a `mapping` key → ChatGPT
+  (`_looks_like_chatgpt`, `:118`); a **dict** with a `conversations` list → Claude
+  (`_looks_like_claude`, `:124`); anything else → `[]`.
+- **ChatGPT** (`parse_chatgpt_export` → `_parse_chatgpt_conversation`, `:35-76`):
+  walks the `mapping` node graph, sorts by `message.create_time`, and pulls text
+  out of the `content.parts` / `content.text` object via `_text_from_parts` (`:21`).
+- **Claude** (`parse_claude_export` → `_parse_claude_conversation`, `:79-115`):
+  iterates `chat_messages[]`, taking `msg.text` (or falling back to
+  `_text_from_parts(msg.content)`).
+- **Normalization / resilience:** roles are lower-cased and `human → user`
+  (`_ROLE_MAP`/`_norm_role`, `:13-18`); empty-text messages are skipped; a single
+  malformed conversation is skipped (`try/except continue`) rather than aborting the
+  whole import; unknown shapes return `[]` and never raise.
+- **Config keys:** none (pure parser; the caller supplies the parsed JSON).
+
+---
+
 ## Cross-cutting notes
 
 - **Secrets** are never stored in plaintext docs and are encrypted at rest
   (`src/secret_storage.py`, integration encryption helpers, email password
   decryption). This document references only the *key names*.
 - **SSRF defences** recur across outbound integrations: Crawl4AI
-  (`check_outbound_url`), CalDAV (`_BLOCKED_HOSTS`), and generic integrations
-  (path/scheme validation).
+  (`check_outbound_url`), CalDAV (`_BLOCKED_HOSTS`), generic integrations
+  (path/scheme validation), and the skill-pack installer (GitHub fetch via
+  `_get_public_url`, plus `filter="data"` tar extraction).
 - **Graceful degradation** is a theme: missing Node, absent crawl4ai package,
   uncached npx package, and a down SearXNG sidecar each degrade with a clear
   message instead of crashing the app.

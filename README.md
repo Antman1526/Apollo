@@ -15,29 +15,40 @@ more jank and fun. Privacy-first, no telemetry, no trojan.
 Concretely, Apollo is one app that lets you **chat with language models** — local GGUF
 files served on demand through `llama.cpp` (one warm model at a time, swapped automatically),
 or any OpenAI-compatible / Anthropic / OpenRouter / Groq / Ollama endpoint you add — and then
-wraps that chat in a full workspace: **autonomous agents** with shell, web, file, and MCP
-tools; **web access** through a managed no-Docker SearXNG sidecar with a per-message
-auto-search decider; an **embedded interactive browser** (a live screencast of a server-side
-Chromium you and the agent share); **deep research** that searches, crawls, and synthesizes
-cited reports; **persistent memory and skills** (ChromaDB + local ONNX embeddings) that the
-assistant carries across sessions; **email, calendar, notes, and tasks** that the agent can
-act on; a **multi-tab document editor**; a hardware-aware model **Cookbook**; **24 themes**;
-and an installable **PWA**.
+wraps that chat in a full workspace: a **tool-running agent loop** with shell, python, web,
+browser, email, calendar, notes, tasks, memory, skills, and image tools plus **MCP** servers;
+**web access** through a managed no-Docker SearXNG sidecar with a per-message auto-search
+decider and DuckDuckGo fallback; an **embedded interactive browser** (a live screencast of a
+server-side Chromium you and the agent share); **deep research** that searches, crawls, and
+synthesizes cited reports; **persistent memory and skills** (ChromaDB + local fastembed ONNX
+embeddings) that the assistant carries across sessions; a hands-free **voice call mode**
+(local Whisper STT + Piper/Kokoro TTS + energy-VAD + barge-in); a **second brain** that
+distills chats into vector-indexed memories and imports your ChatGPT/Claude exports; a
+**knowledge-graph** view over those memories; an **adversarial reviewer** that has a second
+model critique answers; **email, calendar, notes, and tasks** the agent can act on; a
+**multi-tab document editor**; a hardware-aware model **Cookbook**; **24 themes**; and an
+installable **PWA**.
 
-It is a three-tier system: a **FastAPI backend** (Python 3.11+) exposing ~40 modular routers,
-a **framework-free vanilla-JS frontend** (ES modules, server-sent events, no build step), and
-a **SQLite + ChromaDB data layer**. Everything runs as one `uvicorn` process plus on-demand
-`llama-server` subprocesses, a managed SearXNG sidecar, and the optional Paperclip Node
-sidecar. See [Architecture](#architecture) below for enough detail to rebuild it, and
-[docs/recreation/](#recreation--full-technical-docs) for the complete reconstruction spec.
+It is a **three-tier system**: a **FastAPI backend** (Python 3.11+, one `uvicorn` process)
+exposing ~40 modular routers, a **framework-free vanilla-JS frontend** (ES modules,
+server-sent events, no build step), and a **SQLite (SQLAlchemy) + ChromaDB data layer**.
+Everything runs as that one process plus on-demand `llama-server` subprocesses, a managed
+SearXNG sidecar, and the optional Paperclip Node sidecar. See [Architecture](#architecture)
+for enough detail to rebuild it, and [docs/recreation/](#recreation--full-technical-docs)
+for the complete reconstruction spec.
 
 > Apollo is a renamed distribution of **[Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)** by **pewdiepie-archdaemon**. All the original work is theirs — Apollo only changes the name. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for full credits.
 
 ## What it actually does
 
-  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI · Anthropic · Groq</sub>
+  - **Chat** -- chat with any local model or API; adding them is super simple.<br>　<sub>vLLM · llama.cpp · Ollama · OpenRouter · OpenAI · Anthropic · Groq · OpenAI-compatible</sub>
   - **Local Models** -- point Apollo at folders of GGUF models; they're discovered automatically, appear in the model picker, and a llama.cpp server is launched on the fly when you pick one.<br>　<sub>folder auto-scan · auto-serve on select · single warm chat model · configurable dirs (Settings → AI)</sub>
-  - **Agent** -- hand it tools and let it run the whole task itself.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory</sub>
+  - **Agent** -- hand it tools and let it run the whole task itself: `bash`, `python`, `web`, `browser`, `email`, `calendar`, `notes`, `tasks`, `memory`, `skills`, `image`, and any MCP server you add.<br>　<sub>built on [opencode](https://github.com/anomalyco/opencode) · MCP · web · files · shell · skills · memory · SSE streaming</sub>
+  - **Voice call mode** -- a hands-free "call" overlay: talk, it transcribes, thinks, and speaks back, with barge-in so you can interrupt.<br>　<sub>local Whisper STT · Piper/Kokoro/Voicebox TTS · energy-RMS VAD · barge-in · `/api/stt` · `/api/tts`</sub>
+  - **Second brain** -- distill any chat (or your imported ChatGPT/Claude export) into durable, deduped, vector-indexed memories the agent recalls later.<br>　<sub>LLM fact distiller · dedup + vector index · ChatGPT/Claude export parsers · `/api/memory/distill-session` · `/api/memory/import-chat-export`</sub>
+  - **Knowledge graph** -- a graph view over your memories: semantic + same-session edges rendered as an interactive SVG force layout.<br>　<sub>semantic + session edges · deterministic layout · `/api/memory/graph`</sub>
+  - **Adversarial reviewer** -- one click has a *second* model critique the last answer for errors, missing caveats, and gaps.<br>　<sub>reviewer/utility model role · Verdict/Issues/Suggestion · inline Review button + persisted Review mode · `/api/review`</sub>
+  - **Skill-pack installer** -- import an Agent-Skills pack straight from a GitHub repo; prose skills are published, script-backed ones are quarantined as drafts.<br>　<sub>SKILL.md discovery · trust-tier classifier · SSRF/zip-bomb/tar-symlink guards · admin-gated · `/api/skills/packs/{preview,install}`</sub>
   - **Ralph Loop** -- an opt-in PRD/task loop for learning across iterations and getting scoped agent work done.<br>　<sub>prd.json · progress.md · AGENTS learning snippets · quality gates</sub>
   - **Embedded Browser** -- a live interactive screencast of a shared server-side Playwright Chromium; you and the agent drive the same session, and even iframe-blocked sites work.<br>　<sub>CDP screencast over WebSocket · input forwarding · `browser` agent tool · `/api/browser/*`</sub>
   - **Browser + Crawl Agents** -- browser-use verifies real UI workflows, while crawl4ai turns web sources into research-ready Markdown.<br>　<sub>Paperclip Floor QA · Ralph verification commands · Crawl4AI source imports</sub>
@@ -46,12 +57,60 @@ sidecar. See [Architecture](#architecture) below for enough detail to rebuild it
   - **Deep Research** -- multi-step runs that gather, read, and synthesize sources into a nice visual report.<br>　<sub>adapted from [Tongyi DeepResearch](https://github.com/Alibaba-NLP/DeepResearch)</sub>
   - **Compare** -- a fun tool to compare models side by side. Test completely blind, no bias!<br>　<sub>multi-model · blind test · synthesis</sub>
   - **Documents** -- YOU write the text, AI is there to assist, not the opposite.<br>　<sub>multi-tab editor · markdown · HTML · CSV · syntax highlighting · AI edits · suggestions</sub>
-  - **Memory / Skills** -- Persistent memory and skills, your agent evolves over time as it better understands you and your tasks!<br>　<sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export</sub>
+  - **Memory / Skills** -- Persistent memory and skills, your agent evolves over time as it better understands you and your tasks!<br>　<sub>ChromaDB · fastembed (ONNX) · vector + keyword retrieval · import/export · distill · graph</sub>
   - **Email** -- IMAP/SMTP inbox with AI triage built in: urgency reminders, auto-tag, auto-summary, auto-reply drafts, auto-spam.<br>　<sub>IMAP · SMTP · per-account routing · CalDAV-aware</sub>
   - **Notes & Tasks** -- Quick notes with reminders, a todo list, and scheduled tasks the agent can act on.<br>　<sub>note pings · checklist · cron-style tasks · ntfy / browser / email channels</sub>
   - **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor (24 themes, dark + light) · file uploads (vision + PDF) · presets · sessions · 2FA</sub>
+
+## New this session
+
+A batch of features landed recently. Each is grounded in real code (file paths in
+[Architecture](#architecture) and [docs/recreation/](#recreation--full-technical-docs)):
+
+- **Hands-free voice call mode.** A "call" overlay drives a full listen → transcribe →
+  think → speak loop with no button presses. A pure, unit-tested state machine
+  (`static/js/voiceCall.js`, `createCallMachine`) sits over browser effects; an
+  **energy-RMS voice-activity detector** (`static/js/vad.js`, `createVadGate` — 512-FFT,
+  ~60 fps, configurable threshold and silence timeout) fires speech-start/end events. Mic
+  audio (WebM, with echo-cancellation + noise-suppression) is posted to `/api/stt/transcribe`
+  and the reply is spoken via the TTS manager. **Barge-in** is built in: talking while the
+  assistant is speaking stops playback and starts capturing you again.
+- **Voicebox as an optional TTS *and* STT engine.** Alongside local **faster-whisper** (STT)
+  and local **Kokoro-82M / Piper** (TTS), you can point Apollo at a running Voicebox voice
+  studio. It's selected as the `voicebox` provider in **Settings**, defaults to
+  `http://127.0.0.1:17493` (`voicebox_url`), synthesizes via `POST {url}/generate` with a
+  picked **profile**, and transcribes via `POST {url}/transcribe`
+  (`services/tts/tts_service.py`, `services/stt/stt_service.py`).
+- **Second brain over chats.** Distill any session — or an uploaded **ChatGPT / Claude
+  export** — into durable, atomic, **deduplicated, vector-indexed memories** the agent recalls
+  later. An LLM fact-distiller (`services/memory/distiller.py`) feeds an orchestrator
+  (`services/memory/brain.py`) that skips duplicates and best-effort indexes into the vector
+  store; export parsers (`services/memory/chat_import.py`) auto-detect and normalize both
+  formats. Endpoints: `POST /api/memory/distill-session`, `POST /api/memory/import-chat-export`.
+- **Knowledge-graph tab.** A graph over your memories: **semantic** edges (vector-similarity
+  neighbors, thresholded and top-N capped) plus **same-session** chain edges, built purely and
+  deterministically (`services/memory/graph.py`, `GET /api/memory/graph`) and rendered as an
+  interactive **SVG force layout** with a deterministic layout step (unit-tested,
+  `tests/test_graph_layout.mjs`).
+- **Adversarial reviewer (second opinion).** An inline **Review** button (plus a persisted
+  **Review mode** toggle) sends the question + answer to a *second* model that returns a
+  structured **Verdict / Issues / Suggestion** critique (`services/review/reviewer.py`,
+  `POST /api/review`). It resolves the **reviewer** model role, falling back to **utility**
+  then the default chat endpoint.
+- **GitHub skill-pack installer.** Import an **Agent-Skills** pack straight from a GitHub repo:
+  Apollo fetches the tarball (SSRF-, zip-bomb-, and tar-symlink-guarded), discovers `SKILL.md`
+  files, and classifies each by **trust tier** — prose-only skills are published, while
+  **script-backed** skills (any `scripts/`, `hooks/`, `.py/.sh/.mcp.json`, …) are **quarantined
+  as drafts** and never auto-run. Provenance is stamped into each installed skill
+  (`services/skills/pack_installer.py`, admin-gated `POST /api/skills/packs/{preview,install}`).
+- **Agent-subprocess secret-scrub (security fix).** The agent's `bash`/`python` tools,
+  background jobs, the shell service, and MCP stdio servers used to inherit the *full*
+  `os.environ` — every provider API key, `DATABASE_URL`, decrypted SMTP/IMAP password,
+  `SEARXNG_SECRET`, etc. `src/subproc_env.py` (`build_agent_env`) now hands those children a
+  **minimal allowlisted, default-deny** environment with a denylist scrub layered on top, so a
+  prompt-injected agent or malicious skill can't `env | curl` your secrets out.
 
 ## Demo
 A full, hover-to-play tour lives on the landing page (`docs/index.html`).
@@ -72,9 +131,24 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`).
 
 </details>
 
+## Requirements
+
+- **Python 3.11+** (CI runs on 3.12). The core app — chat, agent, memory, documents, email,
+  calendar, deep research, voice, second brain, graph, reviewer — runs fully native on
+  macOS / Linux / Windows.
+- **Cookbook** background model downloads/serving also needs `tmux` (POSIX) or Git-for-Windows
+  `bash.exe`. Local GPU *serving* of vLLM/SGLang is CUDA/ROCm-only (Linux/WSL2); macOS uses
+  llama.cpp/Ollama over Metal.
+- **Voice** local engines are optional extras: `faster-whisper` (STT), plus your chosen TTS
+  (Kokoro / Piper / an OpenAI-compatible `/audio/speech` endpoint / Voicebox). The app runs
+  without them; voice just stays disabled until configured.
+- The app itself is lightweight; local model serving is the heavy part and depends on the
+  model, runtime, GPU, and VRAM — small hosts can connect to API or remote model servers
+  instead.
+
 ## Quick Start
 
-Defaults work out of the box: clone, run, then configure models/search/email
+Defaults work out of the box: clone, run, then configure models/search/email/voice
 inside **Settings**. Only edit `.env` for deployment-level overrides like
 `APP_BIND`, `APP_PORT`, `AUTH_ENABLED`, `DATABASE_URL`, or a pre-seeded admin password.
 
@@ -109,16 +183,15 @@ pip install -r requirements.txt
 python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
-Requirements: Python 3.11+. Cookbook also needs `tmux` for background model
-downloads and serves. The app itself is lightweight; local model serving is the
-heavy part and depends on the model, runtime, GPU, and VRAM, so small hosts can
-connect to API or remote model servers instead. Use `--host 0.0.0.0` only when
-you intentionally want LAN/reverse-proxy access.
+`app:app` is the ASGI application object in `app.py`. `setup.py` creates the data dirs,
+initializes the SQLite DB, and prints the first-boot admin password. Use `--host 0.0.0.0`
+only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon (one command)
 Docker on macOS is a Linux VM with no Metal GPU access. For GPU-accelerated
 Cookbook on an M-series Mac, run Apollo natively. `start-macos.sh` installs
-Homebrew deps, creates the venv, runs `setup.py`, and starts uvicorn:
+Homebrew deps, creates the venv, runs `setup.py`, and starts uvicorn (it is
+effectively `venv/bin/python -m uvicorn app:app`):
 
 ```bash
 git clone https://github.com/Antman1526/Apollo.git
@@ -139,19 +212,31 @@ APOLLO_HOST=0.0.0.0 ./start-macos.sh
 Keep `AUTH_ENABLED=true` (the default) before binding outside loopback, and do
 not expose the port directly to the public internet.
 
-**Clickable app + `.dmg`.** After `start-macos.sh` has set up the environment,
-build a double-clickable macOS app and a drag-to-Applications disk image:
+### macOS desktop builds (two flavors)
+
+Apollo ships **two** macOS build scripts that produce a double-clickable `Apollo.app` and a
+drag-to-Applications `Apollo.dmg`. Pick one:
 
 ```bash
+# 1. Launcher build — small, drives THIS repo's venv (Python not bundled).
+#    Best for developers who keep the repo; Cookbook keeps direct Metal-GPU access.
 ./build-macos-app.sh
-# produces:
-#   dist/Apollo.app   — double-click to start the server and open the UI
-#   dist/Apollo.dmg   — open it, then drag Apollo to /Applications
+#   -> dist/Apollo.app  (double-click to start the server + open the UI)
+#   -> dist/Apollo.dmg
+
+# 2. Self-contained bundle — PyInstaller-packs Python + all deps, so the app
+#    runs on any Apple-Silicon Mac WITHOUT the repo or a preinstalled venv.
+./build-macos-bundle.sh
+#   -> dist/Apollo.app  (fully self-contained, ~onedir under Contents/Resources/apollo)
+#   -> dist/Apollo.dmg
 ```
 
-This is a native launcher: it drives the repo's `venv/` (Python isn't bundled),
-so Cookbook keeps direct Metal-GPU access. Rebuild after moving the repo, since
-the install path is baked into the app.
+The launcher build (`build-macos-app.sh`) bakes the repo install path into the app — rebuild
+after moving the repo. The self-contained build (`build-macos-bundle.sh`) uses
+`packaging/apollo.spec` + `packaging/apollo_boot.py`, pins the app's SQLite DB, and waits on a
+readiness probe before opening the UI; it needs a working `./venv` with the app deps +
+`pyinstaller` only to *build*, not to *run*. Both default to port `7860` (override with
+`APOLLO_PORT`).
 
 ### Native Windows
 
@@ -177,9 +262,7 @@ python -m uvicorn app:app --host 127.0.0.1 --port 7000
 If `python` points at an older interpreter, use `py -3.12` (or another installed
 3.11+ version) for the venv step.
 
-**Requirements:** Python 3.11+. The core app (chat, agent, memory, documents,
-email, calendar, deep research) runs fully native. For full **Cookbook** background
-model downloads and the agent shell tool, also install
+For full **Cookbook** background model downloads and the agent shell tool, also install
 [Git for Windows](https://git-scm.com/download/win) (provides `bash.exe`).
 Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Windows,
 [Ollama](https://ollama.com/download) is the easiest path — point Apollo at
@@ -365,7 +448,8 @@ The load-bearing patterns are below; the full reconstruction spec lives in
 ┌──────────────────────────────────────────────────────────────────────────┐
 │  TIER 1 — FRONTEND  (static/, vanilla ES modules, NO build step)           │
 │  index.html · app.js · ~90 static/js/*.js modules (chat.js, research/,     │
-│  editor/, compare/, cookbook*, paperclip.js, browserPanel.js, settings.js) │
+│  editor/, compare/, cookbook*, paperclip.js, browserPanel.js, settings.js, │
+│  voiceCall.js, vad.js, graph tab, memory panel)                            │
 │  Served by Starlette StaticFiles; SSE + WebSocket for live streams; PWA.   │
 └───────────────┬──────────────────────────────────────────────────────────┘
                 │  HTTP / SSE / WebSocket  (cookie session or Bearer ody_… token)
@@ -375,7 +459,8 @@ The load-bearing patterns are below; the full reconstruction spec lives in
 │                              → AuthMiddleware                              │
 │   routes/ (~53 *_routes.py)  →  src/ (handlers, managers, agent loop)      │
 │                              →  services/ (search, searxng, browser,       │
-│                                 localmodels, paperclip, memory, research)  │
+│                                 localmodels, paperclip, memory, research,  │
+│                                 review, skills, stt, tts)                  │
 │                              →  core/ (database, auth, session, middleware)│
 └───────┬───────────────────────────────────────────────┬──────────────────┘
         │                                                │
@@ -385,15 +470,17 @@ The load-bearing patterns are below; the full reconstruction spec lives in
 │   (SQLAlchemy, ~30 models)│                 │  SearXNG (Python venv, :8893) │
 │  ChromaDB  data/chroma/  │                  │  Paperclip (Node, opt-in)     │
 │   (RAG + semantic memory)│                  │  Playwright Chromium / ntfy   │
-│  JSON  sessions/settings │                  └───────────────────────────────┘
-└─────────────────────────┘
+│  JSON  sessions/settings │                  │  Voicebox (opt-in, :17493)    │
+└─────────────────────────┘                  └───────────────────────────────┘
 ```
 
 **Tier 1 — Frontend (`static/`).** `index.html` + `app.js` plus ~90 ES modules under
 `static/js/`. No bundler or transpiler — browsers load raw `.js` modules. Cache discipline
 is server-side: `.js/.css/.html` are served `Cache-Control: no-cache` so a code change
 appears without a hard refresh. Installable PWA (`manifest.json`, `sw.js`). Theming is
-pure CSS variables + `color-mix` tokens (24 presets + a full custom theme editor).
+pure CSS variables + `color-mix` tokens (24 presets + a full custom theme editor). Voice
+call mode (`voiceCall.js`) is split into a pure state machine and browser wiring so the
+machine is unit-testable in Node.
 
 **Tier 2 — Backend (FastAPI).** `app.py` is a slim orchestrator: it builds the middleware
 stack, constructs managers once via `initialize_managers()` (`src/app_initializer.py`), and
@@ -404,8 +491,9 @@ with a strict dependency direction (`routes → src/services → core`, no cycle
 `PRAGMA foreign_keys=ON`), ~30 ORM models (`Session`, `ChatMessage`, `Document`,
 `ModelEndpoint`, `McpServer`, `ApiToken`, `Webhook`, `ScheduledTask`, `Memory`, `Note`,
 `CalendarEvent`, `EmailAccount`, …). ChromaDB holds vectors for personal-doc RAG and
-semantic memory — embedded on-disk natively, `HttpClient` when `CHROMADB_HOST` is set
-(Docker). Local ONNX embeddings via **fastembed** (`sentence-transformers/all-MiniLM-L6-v2`).
+semantic memory (and now the knowledge graph's semantic edges) — embedded on-disk natively,
+`HttpClient` when `CHROMADB_HOST` is set (Docker). Local ONNX embeddings via **fastembed**
+(`sentence-transformers/all-MiniLM-L6-v2`).
 
 **Key patterns (the parts you'd need to get right when recreating it):**
 
@@ -422,6 +510,11 @@ semantic memory — embedded on-disk natively, `HttpClient` when `CHROMADB_HOST`
   HTTP middleware, so the Paperclip and browser WS proxies validate the session cookie
   explicitly. Loopback trust is hardened: a request with any proxy-forwarding header
   (`x-forwarded-for`, `cf-connecting-ip`, …) is not treated as trusted loopback.
+- **Model roles resolve with fallback.** `src/endpoint_resolver.resolve_endpoint("<role>")`
+  reads `{role}_endpoint_id` / `{role}_model` from settings and dispatches to a
+  `ModelEndpoint`. Roles like `reviewer` and `utility` fall back to the default chat endpoint
+  when unset — so the adversarial reviewer works with just a default model, and the web
+  auto-decider deliberately refuses to run unless `utility_endpoint_id` is explicitly set.
 - **Local models: scan → catalog → single warm slot.** `services/localmodels/scanner.py`
   walks configured dirs for GGUFs (skipping AppleDouble `._` files, split parts, mmproj);
   the registry syncs a deduped name list into the picker; `server_manager.ensure_running(model)`
@@ -441,6 +534,26 @@ semantic memory — embedded on-disk natively, `HttpClient` when `CHROMADB_HOST`
   supervises it with a 2s health TTL (fail-closed on `/healthz`), a 300s restart-cooldown
   watchdog, and log truncation to `logs/searxng.log`. Started in a daemon thread on the
   `startup` event; reuses an already-running instance.
+- **Voice pipeline.** `services/stt/stt_service.py` (multi-provider STT: local
+  **faster-whisper**, an OpenAI-compatible `/audio/transcriptions` endpoint, browser Web
+  Speech, or **Voicebox**) and `services/tts/tts_service.py` (multi-provider TTS: local
+  **Kokoro-82M** / **Piper**, an OpenAI-compatible `/audio/speech` endpoint, browser, or
+  **Voicebox**) sit behind `/api/stt/*` and `/api/tts/*`. TTS output is cached on disk. The
+  hands-free call loop lives entirely in the frontend state machine + VAD gate.
+- **Second brain + graph.** `services/memory/distiller.py` extracts atomic facts via an
+  injected LLM caller; `brain.py` dedups against existing memories and vector-indexes new
+  ones; `chat_import.py` parses ChatGPT (`mapping`) and Claude (`conversations`) exports.
+  `services/memory/graph.py` builds a bounded, deterministic graph (semantic neighbors +
+  same-session chains) served at `/api/memory/graph`.
+- **Skill-pack installer.** `services/skills/pack_installer.py` fetches a GitHub tarball
+  behind SSRF, size (50 MB), member-count (5,000), and traversal/symlink guards (Python
+  `filter="data"`), discovers `SKILL.md` files, classifies each as `prose` or `script`, and
+  installs into the skills store — publishing prose skills and quarantining script-backed
+  ones as drafts, with import provenance stamped in.
+- **Agent-subprocess env scrub.** `src/subproc_env.build_agent_env()` gives every
+  agent-reachable child process (bash/python tools, background jobs, shell service, MCP stdio
+  servers) a minimal **allowlisted, default-deny** environment plus a secret-shaped denylist
+  scrub, mirroring the SearXNG sidecar allowlist pattern.
 - **Embedded browser.** `services/browser/embedded_browser.py` drives a shared Playwright
   Chromium page; the UI is a canvas screencast over `/api/browser/ws`. A scheme allowlist
   (`http`/`https` only) with a hard `BLOCKED_SCHEMES` set guards against SSRF/exfiltration.
@@ -449,15 +562,17 @@ semantic memory — embedded on-disk natively, `HttpClient` when `CHROMADB_HOST`
   Paperclip's live events, and per-agent lmproxy activity pulses, then drained by
   `/api/paperclip/stream`. The Floor UI keeps all layout in logical 0-100 coordinates and
   projects to an isometric SVG stage at render time, with depth-sorted true occlusion.
-- **Packaging is launcher-style.** `build-macos-app.sh` produces `Apollo.app`/`Apollo.dmg`
-  that drive this repo's venv (install path baked at build time); a small C launcher
-  (`scripts/windows-launcher/`) cross-compiles to `Apollo.exe`, which opens
-  `launch-windows.ps1` beside it.
+- **Packaging is two-flavor.** `build-macos-app.sh` produces a launcher `Apollo.app`/`Apollo.dmg`
+  that drive this repo's venv (install path baked at build time); `build-macos-bundle.sh` +
+  `packaging/apollo.spec`/`apollo_boot.py` produce a **self-contained PyInstaller** bundle that
+  runs without the repo. A small C launcher (`scripts/windows-launcher/`) cross-compiles to
+  `Apollo.exe`, which opens `launch-windows.ps1` beside it.
 
 **Stack:** Python 3.11+ · FastAPI/Starlette/uvicorn · httpx (all outbound HTTP incl. streaming
-proxies) · websockets · SQLAlchemy/SQLite · ChromaDB + fastembed · llama.cpp · vanilla
-ES-module JS · node:test + pytest. Full dependency rationale lives in `requirements.txt`
-comments and [docs/recreation/TECHNOLOGY-AUDIT.md](docs/recreation/TECHNOLOGY-AUDIT.md).
+proxies) · websockets · SQLAlchemy/SQLite · ChromaDB + fastembed · llama.cpp · faster-whisper ·
+Kokoro/Piper TTS · PyInstaller (bundle build) · vanilla ES-module JS · node:test + pytest. Full
+dependency rationale lives in `requirements.txt` comments and
+[docs/recreation/TECHNOLOGY-AUDIT.md](docs/recreation/TECHNOLOGY-AUDIT.md).
 
 ## Configuration
 
@@ -474,7 +589,7 @@ Key settings:
 | `SEARXNG_GIT_REF` | pinned commit | Override the SearXNG checkout ref used by the setup scripts. |
 | `web_access_mode` (Settings) | `manual` | Admin default for the per-chat off/auto/always toggle. |
 | `APP_BIND` | `127.0.0.1` | Docker Compose host bind address. Use `0.0.0.0` only for intentional LAN/reverse-proxy access. |
-| `APP_PORT` | `7000` | Docker Compose host port for the web UI. |
+| `APP_PORT` | `7000` | Docker Compose host port for the web UI (`7860` for `start-macos.sh` / desktop builds). |
 | `AUTH_ENABLED` | `true` | Enable/disable login |
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `SECURE_COOKIES` | `false` | Set true when serving Apollo through HTTPS at a trusted proxy or private access gateway. |
@@ -485,10 +600,22 @@ Key settings:
 | `EMBEDDING_URL` | -- | Optional OpenAI-compatible embeddings endpoint |
 | `PAPERCLIP_ENABLED` | `false` | Enable the Paperclip agent-management sidecar. |
 
-Local-model folders are configured per-user in **Settings → AI**; provider
-endpoints (OpenAI/Anthropic/OpenRouter/Groq/Ollama) and search-provider keys
-(Brave/Tavily/Serper/Google PSE) are added in the app. The full configuration
-reference is [docs/recreation/09-configuration-environment-variables.md](docs/recreation/09-configuration-environment-variables.md).
+Provider endpoints and search-provider keys are added **in the app**, not `.env`:
+
+- **Model providers** (OpenAI / Anthropic / OpenRouter / Groq / Ollama / any OpenAI-compatible)
+  are added in **Settings → AI**; each is a `ModelEndpoint`. **Model roles** —
+  `default`/`chat`, `utility`, `research`, `task`, and **`reviewer`** (for the adversarial
+  reviewer) — are assigned there via `{role}_endpoint_id` / `{role}_model` settings and fall
+  back sensibly when unset.
+- **Local-model folders** for GGUF auto-scan are configured per-user in **Settings → AI**.
+- **Search-provider keys** (Brave / Tavily / Serper / Google PSE) are added in the app.
+- **Voice** is configured in **Settings**: `stt_provider` / `tts_provider`
+  (`disabled | browser | local | endpoint:<id>`, plus `voicebox` and — for TTS — `piper`),
+  `stt_model` (Whisper size, default `base`), `tts_model` / `tts_voice` / `tts_speed`, and
+  `voicebox_url` (default `http://127.0.0.1:17493`).
+
+The full configuration reference is
+[docs/recreation/09-configuration-environment-variables.md](docs/recreation/09-configuration-environment-variables.md).
 
 ### Built-in MCP servers (optional setup)
 
@@ -512,18 +639,20 @@ Apollo/
 ├── docker-compose.yml     # apollo + chromadb + searxng + ntfy + paperclip(+db) profile
 ├── start-macos.sh         # Native macOS quick-start (venv + brew + uvicorn)
 ├── launch-windows.ps1     # Native Windows launcher
-├── build-macos-app.sh     # Builds dist/Apollo.app + Apollo.dmg
+├── build-macos-app.sh     # Launcher build: dist/Apollo.app + Apollo.dmg (drives repo venv)
+├── build-macos-bundle.sh  # Self-contained PyInstaller build (packaging/apollo.spec)
+├── packaging/             # apollo.spec + apollo_boot.py (PyInstaller bundle)
 ├── routes/   (53 *.py)    # HTTP boundary — APIRouter factories (setup_<name>_routes)
-├── src/      (79 *.py)    # App logic, managers, handlers, agent loop
-├── services/             # Self-contained subsystems (search, searxng, browser,
-│                         #   localmodels, paperclip, memory, research, tts, stt)
+├── src/      (79 *.py)    # App logic, managers, handlers, agent loop, subproc_env, resolver
+├── services/             # Self-contained subsystems (search, searxng, browser, localmodels,
+│                         #   paperclip, memory, research, review, skills, stt, tts)
 ├── core/     (10 *.py)    # Cross-cutting primitives (database, auth, session, middleware)
 ├── static/               # Vanilla-JS frontend (ES modules, no build) + style.css
 ├── mcp_servers/          # Built-in MCP servers (email, image-gen, memory, rag)
 ├── scripts/              # apollo-* CLIs + setup/maintenance scripts
-├── tests/    (267 *.py)   # pytest suite + node:test .mjs suites
+├── tests/                # pytest suite + node:test .mjs suites
 ├── docs/                 # Landing page, OPERATIONS.md, recreation/ spec
-├── data/     (gitignored) # SQLite, ChromaDB, JSON state, model caches
+├── data/     (gitignored) # SQLite, ChromaDB, JSON state, model caches, tts_cache
 └── dist/                 # Built desktop artifacts (Apollo.app, Apollo.dmg)
 ```
 
@@ -536,9 +665,10 @@ All user data lives in `data/` (gitignored): `app.db` (SQLite: sessions, message
 documents, model endpoints, MCP servers, notes, calendars, scheduled tasks, gallery,
 memories, email accounts, API tokens, webhooks), `auth.json` (users/2FA),
 `user_prefs.json` (per-user prefs incl. custom themes and local-model folders),
-`memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/` (vector memory).
-Generated secrets live in `~/.apollo/` with 0600 permissions (Paperclip auth secret,
-proxy token, per-agent tokens).
+`settings.json` (admin/service settings incl. voice + model-role config),
+`memory.json`, `presets.json`, `uploads/`, `personal_docs/`, `chroma/` (vector memory),
+`tts_cache/`. Generated secrets live in `~/.apollo/` with 0600 permissions (Paperclip auth
+secret, proxy token, per-agent tokens).
 
 ## Recreation — full technical docs
 
@@ -568,26 +698,28 @@ Apollo from scratch — each grounded in real file paths and line references:
 ## Testing & Build
 
 `scripts/check.sh` is the single quality gate: `compileall` (fast syntax check) + `pytest` +
-`npm test` (node:test `.mjs` suites). Run the Python suite directly with:
+`npm test` (node:test `.mjs` suites, incl. the voice VAD/call-machine and graph-layout tests).
+Run the suites directly with:
 
 ```bash
 venv/bin/python -m pytest -q          # full pytest suite
-npm test                              # frontend node:test suites
+npm run test:js                       # frontend node:test suites (aliased by `npm test`)
 scripts/check.sh                      # everything (the CI gate)
 ```
 
 CI (`.github/workflows/ci.yml`) runs on Python 3.12: it installs `requirements.txt`,
 runs `python -m compileall` over the source tree, then `python -m pytest -q`. Desktop
-artifacts are built with `./build-macos-app.sh` (macOS `.app`/`.dmg`); the Windows
-launcher (`launch-windows.ps1`) and Linux `systemd` install (`install-service.sh`,
-`apollo-ui.service`) cover the other platforms. Full pipeline details are in
+artifacts are built with `./build-macos-app.sh` (launcher `.app`/`.dmg`) or
+`./build-macos-bundle.sh` (self-contained PyInstaller `.app`/`.dmg`); the Windows launcher
+(`launch-windows.ps1`) and Linux `systemd` install (`install-service.sh`, `apollo-ui.service`)
+cover the other platforms. Full pipeline details are in
 [docs/recreation/11-build-deployment-pipeline.md](docs/recreation/11-build-deployment-pipeline.md).
 
 ## Security & threat model
 
 Apollo is a self-hosted workspace with powerful local tools: shell access, file uploads,
-model downloads, web research, email/calendar integrations, and API tokens. **Treat it like
-an admin console.** The essentials:
+model downloads, web research, email/calendar integrations, skill-pack imports, and API
+tokens. **Treat it like an admin console.** The essentials:
 
 - Keep `AUTH_ENABLED=true` for any network-accessible deployment, and `LOCALHOST_BYPASS=false`
   outside local development.
@@ -599,9 +731,18 @@ an admin console.** The essentials:
 - Review `data/auth.json` after first boot: disable open signup unless intended, keep only
   your own account admin, and keep demo/test accounts non-admin. Non-admin users get no
   shell/Python/file access by default, and admin-only routes/tools (MCP management, API
-  tokens, webhooks, model/cookbook serving, backup/vault, settings) are admin-gated.
-- Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider
-  APIs internal-only. Expose only the authenticated Apollo entrypoint through your proxy.
+  tokens, webhooks, model/cookbook serving, **skill-pack install**, backup/vault, settings)
+  are admin-gated.
+- **Agent subprocesses are secret-scrubbed.** Tools the agent can reach (`bash`/`python`,
+  background jobs, the shell service, MCP stdio servers) run with an allowlisted, default-deny
+  environment (`src/subproc_env.py`) so provider keys, `DATABASE_URL`, and SMTP/IMAP passwords
+  never leak into a child process.
+- **Imported skill packs are quarantined.** Script-backed skills from a GitHub pack are
+  installed as **drafts** (never auto-run); only prose skills are published. The fetch path is
+  SSRF-, zip-bomb-, and tar-symlink-guarded.
+- Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, Voicebox, databases, and raw
+  model/provider APIs internal-only. Expose only the authenticated Apollo entrypoint through
+  your proxy.
 
 The full policy and threat analysis are in [SECURITY.md](SECURITY.md) and
 [THREAT_MODEL.md](THREAT_MODEL.md). (A detailed security-implementation walkthrough
@@ -622,12 +763,13 @@ Common internal-only ports from the default setup:
 
 | Port | Service |
 |---|---|
-| `7000` | Apollo raw app port (`7860` for `start-macos.sh`) |
+| `7000` | Apollo raw app port (`7860` for `start-macos.sh` / desktop builds) |
 | `8080` | SearXNG (Docker-bundled instance) |
 | `8091` | ntfy |
 | `8893` | SearXNG managed sidecar (native installs; `searxng_port` setting) |
 | `8100` | ChromaDB host port for manual/compose access |
 | `11434` | Ollama |
+| `17493` | Voicebox (opt-in TTS/STT engine; `voicebox_url`) |
 | `8000-8020` | Common local model/provider APIs |
 
 ## Contributing

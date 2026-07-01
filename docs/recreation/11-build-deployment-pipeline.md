@@ -3,7 +3,9 @@
 Apollo ships three deployment modes that all run the same ASGI app
 (`uvicorn app:app`):
 
-1. **Native desktop** — macOS `.app`/`.dmg` and Windows PowerShell launcher (no Docker).
+1. **Native desktop** — macOS launcher `.app`/`.dmg` (§1), a **self-contained
+   PyInstaller** `.app`/`.dmg` (§1b), and a Windows PowerShell launcher / `Apollo.exe`
+   (§1b, §3) — all no-Docker.
 2. **Native service** — Linux systemd unit / macOS launchd helper for headless hosts.
 3. **Docker Compose** — multi-service stack with a SearXNG sidecar, ChromaDB, ntfy,
    and optional Paperclip.
@@ -48,6 +50,141 @@ else
   "$UVICORN" app:app --host 127.0.0.1 --port "$PORT" >>"$LOG" 2>&1 &
 fi
 ```
+
+> **Two macOS build scripts, two purposes.** `build-macos-app.sh` (this section)
+> produces a *thin launcher* `.app`/`.dmg` that drives **this repo's `venv`** at
+> runtime — the install path is baked in, so the target machine must have the repo.
+> `build-macos-bundle.sh` (§1b) produces a **self-contained** PyInstaller bundle
+> that ships Python + every dependency and runs on any Apple-Silicon Mac with no
+> repo and no preinstalled venv.
+
+---
+
+## 1b. `build-macos-bundle.sh` + `packaging/` — self-contained PyInstaller bundle
+
+Source: `/Users/Antman/Apollo/build-macos-bundle.sh`,
+`/Users/Antman/Apollo/packaging/apollo.spec`,
+`/Users/Antman/Apollo/packaging/apollo_boot.py`. Produces
+`dist/Apollo.app` (**~534 MB**) and `dist/Apollo.dmg` (**~233 MB**) that run
+**without the repo or a preinstalled venv** — Python and all deps are frozen in
+(`build-macos-bundle.sh:1-15`).
+
+### The PyInstaller onedir (`packaging/apollo.spec`)
+
+PyInstaller's static analysis misses native/data-heavy packages, so the spec
+`collect_all(...)`s each one explicitly (`apollo.spec:16-44`):
+
+```python
+# packaging/apollo.spec:18-44 (excerpt)
+for pkg in (
+    "chromadb", "onnxruntime", "fastembed", "tokenizers",
+    "cryptography", "pydantic", "pydantic_core", "crawl4ai", "mcp",
+    "caldav", "icalendar", "markdown", "qrcode", "pyotp",
+    "huggingface_hub", "tqdm", "certifi",
+):
+    try:
+        d, b, h = collect_all(pkg)
+        datas += d; binaries += b; hiddenimports += h
+    except Exception as exc:
+        print(f"[apollo.spec] collect_all({pkg!r}) skipped: {exc}")
+```
+
+- **uvicorn**'s dynamically-imported protocol/lifespan/loop workers are pinned as
+  hidden imports (`apollo.spec:45-57`).
+- The app imports `routes`/`services`/`core`/`src`/`companion`/`mcp_servers`/`config`
+  at startup, so whole trees are pulled via `collect_submodules` (`:59-62`).
+- Resource trees `static/` and `config/` plus the small seed JSON
+  (`auth.json`, `presets.json`, `features.json`, `settings.json`, `memory.json`,
+  `user_prefs.json`) ship as `datas` so CWD-/BASE_DIR-relative lookups resolve
+  (`:64-85`).
+- The `EXE`/`COLLECT` target is `name="apollo"`, `console=True`,
+  `target_arch="arm64"` (`:106-131`). Entry point is `packaging/apollo_boot.py`
+  (`:90`).
+
+### The boot shim (`packaging/apollo_boot.py`)
+
+A read-only app bundle can't write its DB/chroma/uploads where `core/constants.py`
+expects (next to `__file__`), so the shim relocates everything to a writable
+per-user home **without editing any application source** (`apollo_boot.py:1-26`):
+
+1. **Writable home** = `~/Library/Application Support/Apollo` (override with
+   `APOLLO_HOME`) (`:47-52`).
+2. **First-run seed** — `static/` is symlinked into the read-only bundle (falling
+   back to a copy); the small `data/` seed JSON is copied (never clobbering an
+   existing home); writable subdirs (`uploads`, `chroma`, `rag`, `skills`, …) are
+   created (`_seed_home`, `:55-105`).
+3. **`os.chdir(home)`** then **monkeypatch `core.constants`** BASE_DIR/DATA_DIR/
+   STATIC_DIR (and the derived SESSIONS_FILE/MEMORY_FILE/UPLOAD_DIR/… constants)
+   **before the app module is imported**, so every `from core.constants import
+   DATA_DIR` binds to the writable path (`_patch_constants`, `:108-125`).
+4. **DB / caches** — `DATABASE_URL` is `setdefault`-ed to
+   `sqlite:///<home>/data/app.db`; `HF_HOME` and `FASTEMBED_CACHE_PATH` likewise
+   default inside the home (`:145-151`).
+5. **Run uvicorn programmatically** by importing the **ASGI app object** directly
+   (`from app import app as asgi_app`) rather than the `"app:app"` import string,
+   because a frozen bundle can't re-import the top-level `app` module by string
+   (`:155-166`):
+
+```python
+# packaging/apollo_boot.py:162-166
+from app import app as asgi_app
+port = int(os.environ.get("APOLLO_PORT", "7860"))
+host = os.environ.get("APOLLO_HOST", "127.0.0.1")
+uvicorn.run(asgi_app, host=host, port=port, log_level="info")
+```
+
+### Assembling `Apollo.app` + `.dmg` (`build-macos-bundle.sh`)
+
+- Ensures `pyinstaller` is in the venv, then runs the onedir build
+  (`pyinstaller packaging/apollo.spec --noconfirm --distpath dist --workpath build`,
+  `build-macos-bundle.sh:31-47`).
+- Copies the onedir under `Apollo.app/Contents/Resources/apollo`, builds a
+  center-cropped `.icns` from `docs/apollo.jpg` via `sips`, and writes an
+  `Info.plist` (`com.apollo.bundle`, min macOS 11.0) (`:49-90`).
+- Writes the launcher script from a heredoc, `sed`-substituting `__PORT__`. The
+  launcher exports `APOLLO_PORT` and **pins `DATABASE_URL`** to the app's own
+  SQLite DB so a stray `DATABASE_URL` in the GUI/login environment can't be
+  inherited (the boot shim uses `setdefault`, so this must be set or the frozen app
+  crashes with `NoSuchModuleError`) (`:104-109`):
+
+  ```bash
+  # build-macos-bundle.sh:104-109
+  export APOLLO_PORT="$PORT"
+  export DATABASE_URL="sqlite:///$HOME_DIR/data/app.db"
+  ```
+
+  It then health-checks `$URL/api/health` for up to ~3 min on first run (the
+  FastEmbed model download), opens the UI in a chrome-less Chromium window, and
+  kills the server on TERM/INT (`:111-163`).
+- **Ad-hoc signs** the app (`codesign --force --deep --sign -`) so Gatekeeper
+  allows launch **on the build machine** (`:171-173`). *Note: ad-hoc signing is not
+  enough for distribution — a real Developer-ID signature + notarization is needed
+  to run on other users' machines without Gatekeeper prompts.*
+- Packages the `.dmg` with `hdiutil … -format UDZO` and a drag-to-`/Applications`
+  symlink (`:178-187`).
+
+### Windows launcher (`scripts/windows_launcher.py` + CI)
+
+Source: `/Users/Antman/Apollo/scripts/windows_launcher.py`. The Windows parallel is
+a **launcher** (like the macOS `.dmg` launcher), *not* a self-contained bundle. It
+locates the Apollo project dir, runs the maintained `launch-windows.ps1` (venv +
+install + first-run `setup.py` + start), and opens the browser once the port
+answers (`windows_launcher.py:1-16, 74-100`). It falls back to starting uvicorn
+from an existing venv if the PS1 is missing (`:88-100`).
+
+It is compiled to a single `Apollo.exe` by a **manual-only** GitHub Actions job
+(`.github/workflows/build-windows-exe.yml`) on `windows-latest`:
+
+```yaml
+# .github/workflows/build-windows-exe.yml:26-29
+- name: Build Apollo.exe (launcher)
+  # --console keeps the window open so the first-run admin password and
+  # server logs are visible. --onefile produces a single Apollo.exe.
+  run: pyinstaller --onefile --console --name Apollo scripts/windows_launcher.py
+```
+
+The workflow is `workflow_dispatch`-only (kept off push/PR so it never slows normal
+CI) and uploads `dist/Apollo.exe` as a 90-day artifact (`:5-6, 31-37`).
 
 ---
 
@@ -231,5 +368,8 @@ The same workflow that gates tests also acts as the build/integration check: on 
 PR and `push` to `main` it sets up Python 3.12, installs deps, **compiles** the package
 (`python -m compileall …`, `ci.yml:29`) as a fast syntax gate, runs `pytest -q`, then
 sets up Node 20 and runs `npm run test:js` (`ci.yml:1-44`). There is no separate
-artifact-publishing job — the desktop bundles (`.app`/`.dmg`) are produced locally by
-`build-macos-app.sh`.
+artifact-publishing job on the main CI — the macOS desktop bundles (`.app`/`.dmg`)
+are produced locally by `build-macos-app.sh` (launcher) and `build-macos-bundle.sh`
+(self-contained). The one build job that *does* publish an artifact is the
+**manual-only** `build-windows-exe.yml` (§1b), which compiles `Apollo.exe` on
+`windows-latest` on demand.

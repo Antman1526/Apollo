@@ -43,13 +43,124 @@ venv/bin/python -m pytest tests/test_web_decider.py -q   # one file
 
 CI runs the same command (`.github/workflows/ci.yml:32`): `python -m pytest -q`.
 
-JS tests use Node's built-in test runner (`package.json:8`):
+JS tests use Node's built-in test runner (`package.json:8`). `npm run test:js`
+expands to a `node --test <files…>` invocation, and individual `.mjs` files can
+also be run directly with `node --test tests/<file>.mjs`:
 
 ```bash
 npm run test:js
 # → node --test tests/test_paperclip_floor_ui.mjs tests/test_system_status_card.mjs \
-#          tests/test_system_status_actions.mjs tests/test_theme_presets.mjs
+#          tests/test_system_status_actions.mjs tests/test_theme_presets.mjs \
+#          tests/test_voice_vad.mjs tests/test_voice_call_machine.mjs \
+#          tests/test_graph_layout.mjs …
 ```
+
+Both runners are used side by side: **Python** via `venv/bin/python -m pytest`
+(the whole suite or a single file) and **JS** via `node --test` /
+`npm run test:js`. The two are independent — a JS-only change can be verified
+with `node --test tests/test_voice_call_machine.mjs` without touching pytest.
+
+---
+
+## New feature test files (what each covers)
+
+The features added on top of the base app ship with focused, DB-free unit tests
+that follow the same seam-injection / tolerant-parsing patterns as the rest of
+the suite. Grouped by feature:
+
+### Security — agent subprocess env scrub
+
+- **`tests/test_subproc_env.py`** — pins `src.subproc_env.build_agent_env`'s
+  **allowlist + denylist** behavior: every secret-shaped var
+  (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `DATABASE_URL`, `SMTP_PASSWORD`,
+  `IMAP_PASSWORD`, `SEARXNG_SECRET`, `*_TOKEN`, `*_SECRET`) is stripped, the
+  safe vars (`PATH`, `HOME`) survive, `extra=` constants and `passthrough=`
+  opt-ins are honored — **but the denylist overrides passthrough** so a secret
+  can't be opted back in. It then proves the *real* spawn paths don't leak by
+  running `env` through each: the agent `bash` tool (`_direct_fallback`), the
+  `ShellService`, MCP stdio child env (`_stdio_env`), a detached background job
+  (`bg.launch`), the `run_local` builtin action, and the Ralph quality-check
+  command — asserting no `sk-secret-openai` / `OPENAI_API_KEY` /
+  `postgres://…` appears in captured output.
+
+### Skill-pack installer
+
+- **`tests/test_pack_installer.py`** — the pure library: `classify_tier`
+  (prose vs script by presence of `scripts/`, `.mcp.json`, or loose code
+  files), `discover_skills` (multi-skill walk; **PyYAML block-scalar
+  descriptions parsed to real text**, not a literal `|`; a malformed
+  `SKILL.md` is *reported, not fatal*), `render_skill_md` (prose →
+  `status: published`, script → `status: draft` quarantine; provenance
+  `imported_from`/`imported_ref`; body preserved verbatim), `install_skills`
+  (writes `<root>/<category>/<name>/SKILL.md`, skips existing without
+  `overwrite`, **sanitizes a `../../ESCAPED` category** so nothing lands outside
+  `skills_root`), and the **`safe_extract_tar` guards** — path-traversal,
+  symlink-escape, and member-count cap all raise `ValueError`.
+- **`tests/test_skill_pack_routes.py`** — the FastAPI routes
+  (`/api/skills/packs/preview` and `/install`) via `TestClient`, with
+  `fetch_pack` stubbed to a local temp dir (no network) and `require_admin`
+  bypassed: preview lists skills **without writing**, install writes the
+  provenance-stamped `SKILL.md`, and selecting an absent name installs nothing.
+
+### Second brain — distill / import / memory graph
+
+- **`tests/test_distiller.py`** — `build_distill_prompt` (transcript embedded
+  in the user turn), `parse_facts` (bullets/numbers/blank lines normalized;
+  `NONE` / `(no durable facts)` markers → `[]`), and `distill_transcript` with
+  an **injected LLM callable** so no model is needed.
+- **`tests/test_chat_import.py`** — `parse_chatgpt_export` (mapping-tree),
+  `parse_claude_export` (flat `chat_messages`), and `parse_export`
+  auto-detection; garbage/non-JSON shapes return `[]` without raising.
+- **`tests/test_brain.py`** — the `distill_and_store` orchestrator with fake
+  `MemoryManager`/vector: de-dupes (both bool and `List[Dict]`
+  `find_duplicates` returns), indexes only when the vector store is `healthy`,
+  stamps `session_id` onto stored entries, calls `save` exactly once, and is a
+  no-op on empty facts.
+- **`tests/test_brain_routes.py`** — `/api/memory/distill-session` and
+  `/api/memory/import-chat-export` via `TestClient` on the **auth-off**
+  single-user path (`AUTH_ENABLED=false` → owner `None`), asserting the routes
+  forward the right args and reject bad JSON (400) / missing form field (422).
+- **`tests/test_memory_graph.py`** — the pure `build_graph`: nodes carry
+  fields + truncated label, semantic edges are **thresholded and
+  symmetric-deduped**, session edges added for same-`session_id` nodes, and
+  `max_nodes` caps the set with the neighbor fn called **only for kept nodes**.
+- **`tests/test_memory_graph_route.py`** — `GET /api/memory/graph` returns
+  `{nodes, edges}` and **degrades to session-only edges** when the vector store
+  is absent or unhealthy (no semantic search, no crash).
+
+### Adversarial reviewer
+
+- **`tests/test_reviewer.py`** — `build_review_prompt` (asks for a verdict) and
+  `parse_review` (extracts `verdict`/`issues`/`suggestion`, keeps `raw`,
+  tolerates free-form text).
+- **`tests/test_review_route.py`** — `POST /api/review` via `TestClient`:
+  returns the parsed verdict + issues + `model`, **400** on an empty answer
+  (guard runs before endpoint resolution) and **400** when no model resolves.
+- **`tests/test_resolve_endpoint_fallbacks.py`** — the real
+  `resolve_endpoint()` fallback ladder, including
+  **reviewer → utility → default** and the hidden-model auto-pick, using
+  in-file fakes for settings + the DB query.
+
+### Voice (Voicebox provider + JS call mode)
+
+- **`tests/test_voicebox_provider.py`** — the local Voicebox TTS/STT adapters
+  with `httpx` monkeypatched: TTS posts `/generate` with the
+  `X-Voicebox-Client-Id: apollo` header and falls back to the first profile;
+  STT posts multipart to `/transcribe` and parses `text` / `transcription` /
+  `segments` reply shapes; `available` flips on reachability.
+- **`tests/test_voice_vad.mjs`** (`node --test`) — the browser VAD gate
+  (`static/js/vad.js`): threshold crossing emits `speechstart`, sustained
+  silence emits `speechend`, a loud blip resets the silence timer, `reset()`
+  clears state.
+- **`tests/test_voice_call_machine.mjs`** (`node --test`) — the call-mode
+  state machine (`static/js/voiceCall.js`): idle→listening→capturing→
+  transcribing→thinking→speaking→listening, empty-transcript no-submit,
+  barge-in (speaking + `speechStart` stops TTS and re-captures), and the
+  **synchronous-`speakEnd` non-deadlock** case (TTS-unavailable path).
+- **`tests/test_graph_layout.mjs`** (`node --test`) — the memory-graph
+  force layout (`static/js/graphLayout.js`): connected nodes spring together,
+  `seedPositions` is deterministic per seed and stays in bounds, and edges
+  referencing missing nodes don't throw.
 
 ---
 

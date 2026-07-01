@@ -37,6 +37,17 @@ There is a BOM caveat noted in the source: a `.env` saved with a UTF-8 byte
 order mark can yield a key like `﻿AUTH_ENABLED` instead of `AUTH_ENABLED`
 (`app.py:33` comment), which would silently leave auth in its default-on state.
 
+**Desktop-launcher behavior.** The native launchers (`start-macos.sh`,
+`launch-windows.ps1`) do **not** hard-set `AUTH_ENABLED`, so the default-on
+value from `app.py:153` stands unless the user overrides it in their `.env`.
+Consequently a stock desktop launch runs **with auth on** and performs first-run
+admin setup — the launchers explicitly document that first run "creates data
+dirs and prints an initial admin password" (`start-macos.sh:142`,
+`launch-windows.ps1:118`). A user who wants the single-user, no-login experience
+sets `AUTH_ENABLED=false` in `.env` themselves; there is no launcher flag that
+flips it. This is why the recreation must keep the toggle purely env-driven and
+never assume the launcher injects it.
+
 ### LOCALHOST_BYPASS
 
 `LOCALHOST_BYPASS=true` (default `false`) skips the login flow for **direct
@@ -332,6 +343,30 @@ on unknown keys (`privs.get(key, True)`) — the UI is expected to gate display.
 for attribution: cookie sessions → logged-in user; bearer tokens → their
 `api_token_owner` (so a paired companion client sees the SAME data as the
 owner's desktop UI) rather than the sandboxed `"api"` pseudo-user.
+
+#### Endpoint role fallback — the `reviewer` role (`src/endpoint_resolver.py`)
+
+Not an *auth* gate, but the same "resolve a role to a concrete backend" shape:
+`resolve_endpoint(setting_prefix, …)` maps a named role
+(`"default"`, `"utility"`, `"task"`, `"research"`, `"reviewer"`) to
+`(chat_url, model, headers)` by reading `{prefix}_endpoint_id` /
+`{prefix}_model` from settings. Roles that are left unconfigured fall back down
+a fixed chain so a new role works out of the box without its own endpoint:
+
+- `"utility"` unset → **Default Chat** (`default_endpoint_id`/`default_model`,
+  `endpoint_resolver.py:245-247`).
+- Any other prefix (`task`, `research`, and the newer **`reviewer`**) unset →
+  **utility → default** (`endpoint_resolver.py:251-256`): it first tries
+  `utility_endpoint_id`, and if that is also unset falls through to
+  `default_endpoint_id`.
+
+So the adversarial-reviewer feature (`POST /api/review`) resolves its model via
+`resolve_endpoint("reviewer", …)`, which — with no `reviewer_endpoint_id`
+configured — silently becomes **reviewer → utility → default**. This is pinned
+by `tests/test_resolve_endpoint_fallbacks.py::test_reviewer_uses_utility_when_reviewer_endpoint_unset`.
+No new auth model or privilege key is involved; the reviewer role is just
+another entry in the endpoint-resolution fallback ladder, and the `/api/review`
+route returns **400** when nothing resolves (no model configured at all).
 
 ### Tool-layer enforcement (the real privilege wall)
 
