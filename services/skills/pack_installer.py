@@ -26,9 +26,27 @@ def classify_tier(skill_dir: str) -> str:
     return "prose"
 
 
+import re as _re
 from dataclasses import dataclass, field, replace
 
 from services.memory.skill_format import parse_frontmatter, slugify
+
+
+def _parse_frontmatter_robust(text: str):
+    """Parse SKILL.md frontmatter with PyYAML, falling back to Apollo's regex
+    parser. External packs use richer YAML (block scalars, quotes, nested
+    metadata) than Apollo's regex parser handles — e.g. `description: |` would
+    otherwise come back as the literal '|'. Returns (frontmatter_dict, body)."""
+    m = _re.match(r"^﻿?---\s*\n(.*?)\n---\s*\n?(.*)$", text, _re.S)
+    if m:
+        try:
+            import yaml
+            fm = yaml.safe_load(m.group(1))
+            if isinstance(fm, dict):
+                return fm, m.group(2)
+        except Exception:
+            pass
+    return parse_frontmatter(text)
 
 
 @dataclass
@@ -53,7 +71,7 @@ def discover_skills(pack_root: str) -> list:
         raw_name = os.path.basename(skill_dir.rstrip(os.sep)) or "skill"
         try:
             text = open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8", errors="replace").read()
-            fm, body = parse_frontmatter(text)
+            fm, body = _parse_frontmatter_robust(text)
             name = slugify(str(fm.get("name") or raw_name))
             desc = str(fm.get("description") or "").strip()
             tier = classify_tier(skill_dir)

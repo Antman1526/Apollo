@@ -64,6 +64,23 @@ def test_malformed_skill_is_reported_not_fatal(tmp_path):
     # or an empty description; the whole walk must not raise.
 
 
+def test_discover_handles_block_scalar_description(tmp_path):
+    # Many real packs (humanizer, social) use a YAML block scalar for
+    # description; Apollo's regex parser returns the literal '|'. Discovery must
+    # parse it properly (via PyYAML) so the description — which drives the skills
+    # index and retrieval — is real text.
+    (tmp_path / "skills/humanizer").mkdir(parents=True)
+    (tmp_path / "skills/humanizer/SKILL.md").write_text(
+        "---\nname: humanizer\ndescription: |\n"
+        "  Detect and rewrite AI writing tells. Use for robotic text.\n"
+        "version: 2.8.2\n---\n\nBody.")
+    found = {f.name: f for f in discover_skills(str(tmp_path))}
+    assert "humanizer" in found
+    desc = found["humanizer"].description
+    assert desc.strip() not in ("|", "")
+    assert "Detect and rewrite AI writing tells" in desc
+
+
 from services.skills.pack_installer import render_skill_md, InstallOpts
 
 
