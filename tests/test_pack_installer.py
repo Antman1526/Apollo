@@ -93,3 +93,32 @@ def test_render_script_skill_is_draft(tmp_path):
                    {"name": "docx"}, "Use pandoc.", ["scripts/x.py"])
     md = render_skill_md(f, _opts(category="office"))
     assert "status: draft" in md   # quarantined
+
+
+from services.skills.pack_installer import install_skills
+
+
+def test_install_writes_files_and_reports(tmp_path):
+    pack = tmp_path / "pack/skills/humanizer"
+    pack.mkdir(parents=True)
+    (pack / "SKILL.md").write_text("---\nname: humanizer\ndescription: d\n---\nBody")
+    found = discover_skills(str(tmp_path / "pack"))
+    root = str(tmp_path / "store")
+    res = install_skills(found, _opts(category="writing"), root, src_root=str(tmp_path / "pack"))
+    target = os.path.join(root, "writing", "humanizer", "SKILL.md")
+    assert os.path.exists(target)
+    assert "status: published" in open(target).read()
+    assert res["installed"] == ["humanizer"]
+
+
+def test_install_skips_existing_without_overwrite(tmp_path):
+    pack = tmp_path / "pack/skills/humanizer"
+    pack.mkdir(parents=True)
+    (pack / "SKILL.md").write_text("---\nname: humanizer\ndescription: d\n---\nBody")
+    found = discover_skills(str(tmp_path / "pack"))
+    root = str(tmp_path / "store")
+    os.makedirs(os.path.join(root, "writing", "humanizer"))
+    open(os.path.join(root, "writing", "humanizer", "SKILL.md"), "w").write("existing")
+    res = install_skills(found, _opts(category="writing", overwrite=False), root, src_root=str(tmp_path / "pack"))
+    assert res["skipped"] == ["humanizer"]
+    assert open(os.path.join(root, "writing", "humanizer", "SKILL.md")).read() == "existing"

@@ -108,3 +108,35 @@ def render_skill_md(found: "FoundSkill", opts: "InstallOpts") -> str:
         fm_text = f"{fm_text}\n{prov_lines}"
     body = (found.body or "").strip("\n")
     return f"---\n{fm_text}\n---\n\n{body}\n"
+
+
+import shutil
+
+
+def install_skills(found_list, opts, skills_root, src_root=""):
+    installed, skipped, errored = [], [], []
+    for f in found_list:
+        if f.error:
+            errored.append(f.name)
+            continue
+        dest_dir = os.path.join(skills_root, opts.category, f.name)
+        if os.path.exists(os.path.join(dest_dir, "SKILL.md")) and not opts.overwrite:
+            skipped.append(f.name)
+            continue
+        os.makedirs(dest_dir, exist_ok=True)
+        # Copy the skill's own files (inert) for script-backed skills so the
+        # quarantined draft is complete; SKILL.md is written normalized below.
+        if src_root and f.tier == "script":
+            src_dir = os.path.join(src_root, f.rel_dir)
+            for rel in f.files:
+                s = os.path.join(src_dir, rel)
+                d = os.path.join(dest_dir, rel)
+                os.makedirs(os.path.dirname(d), exist_ok=True)
+                try:
+                    shutil.copy2(s, d)
+                except OSError:
+                    pass
+        with open(os.path.join(dest_dir, "SKILL.md"), "w", encoding="utf-8") as fh:
+            fh.write(render_skill_md(f, opts))
+        installed.append(f.name)
+    return {"installed": installed, "skipped": skipped, "errored": errored}
