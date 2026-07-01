@@ -108,6 +108,10 @@ INSTALL_DIR="__INSTALL_DIR__"
 PORT="__PORT__"
 URL="http://127.0.0.1:${PORT}"
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+# The desktop app is a self-contained SQLite install. Pin its own DB so a stray
+# DATABASE_URL in the GUI/login environment (e.g. a dev machine's prisma/postgres
+# var) can't be inherited and crash startup with a NoSuchModuleError dialect error.
+export DATABASE_URL="sqlite:///${INSTALL_DIR}/data/app.db"
 # Run Paperclip in native mode (Apollo supervises it + auto-provisions Node,
 # reusing any already-running instance). Enabled by default in the desktop app;
 # override with PAPERCLIP_ENABLED=false.
