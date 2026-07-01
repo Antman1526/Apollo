@@ -149,3 +149,53 @@ def test_safe_extract_ok(tmp_path):
     buf.seek(0)
     root = safe_extract_tar(tarfile.open(fileobj=buf, mode="r:gz"), str(tmp_path), max_bytes=10_000)
     assert os.path.exists(os.path.join(root, "repo/skills/x/SKILL.md"))
+
+
+def test_safe_extract_rejects_symlink_escape(tmp_path):
+    # A clean-named symlink whose target escapes the destination must be rejected
+    # (name-only checks miss this; filter="data" catches it). Arbitrary-file-write
+    # primitive otherwise. SECURITY (C1).
+    import pytest
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        link = tarfile.TarInfo("repo/evil")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "/tmp/apollo-outside-target"
+        t.addfile(link)
+        data = b"OWNED"
+        payload = tarfile.TarInfo("repo/evil/payload.txt"); payload.size = len(data)
+        t.addfile(payload, io.BytesIO(data))
+    buf.seek(0)
+    with pytest.raises(ValueError):
+        safe_extract_tar(tarfile.open(fileobj=buf, mode="r:gz"), str(tmp_path), max_bytes=10_000)
+
+
+def test_safe_extract_rejects_too_many_members(tmp_path):
+    # Member-count cap guards against inode exhaustion. SECURITY (I2).
+    import pytest
+    from services.skills.pack_installer import _MAX_PACK_MEMBERS
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as t:
+        for i in range(_MAX_PACK_MEMBERS + 1):
+            info = tarfile.TarInfo(f"repo/f{i}.txt"); info.size = 1
+            t.addfile(info, io.BytesIO(b"x"))
+    buf.seek(0)
+    with pytest.raises(ValueError):
+        safe_extract_tar(tarfile.open(fileobj=buf, mode="r:gz"), str(tmp_path), max_bytes=10_000_000)
+
+
+def test_install_sanitizes_category_no_escape(tmp_path):
+    # A crafted category must not escape skills_root. SECURITY (I1).
+    pack = tmp_path / "pack/skills/humanizer"
+    pack.mkdir(parents=True)
+    (pack / "SKILL.md").write_text("---\nname: humanizer\ndescription: d\n---\nBody")
+    found = discover_skills(str(tmp_path / "pack"))
+    root = tmp_path / "store"
+    res = install_skills(found, _opts(category="../../ESCAPED"), str(root), src_root=str(tmp_path / "pack"))
+    assert res["installed"] == ["humanizer"]
+    # Nothing written outside skills_root.
+    assert not (tmp_path / "ESCAPED").exists()
+    hits = [os.path.join(r, "SKILL.md") for r, _d, fs in os.walk(str(root)) if "SKILL.md" in fs]
+    assert hits, "skill should be written under skills_root"
+    real_root = os.path.realpath(str(root))
+    assert all(os.path.realpath(h).startswith(real_root) for h in hits)

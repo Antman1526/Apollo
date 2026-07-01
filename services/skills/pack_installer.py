@@ -26,7 +26,7 @@ def classify_tier(skill_dir: str) -> str:
     return "prose"
 
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from services.memory.skill_format import parse_frontmatter, slugify
 
@@ -114,6 +114,10 @@ import shutil
 
 
 def install_skills(found_list, opts, skills_root, src_root=""):
+    # Sanitize the caller-supplied category so it can't escape skills_root via a
+    # crafted value like "../../etc" (slugify collapses separators/dots). Names
+    # are already slugified in discover_skills. SECURITY.
+    opts = replace(opts, category=slugify(opts.category or "imported", fallback="imported"))
     installed, skipped, errored = [], [], []
     for f in found_list:
         if f.error:
@@ -148,16 +152,29 @@ import tempfile
 from urllib.parse import urlparse
 
 
+_MAX_PACK_MEMBERS = 5000
+
+
 def safe_extract_tar(tar, dest: str, max_bytes: int) -> str:
+    members = tar.getmembers()
+    # Member-count cap guards against inode exhaustion (many tiny entries).
+    if len(members) > _MAX_PACK_MEMBERS:
+        raise ValueError("archive has too many entries")
     total = 0
-    for m in tar.getmembers():
-        # Reject absolute paths and traversal.
+    for m in members:
+        # Reject absolute paths and name-based traversal up front.
         if m.name.startswith("/") or ".." in m.name.split("/"):
             raise ValueError(f"unsafe path in archive: {m.name}")
         total += max(0, m.size)
         if total > max_bytes:
             raise ValueError("archive too large")
-    tar.extractall(dest)  # nosec - members validated above
+    try:
+        # filter="data" (Python 3.12+) is the vetted extraction policy: it blocks
+        # symlink/hardlink members that escape dest, absolute paths, and device
+        # nodes — closing the traversal gap the name-only check above misses.
+        tar.extractall(dest, filter="data")
+    except tarfile.FilterError as e:
+        raise ValueError(f"unsafe archive member: {e}") from e
     return dest
 
 
