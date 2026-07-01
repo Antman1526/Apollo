@@ -368,6 +368,7 @@
                 </select>
                 <button id="skills-select-btn" class="memory-toolbar-btn" title="Select multiple skills">Select</button>
                 <button id="skills-audit-btn" class="memory-toolbar-btn" title="Test every skill, auto-fix the weak ones, flag what still fails"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" style="vertical-align:-1px;margin-right:3px;"><path d="M12 0L14.59 8.41L23 12L14.59 15.59L12 24L9.41 15.59L1 12L9.41 8.41Z"/></svg>Audit all</button>
+                <button id="install-skill-pack-btn" class="memory-toolbar-btn" title="Install Agent Skills from a GitHub repo"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:3px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Install pack</button>
               </div>
               <input type="text" id="skills-search" placeholder="Search skills…" class="memory-search-input" aria-label="Search skills" />
             </div>
@@ -1307,6 +1308,39 @@
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
           <button id="cancel-rename-session" style="padding: 6px 12px;">Cancel</button>
           <button id="save-session-name" style="padding: 6px 12px; background: var(--fg); color: var(--bg);">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <!-- Install Skill Pack Modal -->
+  <div id="skill-pack-modal" class="modal hidden">
+    <div class="modal-content" role="dialog" aria-label="Install skill pack" style="width: min(560px, 92vw); background: var(--bg);">
+      <div class="modal-header">
+        <h4 style="margin:0;margin-right:auto;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>Install skill pack</h4>
+        <button class="close-btn" id="close-skill-pack-modal" aria-label="Close install skill pack modal">✖</button>
+      </div>
+      <div class="modal-body">
+        <p class="memory-desc" style="margin-top:0;">Import Agent Skills from a public GitHub repo. Prose skills install published; skills that ship code are quarantined as drafts and never run on import.</p>
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:12px;">
+          <div style="flex:1;">
+            <label for="skill-pack-source" style="display:block;margin-bottom:6px;font-weight:500;">Repo URL</label>
+            <input type="text" id="skill-pack-source" placeholder="https://github.com/owner/repo" style="width:100%;padding:8px;border-radius:4px;" />
+          </div>
+          <button id="skill-pack-preview-btn" class="memory-toolbar-btn" style="padding:8px 14px;">Preview</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;">
+          <div style="flex:1;">
+            <label for="skill-pack-category" style="display:block;margin-bottom:6px;font-weight:500;font-size:0.85em;">Category</label>
+            <input type="text" id="skill-pack-category" value="imported" style="width:100%;padding:6px;border-radius:4px;" />
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:0.85em;white-space:nowrap;padding-top:18px;"><input type="checkbox" id="skill-pack-overwrite" /> Overwrite existing</label>
+        </div>
+        <div id="skill-pack-results" style="max-height:40vh;overflow:auto;margin-bottom:12px;"></div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;">
+          <button id="skill-pack-cancel-btn" style="padding:6px 12px;">Cancel</button>
+          <button id="skill-pack-install-btn" style="padding:6px 12px;background:var(--fg);color:var(--bg);" disabled>Install selected</button>
         </div>
       </div>
     </div>

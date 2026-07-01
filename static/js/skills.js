@@ -1887,6 +1887,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (_selectMode) _exitSelectMode(); else _enterSelectMode();
   });
   document.getElementById('skills-audit-btn')?.addEventListener('click', _auditAllSkills);
+  document.getElementById('install-skill-pack-btn')?.addEventListener('click', _openSkillPackModal);
+  document.getElementById('close-skill-pack-modal')?.addEventListener('click', _closeSkillPackModal);
+  document.getElementById('skill-pack-cancel-btn')?.addEventListener('click', _closeSkillPackModal);
+  document.getElementById('skill-pack-preview-btn')?.addEventListener('click', _previewSkillPack);
+  document.getElementById('skill-pack-install-btn')?.addEventListener('click', _installSkillPack);
+  document.getElementById('skill-pack-source')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); _previewSkillPack(); }
+  });
   document.getElementById('skills-select-all')?.addEventListener('change', _toggleSelectAll);
   document.getElementById('skills-bulk-cancel')?.addEventListener('click', _exitSelectMode);
   document.getElementById('skills-bulk-audit')?.addEventListener('click', _bulkAudit);
@@ -1900,6 +1908,128 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') addSkill();
   });
 });
+
+// ── Install skill pack ──────────────────────────────────────────────────
+// Preview → Install a pack of Agent Skills from a GitHub repo. Prose skills
+// install published; script-backed skills are quarantined as drafts and never
+// run on import (the "ships code — review" badge flags them).
+
+let _skillPackFound = [];   // last previewed skills
+
+function _openSkillPackModal() {
+  const modal = document.getElementById('skill-pack-modal');
+  if (!modal) return;
+  _skillPackFound = [];
+  const results = document.getElementById('skill-pack-results');
+  if (results) results.innerHTML = '';
+  const installBtn = document.getElementById('skill-pack-install-btn');
+  if (installBtn) installBtn.disabled = true;
+  modal.classList.remove('hidden');
+  document.getElementById('skill-pack-source')?.focus();
+}
+
+function _closeSkillPackModal() {
+  document.getElementById('skill-pack-modal')?.classList.add('hidden');
+}
+
+function _tierBadge(tier) {
+  if (tier === 'script') {
+    return '<span class="skill-tier-badge" style="background:var(--warn,#b45309);color:#fff;padding:1px 6px;border-radius:8px;font-size:0.7em;white-space:nowrap;">ships code — review</span>';
+  }
+  return '<span class="skill-tier-badge" style="background:var(--border,#8884);padding:1px 6px;border-radius:8px;font-size:0.7em;white-space:nowrap;">prose</span>';
+}
+
+async function _previewSkillPack() {
+  const source = (document.getElementById('skill-pack-source')?.value || '').trim();
+  const results = document.getElementById('skill-pack-results');
+  const installBtn = document.getElementById('skill-pack-install-btn');
+  if (!source) { uiModule.showToast('Enter a repo URL'); return; }
+  if (results) results.innerHTML = '<div style="opacity:0.6;padding:8px;">Fetching…</div>';
+  if (installBtn) installBtn.disabled = true;
+  try {
+    const res = await fetch(`${API}/api/skills/packs/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      const msg = (data && (data.detail || data.error)) || `Preview failed (${res.status})`;
+      if (results) results.innerHTML = `<div style="color:var(--danger,#c00);padding:8px;">${esc(msg)}</div>`;
+      return;
+    }
+    _skillPackFound = data.skills || [];
+    _renderSkillPackResults();
+  } catch (e) {
+    if (results) results.innerHTML = `<div style="color:var(--danger,#c00);padding:8px;">${esc(String(e))}</div>`;
+  }
+}
+
+function _renderSkillPackResults() {
+  const results = document.getElementById('skill-pack-results');
+  const installBtn = document.getElementById('skill-pack-install-btn');
+  if (!results) return;
+  if (!_skillPackFound.length) {
+    results.innerHTML = '<div style="opacity:0.6;padding:8px;">No SKILL.md files found in that repo.</div>';
+    if (installBtn) installBtn.disabled = true;
+    return;
+  }
+  const rows = _skillPackFound.map((s) => {
+    const disabled = s.error ? 'disabled' : '';
+    // Prose skills default checked; script-backed skills default unchecked.
+    const checked = (!s.error && s.tier !== 'script') ? 'checked' : '';
+    const errNote = s.error ? `<div style="color:var(--danger,#c00);font-size:0.75em;">skipped: ${esc(s.error)}</div>` : '';
+    return `<label class="skill-pack-row" style="display:flex;gap:8px;align-items:flex-start;padding:6px 4px;border-bottom:1px solid var(--border,#8883);">
+      <input type="checkbox" class="skill-pack-check" data-name="${esc(s.name)}" ${checked} ${disabled} style="margin-top:3px;" />
+      <div style="flex:1;min-width:0;">
+        <div style="display:flex;gap:8px;align-items:center;"><strong style="overflow:hidden;text-overflow:ellipsis;">${esc(s.name)}</strong>${_tierBadge(s.tier)}</div>
+        <div style="font-size:0.8em;opacity:0.75;">${esc(s.description || '')}</div>
+        ${errNote}
+      </div>
+    </label>`;
+  }).join('');
+  results.innerHTML = rows;
+  if (installBtn) installBtn.disabled = false;
+}
+
+async function _installSkillPack() {
+  const source = (document.getElementById('skill-pack-source')?.value || '').trim();
+  const category = (document.getElementById('skill-pack-category')?.value || 'imported').trim() || 'imported';
+  const overwrite = !!document.getElementById('skill-pack-overwrite')?.checked;
+  const names = Array.from(document.querySelectorAll('.skill-pack-check'))
+    .filter((cb) => cb.checked)
+    .map((cb) => cb.getAttribute('data-name'));
+  if (!source) { uiModule.showToast('Enter a repo URL'); return; }
+  if (!names.length) { uiModule.showToast('Select at least one skill'); return; }
+  const installBtn = document.getElementById('skill-pack-install-btn');
+  if (installBtn) { installBtn.disabled = true; installBtn.textContent = 'Installing…'; }
+  try {
+    const res = await fetch(`${API}/api/skills/packs/install`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, category, names, overwrite }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      const msg = (data && (data.detail || data.error)) || `Install failed (${res.status})`;
+      uiModule.showToast(msg);
+      return;
+    }
+    const inst = (data.installed || []).length;
+    const skip = (data.skipped || []).length;
+    const err = (data.errored || []).length;
+    let msg = `Installed ${inst}`;
+    if (skip) msg += `, skipped ${skip}`;
+    if (err) msg += `, ${err} error${err === 1 ? '' : 's'}`;
+    uiModule.showToast(msg);
+    _closeSkillPackModal();
+    await loadSkills();   // refresh the Skills list
+  } catch (e) {
+    uiModule.showToast(String(e));
+  } finally {
+    if (installBtn) { installBtn.disabled = false; installBtn.textContent = 'Install selected'; }
+  }
+}
 
 export default { loadSkills, openSkill };
 
