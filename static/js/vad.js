@@ -10,6 +10,9 @@ export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
   let speaking = false;
   let lastLoudMs = 0;
 
+  // NOTE: deliberate lowercase 'speechstart'/'speechend' (DOM-event style). The
+  // Task 7 call-mode wiring bridges these to the machine's camelCase
+  // 'speechStart'/'speechEnd' events — do not "fix" the casing on one side only.
   return {
     // Returns 'speechstart' | 'speechend' | null.
     push(rms, nowMs) {
@@ -50,6 +53,10 @@ export function createMicVad({ stream, gate, onEvent }) {
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 512;
   source.connect(analyser);
+
+  // An AudioContext created outside a user gesture can start 'suspended', which
+  // makes the RMS loop read silence forever. Resume before the tick loop begins.
+  if (ctx.state === 'suspended') { try { ctx.resume(); } catch {} }
 
   const buf = new Float32Array(analyser.fftSize);
   let raf = 0;
