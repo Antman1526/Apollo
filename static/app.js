@@ -3826,6 +3826,19 @@ function startApolloApp() {
     });
   }
 
+  // Programmatic send for call mode: set the input to the transcript and submit
+  // through the normal path so the turn is a real chat message.
+  window.apolloSendMessage = function (text) {
+    const clean = (text || '').trim();
+    if (!clean) return;
+    const input = el('message');
+    if (!input) return;
+    input.value = clean;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    try { _updateSendBtnIcon(); } catch {}
+    handleSubmit(new Event('submit'));
+  };
+
   // Enter to send (shift+enter for newline), or new chat when empty
   if (messageInput) {
     messageInput.addEventListener('keydown', (e) => {
