@@ -1359,4 +1359,28 @@ def setup_chat_routes(
 
         return StreamingResponse(stream_rewrite(), media_type="text/event-stream")
 
+    # ------------------------------------------------------------------ #
+    # POST /api/review — adversarial second-model critique of an answer
+    # ------------------------------------------------------------------ #
+    @router.post("/api/review")
+    async def review_answer(request: Request):
+        from services.review.reviewer import build_review_prompt, parse_review
+        from src.endpoint_resolver import resolve_endpoint
+        from src.llm_core import llm_call_async
+        try:
+            data = await request.json()
+        except Exception:
+            raise HTTPException(400, "Invalid JSON")
+        question = (data.get("question") or "").strip()
+        answer = (data.get("answer") or "").strip()
+        if not answer:
+            raise HTTPException(400, "answer required")
+        owner = get_current_user(request)
+        url, model, headers = resolve_endpoint("reviewer", owner=owner)
+        if not url or not model:
+            raise HTTPException(400, "No reviewer/utility model configured — set one in Settings")
+        text = await llm_call_async(url, model, build_review_prompt(question, answer),
+                                    temperature=0.2, headers=headers, timeout=60)
+        return {**parse_review(text), "model": model}
+
     return router
