@@ -156,6 +156,12 @@ export async function startCall() {
     return;
   }
 
+  // Refresh TTS availability so the call reflects the CURRENT provider. The
+  // aiTTSManager only probes once at page load, so a provider enabled later in
+  // the session would otherwise be seen as unavailable and the reply silently
+  // skipped.
+  try { await window.aiTTSManager?.checkAvailability?.(); } catch {}
+
   const gate = createVadGate({ threshold: 0.02, silenceMs: 1200 });
   const prevAutoPlay = window.aiTTSManager ? window.aiTTSManager.autoPlay : false;
   if (window.aiTTSManager) window.aiTTSManager.autoPlay = false; // we drive TTS explicitly
