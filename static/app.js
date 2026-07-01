@@ -2230,6 +2230,25 @@ function initializeEventListeners() {
     });
   })();
 
+  // ── Review mode toggle (adversarial reviewer) ──
+  // Mirrors initTTSToggle: persisted under toggle key `reviewMode`, reflects
+  // the active state in the overflow menu, and updates the plus dot.
+  (function initReviewToggle() {
+    const reviewBtn = document.getElementById('overflow-review-btn');
+    if (!reviewBtn) return;
+    try {
+      const st = loadToggleState();
+      if (st.reviewMode) reviewBtn.classList.add('active');
+    } catch (e) {}
+
+    reviewBtn.addEventListener('click', () => {
+      const isActive = !reviewBtn.classList.contains('active');
+      reviewBtn.classList.toggle('active', isActive);
+      const s = loadToggleState(); s.reviewMode = isActive; saveToggleState(s);
+      updatePlusDot();
+    });
+  })();
+
 
   // ── Compare indicator (sidebar only, no overflow) ──
   const compareIndicatorBtn = el('compare-indicator-btn');

@@ -11,6 +11,7 @@ import sessionModule from './sessions.js';
 import chatRenderer from './chatRenderer.js';
 import chatStream from './chatStream.js';
 import { addAITTSButton } from './tts-ai.js';
+import { addReviewButton } from './review.js';
 import markdownModule from './markdown.js';
 import spinnerModule from './spinner.js';
 import presetsModule from './presets.js';
@@ -2486,6 +2487,12 @@ import createResearchSynapse from './researchSynapse.js';
         if (footerTarget !== holder) footerTarget.dataset.raw = accumulated;
         if (addAITTSButton && accumulated && window.aiTTSManager?._provider !== 'disabled' && window.aiTTSManager?.available) {
           addAITTSButton(footerTarget, accumulated);
+        }
+        // Inline "Review" button (adversarial reviewer). Always attach on a
+        // completed answer; the question is resolved from the preceding user
+        // bubble on click.
+        if (addReviewButton && accumulated) {
+          try { addReviewButton(footerTarget, null, accumulated); } catch (e) { /* non-fatal */ }
         }
         // Call mode listens for this to advance its state machine and speak.
         // Fired unconditionally (outside the TTS-button guard) so the call
