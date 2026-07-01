@@ -556,6 +556,7 @@ from routes.session_routes import setup_session_routes
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 from routes.memory_routes import setup_memory_routes
 from routes.skills_routes import setup_skills_routes
+from routes.skill_pack_routes import setup_skill_pack_routes
 from routes.chat_routes import setup_chat_routes
 from routes.research_routes import setup_research_routes
 from routes.history_routes import setup_history_routes
@@ -575,6 +576,7 @@ register_router_specs(app, [
     RouterSpec("Admin wipe", setup_admin_wipe_routes, args=(session_manager,)),
     RouterSpec("Memory", setup_memory_routes, args=(memory_manager, session_manager), kwargs={"memory_vector": memory_vector}),
     RouterSpec("Skills", setup_skills_routes, args=(skills_manager,)),
+    RouterSpec("SkillPacks", setup_skill_pack_routes, args=(skills_manager,)),
     RouterSpec("Chat", setup_chat_routes, args=(
         session_manager, chat_handler, chat_processor,
         memory_manager, research_handler, upload_handler,
