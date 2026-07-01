@@ -135,3 +135,20 @@ test('onState fires on each transition', () => {
   const states = eff.calls.filter(([n]) => n === 'onState').map(([, s]) => s);
   assert.deepEqual(states, ['listening']);
 });
+
+test('synchronous speakEnd from speak() does not deadlock (TTS-unavailable path)', () => {
+  // When TTS is disabled, the speak effect fires speakEnd immediately. The
+  // machine must already be in `speaking` when that lands, or it parks in
+  // `speaking` forever. Simulate the re-entrant synchronous dispatch.
+  let m;
+  const eff = {
+    speak: () => { m.dispatch('speakEnd'); },
+  };
+  m = createCallMachine(eff);
+  m.dispatch('start');
+  m.dispatch('speechStart');
+  m.dispatch('speechEnd');
+  m.dispatch('transcribed', { text: 'hi' });
+  m.dispatch('assistantComplete', { text: 'reply' });
+  assert.equal(m.state, 'listening', 'must not be stuck in speaking after a synchronous speakEnd');
+});

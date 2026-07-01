@@ -70,8 +70,11 @@ export function createCallMachine(effects = {}) {
         if (event === 'assistantComplete') {
           const text = ((payload && payload.text) || '').trim();
           if (text) {
-            eff.speak(text);
+            // Enter `speaking` BEFORE invoking speak(): a speak() that fires
+            // speakEnd synchronously (e.g. TTS disabled) must land in `speaking`,
+            // or the machine would park in `speaking` forever.
             set('speaking');
+            eff.speak(text);
           } else {
             set('listening');
           }
@@ -160,18 +163,24 @@ export async function startCall() {
   const machine = createCallMachine({
     onState: _setState,
     startCapture() {
-      _active.chunks = [];
+      // Chunks live in the closure, not on _active — so a call torn down
+      // mid-utterance (End / barge-in) can't leave onstop dereferencing a
+      // nulled _active. onstop still guards _active before touching the UI or
+      // the machine, since the call may have ended before it fires.
+      const chunks = [];
       const rec = new MediaRecorder(stream, { mimeType: 'audio/webm' });
       _active.recorder = rec;
-      rec.ondataavailable = (ev) => { if (ev.data.size > 0) _active.chunks.push(ev.data); };
+      rec.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
       rec.onstop = async () => {
-        const blob = new Blob(_active.chunks, { type: 'audio/webm' });
+        if (!_active) return; // call ended mid-utterance — nothing to transcribe
+        const blob = new Blob(chunks, { type: 'audio/webm' });
         try {
           const text = await _transcribe(blob);
+          if (!_active) return; // ended while transcribing
           _setTranscript(text);
           machine.dispatch('transcribed', { text });
         } catch (e) {
-          machine.dispatch('error');
+          if (_active) machine.dispatch('error');
         }
       };
       rec.start();
@@ -196,7 +205,7 @@ export async function startCall() {
     onEvent: (ev) => machine.dispatch(ev === 'speechstart' ? 'speechStart' : 'speechEnd'),
   });
 
-  _active = { machine, mic, stream, recorder: null, chunks: [], prevAutoPlay };
+  _active = { machine, mic, stream, recorder: null, prevAutoPlay };
 
   window.addEventListener('apollo:assistant-complete', _onAssistantComplete);
   _wireOverlayButtons();
