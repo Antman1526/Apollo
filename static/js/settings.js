@@ -1096,9 +1096,12 @@ async function initTtsSettings() {
   var speedRow = el('set-ttsSpeedRow');
   var ttsMsg = el('set-ttsSettingsMsg');
   var ttsEnabledToggle = el('set-ttsEnabledToggle');
+  var voiceboxUrlRow = el('set-ttsVoiceboxUrlRow');
+  var voiceboxUrlInput = el('set-ttsVoiceboxUrlInput');
   var ttsConfigWrap = provSel ? provSel.closest('div[style*="flex-direction"]') : null;
 
   function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
+  function isVoicebox() { return provSel.value === 'voicebox'; }
   function getModel() { return isEndpoint() ? modelSelect.value : modelInput.value; }
   function getVoice() { return isEndpoint() ? voiceSelect.value : voiceInput.value; }
 
@@ -1114,13 +1117,44 @@ async function initTtsSettings() {
       modelSelect.style.display = 'none'; modelInput.style.display = '';
       voiceSelect.style.display = 'none'; voiceInput.style.display = prov === 'disabled' ? 'none' : '';
     }
+    // Voicebox: base URL row + free-text profile id (populated from /profiles).
+    if (voiceboxUrlRow) voiceboxUrlRow.style.display = prov === 'voicebox' ? 'flex' : 'none';
     // For local Piper, the voice field is a path to a .onnx voice; offer the
     // ones auto-discovered under the configured model dirs.
     if (prov === 'piper') {
       voiceInput.placeholder = '/path/to/voice.onnx';
       loadPiperVoices();
-    } else if (voiceInput.placeholder === '/path/to/voice.onnx') {
+    } else if (prov === 'voicebox') {
+      voiceInput.placeholder = 'profile id (leave blank for first available)';
+      loadVoiceboxProfiles();
+    } else if (voiceInput.placeholder === '/path/to/voice.onnx' ||
+               voiceInput.placeholder.indexOf('profile id') === 0) {
       voiceInput.placeholder = 'af_heart';
+    }
+  }
+
+  var _voiceboxProfilesUrl = null;
+  async function loadVoiceboxProfiles() {
+    var dl = el('set-ttsPiperVoices');  // reuse the free-text voice datalist
+    if (!dl || !voiceboxUrlInput) return;
+    var base = (voiceboxUrlInput.value || 'http://127.0.0.1:17493').replace(/\/+$/, '');
+    if (_voiceboxProfilesUrl === base) return;  // already loaded for this URL
+    _voiceboxProfilesUrl = base;
+    try {
+      var r = await fetch(base + '/profiles', { headers: { 'X-Voicebox-Client-Id': 'apollo' } });
+      var data = await r.json();
+      var list = Array.isArray(data) ? data : (data.profiles || data.data || []);
+      dl.innerHTML = '';
+      list.forEach(function(p) {
+        var id = typeof p === 'string' ? p : (p.id || p.profile_id || p.name || p.slug);
+        if (!id) return;
+        var o = document.createElement('option');
+        o.value = id; o.label = (p && p.name) ? p.name : id; dl.appendChild(o);
+      });
+    } catch (e) {
+      // Voicebox not running / unreachable — free-text profile id still works.
+      _voiceboxProfilesUrl = null;
+      console.warn('Failed to load Voicebox profiles', e);
     }
   }
 
@@ -1160,6 +1194,7 @@ async function initTtsSettings() {
     if (settings.tts_model) { modelSelect.value = settings.tts_model; modelInput.value = settings.tts_model; }
     if (settings.tts_voice) { voiceSelect.value = settings.tts_voice; voiceInput.value = settings.tts_voice; }
     if (settings.tts_speed) { speedSelect.value = settings.tts_speed; }
+    if (voiceboxUrlInput) voiceboxUrlInput.value = settings.voicebox_url || 'http://127.0.0.1:17493';
     if (ttsEnabledToggle) ttsEnabledToggle.checked = settings.tts_enabled !== false;
   } catch (e) { console.warn('Failed to load TTS settings', e); }
 
@@ -1174,8 +1209,13 @@ async function initTtsSettings() {
 
   async function saveTTS() {
     try {
+      var body = { tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' };
+      // Voicebox lets the profile id be blank (backend falls back to the first
+      // available profile), so don't force the 'alloy' default there.
+      if (isVoicebox()) body.tts_voice = voiceInput.value.trim();
+      if (voiceboxUrlInput) body.voicebox_url = (voiceboxUrlInput.value || 'http://127.0.0.1:17493').trim();
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tts_enabled: ttsEnabledToggle ? ttsEnabledToggle.checked : true, tts_provider: provSel.value, tts_model: getModel() || 'tts-1', tts_voice: getVoice() || 'alloy', tts_speed: speedSelect.value || '1' }) });
+        body: JSON.stringify(body) });
       ttsMsg.textContent = 'Saved'; ttsMsg.style.color = 'var(--fg)'; setTimeout(() => { ttsMsg.textContent = ''; }, 2000);
       if (window.aiTTSManager) window.aiTTSManager.checkAvailability();
     } catch (e) { ttsMsg.textContent = 'Failed to save'; ttsMsg.style.color = 'var(--red)'; }
@@ -1191,9 +1231,17 @@ async function initTtsSettings() {
     if (prov === 'local') voiceInput.value = 'af_heart';
     else if (isEndpoint()) { voiceSelect.value = 'alloy'; modelSelect.value = 'tts-1'; }
     else if (prov === 'browser') { voiceInput.value = ''; voiceInput.placeholder = 'OS default voice'; }
+    else if (prov === 'voicebox') { voiceInput.value = ''; }
     updateVisibility();
     saveTTS();
   });
+  if (voiceboxUrlInput) {
+    voiceboxUrlInput.addEventListener('change', function() {
+      _voiceboxProfilesUrl = null;  // force re-fetch against the new URL
+      loadVoiceboxProfiles();
+      saveAndClearCache();
+    });
+  }
   modelSelect.addEventListener('change', saveAndClearCache);
   modelInput.addEventListener('change', saveTTS);
   voiceSelect.addEventListener('change', saveAndClearCache);
