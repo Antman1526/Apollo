@@ -25,7 +25,9 @@ from services.memory import MemoryManager
 from core.session_manager import SessionManager
 from src.request_models import MemoryAddRequest
 from core.database import SessionLocal
-from src.llm_core import llm_call_async
+from src.llm_core import llm_call, llm_call_async
+from services.memory import brain
+from services.memory.chat_import import parse_export
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
@@ -461,6 +463,72 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         except Exception as e:
             logger.error(f"Memory import extraction failed: {e}")
             raise HTTPException(502, f"LLM extraction failed: {str(e)}")
+
+    @router.post("/distill-session")
+    def distill_session_route(request: Request, session_id: str = Form(...)):
+        """Distill a chat session into deduped, vector-indexed memories.
+
+        The orchestrator loads the session, reads its own endpoint_url/model for
+        the LLM call, extracts atomic facts, dedups, and stores them tagged with
+        source="agent" + session_id. Returns the added/skipped counts.
+        """
+        from src.auth_helpers import require_privilege
+        require_privilege(request, "can_manage_memory")
+        try:
+            result = brain.distill_session(
+                session_id,
+                owner=_owner(request),
+                memory_manager=memory_manager,
+                memory_vector=memory_vector,
+            )
+        except Exception as e:
+            logger.error(f"Distill-session failed: {e}")
+            raise HTTPException(502, f"Distill failed: {str(e)}")
+        return {"ok": True, **result}
+
+    @router.post("/import-chat-export")
+    async def import_chat_export_route(request: Request, file: UploadFile = File(...)):
+        """Import a ChatGPT/Claude export archive as distilled memories.
+
+        Reads the uploaded JSON, parses the export into conversations, distills
+        each with a utility LLM endpoint, and stores them with source="import".
+        Imported conversations have no session, so the endpoint is resolved via
+        resolve_endpoint("utility") rather than off a Session row.
+        """
+        from src.auth_helpers import require_privilege
+        require_privilege(request, "can_manage_memory")
+
+        content = await file.read()
+        try:
+            obj = json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            raise HTTPException(400, "Uploaded file is not valid JSON")
+
+        conversations = parse_export(obj)
+        if not conversations:
+            return {"ok": True, "added": 0, "skipped": 0, "conversations": 0,
+                    "message": "No recognizable conversations in export"}
+
+        url, model, headers = resolve_endpoint("utility", owner=_owner(request))
+        if not url or not model:
+            raise HTTPException(400, "No LLM model configured. Set a default model in Settings.")
+
+        def _llm(msgs):
+            return llm_call(url, model, msgs, headers=headers)
+
+        try:
+            result = brain.import_conversations(
+                conversations,
+                owner=_owner(request),
+                memory_manager=memory_manager,
+                memory_vector=memory_vector,
+                llm_caller=_llm,
+                source="import",
+            )
+        except Exception as e:
+            logger.error(f"Chat-export import failed: {e}")
+            raise HTTPException(502, f"Import failed: {str(e)}")
+        return {"ok": True, **result}
 
     @router.post("/{memory_id}/pin")
     def pin_memory(request: Request, memory_id: str, pinned: bool = Form(True)):
