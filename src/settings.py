@@ -48,6 +48,9 @@ DEFAULT_SETTINGS = {
     "stt_provider": "disabled",
     "stt_model": "base",
     "stt_language": "",
+    # Voicebox (local voice studio) base URL — used by both the TTS and STT
+    # "voicebox" providers. The Voicebox desktop app must be running.
+    "voicebox_url": "http://127.0.0.1:17493",
     "search_provider": "searxng",
     # Default fallback chain — when the primary provider fails or
     # rate-limits, we try DuckDuckGo next. Free, no API key required, so
