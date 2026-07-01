@@ -2487,6 +2487,14 @@ import createResearchSynapse from './researchSynapse.js';
         if (addAITTSButton && accumulated && window.aiTTSManager?._provider !== 'disabled' && window.aiTTSManager?.available) {
           addAITTSButton(footerTarget, accumulated);
         }
+        // Call mode listens for this to advance its state machine and speak.
+        // Fired unconditionally (outside the TTS-button guard) so the call
+        // machine still advances past 'thinking' when TTS is unavailable.
+        try {
+          window.dispatchEvent(new CustomEvent('apollo:assistant-complete', {
+            detail: { text: accumulated || '' },
+          }));
+        } catch (e) { /* non-fatal */ }
         // TTS auto-play: streaming mode flushes remaining text, non-streaming enqueues full message
         if (accumulated && window.aiTTSManager && window.aiTTSManager.autoPlay) {
           const ttsBtn = holder.querySelector('.ai-tts-button');
