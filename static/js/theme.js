@@ -350,7 +350,7 @@ function _updateFavicon(fg) {
   if (routeShape) {
     svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>${routeShape.split('__C__').join(fg)}</svg>`;
   } else {
-    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 4L16 22L6 22Z' fill='${fg}'/><path d='M16 8L16 22L24 22Z' fill='${fg}' opacity='0.6'/><path d='M4 24Q10 20 16 24Q22 28 28 24' stroke='${fg}' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>`;
+    svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><path d='M16 3C19 6 20.5 11 20.5 15C20.5 18 19.5 20 18.5 21L13.5 21C12.5 20 11.5 18 11.5 15C11.5 11 13 6 16 3Z' fill='${fg}'/><path d='M11.5 16L7.5 22L11.5 20.5Z M20.5 16L24.5 22L20.5 20.5Z' fill='${fg}' opacity='0.6'/><path d='M13 21.5Q16 28 19 21.5' stroke='${fg}' stroke-width='2.5' fill='none' stroke-linecap='round'/></svg>`;
   }
   const href = 'data:image/svg+xml,' + encodeURIComponent(svg);
   let link = document.querySelector("link[rel='icon']");

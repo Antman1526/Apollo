@@ -3859,15 +3859,24 @@ function startApolloApp() {
     handleSubmit(new Event('submit'));
   };
 
-  // Call-mode entry button — visible only when STT is enabled (same gate as
-  // the send/mic button). Opens the call overlay and starts the loop.
+  // Call-mode entry button — always visible in the input bar. Starting a call
+  // needs STT enabled, so guard the click with a helpful message rather than
+  // hiding the button (which left it invisible when STT status loaded late).
   const callBtn = el('call-mode-btn');
   function _syncCallBtn() {
     if (!callBtn) return;
-    callBtn.style.display = _isSttEnabled() ? '' : 'none';
+    callBtn.style.display = '';
+    callBtn.classList.toggle('tool-disabled', !_isSttEnabled());
   }
   if (callBtn) {
-    callBtn.addEventListener('click', () => window.voiceCallModule?.startCall());
+    callBtn.addEventListener('click', () => {
+      if (!_isSttEnabled()) {
+        const notify = (window.uiModule && (window.uiModule.showToast || window.uiModule.showError)) || null;
+        if (notify) notify('Enable Speech-to-Text in Settings to use voice call');
+        return;
+      }
+      if (window.voiceCallModule) window.voiceCallModule.startCall();
+    });
   }
   window._syncCallModeBtn = _syncCallBtn;
   _syncCallBtn();
