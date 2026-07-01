@@ -115,6 +115,26 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         user = _owner(request)
         return {"memory": memory_manager.load(owner=user)}
 
+    @router.get("/graph")
+    async def memory_graph(request: Request):
+        """Owner-scoped knowledge graph over the user's memories.
+
+        Degrades to session-only edges when the vector store is unavailable.
+        """
+        from services.memory.graph import build_graph
+        user = _owner(request)
+        mems = memory_manager.load(owner=user)
+
+        def neighbor_fn(mem):
+            if not (memory_vector and getattr(memory_vector, "healthy", False)):
+                return []
+            try:
+                return memory_vector.search(mem.get("text") or "", k=6)
+            except Exception:
+                return []
+
+        return build_graph(mems, neighbor_fn, threshold=0.6, max_neighbors=4, max_nodes=300)
+
     @router.post("/search")
     def search_memories(request: Request, query: str = Form(...), session_id: str = Form(None), category: str = Form(None)):
         """Search across all memories with optional filters."""
