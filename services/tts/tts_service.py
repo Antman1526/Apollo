@@ -40,6 +40,7 @@ class TTSService:
             "tts_model": saved.get("tts_model", "tts-1"),
             "tts_voice": saved.get("tts_voice", "alloy"),
             "tts_speed": saved.get("tts_speed", "1"),
+            "voicebox_url": saved.get("voicebox_url", "http://127.0.0.1:17493"),
         }
 
     @property
@@ -57,6 +58,8 @@ class TTSService:
             return kokoro is not None and kokoro.available
         if provider == "piper":
             return self._get_piper().available
+        if provider == "voicebox":
+            return self._voicebox_reachable(settings.get("voicebox_url"))
         if provider.startswith("endpoint:"):
             return True  # assume reachable; errors surface at synthesis time
         return False
@@ -137,6 +140,72 @@ class TTSService:
             logger.error(f"API TTS synthesis failed: {e}")
             return None
 
+    # ── Voicebox (local voice studio) ──
+
+    _VOICEBOX_HEADERS = {"X-Voicebox-Client-Id": "apollo"}
+
+    @staticmethod
+    def _voicebox_base(url: Optional[str]) -> str:
+        return (url or "http://127.0.0.1:17493").rstrip("/")
+
+    def _voicebox_reachable(self, url: Optional[str]) -> bool:
+        base = self._voicebox_base(url)
+        try:
+            r = httpx.get(base + "/profiles", headers=self._VOICEBOX_HEADERS, timeout=2.0)
+            return r.status_code == 200
+        except Exception as e:
+            logger.debug(f"Voicebox unreachable at {base}: {e}")
+            return False
+
+    def _voicebox_profiles(self, url: Optional[str]) -> list:
+        """Best-effort list of Voicebox voice profiles (for default selection)."""
+        base = self._voicebox_base(url)
+        try:
+            r = httpx.get(base + "/profiles", headers=self._VOICEBOX_HEADERS, timeout=5.0)
+            r.raise_for_status()
+            data = r.json()
+            if isinstance(data, dict):
+                # tolerate {"profiles": [...]} or a bare mapping
+                return data.get("profiles") or data.get("data") or []
+            return data if isinstance(data, list) else []
+        except Exception as e:
+            logger.warning(f"Voicebox profiles fetch failed: {e}")
+            return []
+
+    @staticmethod
+    def _voicebox_profile_id(profile) -> Optional[str]:
+        if isinstance(profile, str):
+            return profile
+        if isinstance(profile, dict):
+            for k in ("id", "profile_id", "name", "slug"):
+                v = profile.get(k)
+                if v:
+                    return str(v)
+        return None
+
+    def _synthesize_voicebox(self, text: str, voice: str, url: Optional[str] = None) -> Optional[bytes]:
+        base = self._voicebox_base(url)
+        profile_id = voice
+        if not profile_id:
+            # Fall back to the first available profile.
+            profiles = self._voicebox_profiles(url)
+            if profiles:
+                profile_id = self._voicebox_profile_id(profiles[0])
+        payload = {"text": text, "profile_id": profile_id, "language": "en"}
+        try:
+            r = httpx.post(
+                base + "/generate",
+                json=payload,
+                headers=self._VOICEBOX_HEADERS,
+                timeout=120,
+            )
+            r.raise_for_status()
+            logger.info(f"Voicebox TTS: {len(r.content)} bytes (profile={profile_id})")
+            return r.content
+        except Exception as e:
+            logger.error(f"Voicebox TTS synthesis failed: {e}")
+            return None
+
     # ── Public interface ──
 
     def synthesize(self, text: str, use_cache: bool = True) -> Optional[bytes]:
@@ -177,6 +246,8 @@ class TTSService:
             if audio_data is None:
                 logger.warning("Piper TTS not available or voice failed to load")
                 return None
+        elif provider == "voicebox":
+            audio_data = self._synthesize_voicebox(text, voice, settings.get("voicebox_url"))
         elif provider.startswith("endpoint:"):
             endpoint_id = provider.split(":", 1)[1]
             audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed)
@@ -228,6 +299,8 @@ class TTSService:
             stats["model"] = f"Piper ({_os.path.basename(settings['tts_voice'] or 'no voice set')})"
         elif provider == "browser":
             stats["model"] = "Browser (Web Speech API)"
+        elif provider == "voicebox":
+            stats["model"] = f"Voicebox ({settings['tts_voice'] or 'default profile'})"
         elif provider.startswith("endpoint:"):
             stats["endpoint_id"] = provider.split(":", 1)[1]
 

@@ -35,6 +35,7 @@ class STTService:
             "stt_provider": saved.get("stt_provider", "disabled"),
             "stt_model": saved.get("stt_model", "base"),
             "stt_language": saved.get("stt_language", ""),
+            "voicebox_url": saved.get("voicebox_url", "http://127.0.0.1:17493"),
         }
 
     @property
@@ -49,6 +50,8 @@ class STTService:
             return True  # handled client-side
         if provider == "local":
             return self._get_whisper() is not None
+        if provider == "voicebox":
+            return self._voicebox_reachable(settings.get("voicebox_url"))
         if provider.startswith("endpoint:"):
             return True  # assume reachable
         return False
@@ -151,6 +154,68 @@ class STTService:
             logger.error(f"API STT transcription failed: {e}")
             return None
 
+    # ── Voicebox (local voice studio) ──
+
+    _VOICEBOX_HEADERS = {"X-Voicebox-Client-Id": "apollo"}
+
+    @staticmethod
+    def _voicebox_base(url: Optional[str]) -> str:
+        return (url or "http://127.0.0.1:17493").rstrip("/")
+
+    def _voicebox_reachable(self, url: Optional[str]) -> bool:
+        base = self._voicebox_base(url)
+        try:
+            r = httpx.get(base + "/profiles", headers=self._VOICEBOX_HEADERS, timeout=2.0)
+            return r.status_code == 200
+        except Exception as e:
+            logger.debug(f"Voicebox unreachable at {base}: {e}")
+            return False
+
+    @staticmethod
+    def _parse_voicebox_text(result) -> str:
+        """Tolerantly pull the transcript out of a Voicebox /transcribe reply."""
+        if isinstance(result, str):
+            return result.strip()
+        if isinstance(result, dict):
+            text = result.get("text")
+            if text:
+                return str(text).strip()
+            transcription = result.get("transcription")
+            if transcription:
+                return str(transcription).strip()
+            segments = result.get("segments")
+            if isinstance(segments, list):
+                return " ".join(
+                    str(seg.get("text", "")).strip()
+                    for seg in segments
+                    if isinstance(seg, dict)
+                ).strip()
+        return ""
+
+    def _transcribe_voicebox(self, audio_bytes: bytes, model: str = "base", url: Optional[str] = None) -> Optional[str]:
+        base = self._voicebox_base(url)
+        files = {"audio": ("audio.webm", io.BytesIO(audio_bytes), "audio/webm")}
+        data = {"model": model or "base"}
+        try:
+            r = httpx.post(
+                base + "/transcribe",
+                headers=self._VOICEBOX_HEADERS,
+                files=files,
+                data=data,
+                timeout=120,
+            )
+            r.raise_for_status()
+            try:
+                result = r.json()
+            except Exception:
+                result = r.text
+            text = self._parse_voicebox_text(result)
+            logger.info(f"Voicebox STT: {len(text)} chars from {base}")
+            return text
+        except Exception as e:
+            logger.error(f"Voicebox STT transcription failed: {e}")
+            return None
+
     # ── Public interface ──
 
     def transcribe(self, audio_bytes: bytes) -> Optional[str]:
@@ -166,6 +231,8 @@ class STTService:
 
         if provider == "local":
             return self._transcribe_local(audio_bytes, language)
+        elif provider == "voicebox":
+            return self._transcribe_voicebox(audio_bytes, model, settings.get("voicebox_url"))
         elif provider.startswith("endpoint:"):
             endpoint_id = provider.split(":", 1)[1]
             return self._transcribe_api(audio_bytes, endpoint_id, model, language)
