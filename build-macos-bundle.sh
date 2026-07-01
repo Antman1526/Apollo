@@ -141,8 +141,9 @@ notify "Starting…"
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; exit 0' TERM INT
 
+# First run downloads the FastEmbed embedding model — allow ~3 min.
 READY=0
-for i in $(seq 1 120); do
+for i in $(seq 1 180); do
   /usr/bin/curl -s -o /dev/null --max-time 2 "$URL/api/health" && { READY=1; break; }
   kill -0 "$SERVER_PID" 2>/dev/null || die_gui "Apollo failed to start. Log:
 $LOG"
