@@ -24,3 +24,45 @@ def classify_tier(skill_dir: str) -> str:
             if f in _CODE_FILES or os.path.splitext(f)[1].lower() in _CODE_EXTS:
                 return "script"
     return "prose"
+
+
+from dataclasses import dataclass, field
+
+from services.memory.skill_format import parse_frontmatter, slugify
+
+
+@dataclass
+class FoundSkill:
+    name: str
+    description: str
+    tier: str
+    rel_dir: str
+    frontmatter: dict
+    body: str
+    files: list = field(default_factory=list)
+    error: str = ""
+
+
+def discover_skills(pack_root: str) -> list:
+    out = []
+    for root, _dirs, files in os.walk(pack_root):
+        if "SKILL.md" not in files:
+            continue
+        skill_dir = root
+        rel_dir = os.path.relpath(skill_dir, pack_root)
+        raw_name = os.path.basename(skill_dir.rstrip(os.sep)) or "skill"
+        try:
+            text = open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8", errors="replace").read()
+            fm, body = parse_frontmatter(text)
+            name = slugify(str(fm.get("name") or raw_name))
+            desc = str(fm.get("description") or "").strip()
+            tier = classify_tier(skill_dir)
+            extra = [
+                os.path.relpath(os.path.join(r, f), skill_dir)
+                for r, _d, fs in os.walk(skill_dir) for f in fs
+                if not (r == skill_dir and f == "SKILL.md")
+            ]
+            out.append(FoundSkill(name, desc, tier, rel_dir, fm, body, extra))
+        except Exception as e:  # never let one bad skill abort the pack
+            out.append(FoundSkill(slugify(raw_name), "", "prose", rel_dir, {}, "", [], str(e)))
+    return out
