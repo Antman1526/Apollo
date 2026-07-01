@@ -87,7 +87,7 @@ for name in ("auth.json", "presets.json", "features.json", "settings.json",
 block_cipher = None
 
 a = Analysis(
-    ["packaging/apollo_boot.py"],
+    [os.path.join(REPO, "packaging", "apollo_boot.py")],
     pathex=[REPO],
     binaries=binaries,
     datas=datas,

@@ -129,6 +129,14 @@ def main() -> None:
     bundle = _bundle_root()
     home = _apollo_home()
 
+    # Ensure the app package root is importable regardless of CWD. In a frozen
+    # bundle the modules are embedded (this is a no-op); when running this shim
+    # from source it puts the repo root on sys.path so ``import core`` / ``app``
+    # resolve even after we chdir into the writable home below.
+    root = str(bundle)
+    if root not in sys.path:
+        sys.path.insert(0, root)
+
     _seed_home(bundle, home)
 
     # Everything downstream expects to run from a dir containing static/ + data/.
@@ -146,9 +154,16 @@ def main() -> None:
 
     import uvicorn
 
+    # Import the ASGI app object directly rather than passing the "app:app"
+    # import string: inside a frozen PyInstaller bundle uvicorn's string-based
+    # re-import can't resolve the top-level ``app`` module, failing with
+    # "Could not import module 'app'". Passing the object sidesteps that (we
+    # never use --reload, which is the only thing that needs the string form).
+    from app import app as asgi_app
+
     port = int(os.environ.get("APOLLO_PORT", "7860"))
     host = os.environ.get("APOLLO_HOST", "127.0.0.1")
-    uvicorn.run("app:app", host=host, port=port, log_level="info")
+    uvicorn.run(asgi_app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":
