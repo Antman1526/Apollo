@@ -109,6 +109,28 @@ def test_task_uses_utility_when_task_endpoint_unset(monkeypatch):
     assert headers == {"Authorization": "Bearer key-utility"}
 
 
+def test_reviewer_uses_utility_when_reviewer_endpoint_unset(monkeypatch):
+    settings = {
+        "reviewer_endpoint_id": "",
+        "reviewer_model": "",
+        "utility_endpoint_id": "utility",
+        "utility_model": "utility-chat",
+        "default_endpoint_id": "default",
+        "default_model": "default-chat",
+    }
+    _install_resolver_fakes(
+        monkeypatch,
+        settings,
+        [_endpoint("utility", "utility-chat"), _endpoint("default", "default-chat")],
+    )
+
+    url, model, headers = resolve_endpoint("reviewer")
+
+    assert url == "https://utility.example/v1/chat/completions"
+    assert model == "utility-chat"
+    assert headers == {"Authorization": "Bearer key-utility"}
+
+
 def test_research_uses_default_when_research_and_utility_unset(monkeypatch):
     settings = {
         "research_endpoint_id": "",
