@@ -62,3 +62,34 @@ def test_malformed_skill_is_reported_not_fatal(tmp_path):
     assert "good" in found
     # bad still returns a FoundSkill (named from its dir) but may carry an error
     # or an empty description; the whole walk must not raise.
+
+
+from services.skills.pack_installer import render_skill_md, InstallOpts
+
+
+def _opts(**kw):
+    base = dict(category="writing", owner="me", source_url="https://github.com/blader/humanizer",
+                source_ref="abc123", now_iso="2026-06-30T00:00:00Z", overwrite=False)
+    base.update(kw)
+    return InstallOpts(**base)
+
+
+def test_render_prose_skill_is_published_with_provenance(tmp_path):
+    f = FoundSkill("humanizer", "strip AI tells", "prose", "skills/humanizer",
+                   {"name": "humanizer", "description": "strip AI tells", "license": "MIT"},
+                   "\n\nOriginal body **kept**.\n", [])
+    md = render_skill_md(f, _opts())
+    assert md.startswith("---\n")
+    assert "status: published" in md
+    assert "source: imported" in md
+    assert "category: writing" in md
+    assert "imported_from: https://github.com/blader/humanizer" in md
+    assert "imported_ref: abc123" in md
+    assert "Original body **kept**." in md   # body preserved verbatim
+
+
+def test_render_script_skill_is_draft(tmp_path):
+    f = FoundSkill("docx", "word docs", "script", "skills/docx",
+                   {"name": "docx"}, "Use pandoc.", ["scripts/x.py"])
+    md = render_skill_md(f, _opts(category="office"))
+    assert "status: draft" in md   # quarantined

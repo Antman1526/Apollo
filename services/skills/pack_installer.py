@@ -66,3 +66,45 @@ def discover_skills(pack_root: str) -> list:
         except Exception as e:  # never let one bad skill abort the pack
             out.append(FoundSkill(slugify(raw_name), "", "prose", rel_dir, {}, "", [], str(e)))
     return out
+
+
+from services.memory.skill_format import emit_frontmatter
+
+
+@dataclass
+class InstallOpts:
+    category: str
+    owner: "str | None"
+    source_url: str
+    source_ref: str
+    now_iso: str
+    overwrite: bool = False
+
+
+def render_skill_md(found: "FoundSkill", opts: "InstallOpts") -> str:
+    fm = {
+        "name": found.name,
+        "description": found.description,
+        "version": str(found.frontmatter.get("version") or "1.0.0"),
+        "category": opts.category,
+        "status": "published" if found.tier == "prose" else "draft",
+        "source": "imported",
+    }
+    if opts.owner:
+        fm["owner"] = opts.owner
+    # emit_frontmatter() JSON-quotes any value containing ':' (e.g. a URL or an
+    # ISO timestamp). Provenance keys read better — and match the installer's
+    # expected frontmatter — as plain unquoted lines, so emit them by hand and
+    # keep emit_frontmatter for the well-behaved scalar fields above.
+    provenance = {
+        "imported_from": opts.source_url,
+        "imported_ref": opts.source_ref,
+        "imported_at": opts.now_iso,
+        "imported_tier": found.tier,
+    }
+    prov_lines = "\n".join(f"{k}: {v}" for k, v in provenance.items() if v != "")
+    fm_text = emit_frontmatter(fm)
+    if prov_lines:
+        fm_text = f"{fm_text}\n{prov_lines}"
+    body = (found.body or "").strip("\n")
+    return f"---\n{fm_text}\n---\n\n{body}\n"
