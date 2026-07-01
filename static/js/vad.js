@@ -39,3 +39,42 @@ export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
     },
   };
 }
+
+// Browser-only: drive a gate from a live mic MediaStream. Returns handles to
+// pause (mute), resume, and destroy. References Web Audio globals only here,
+// inside the function body — never at module top level.
+export function createMicVad({ stream, gate, onEvent }) {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+
+  const buf = new Float32Array(analyser.fftSize);
+  let raf = 0;
+  let paused = false;
+
+  function tick() {
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length);
+    if (!paused) {
+      const ev = gate.push(rms, performance.now());
+      if (ev) onEvent(ev, rms);
+    }
+    raf = requestAnimationFrame(tick);
+  }
+  raf = requestAnimationFrame(tick);
+
+  return {
+    pause() { paused = true; },
+    resume() { paused = false; },
+    destroy() {
+      cancelAnimationFrame(raf);
+      try { source.disconnect(); } catch {}
+      try { ctx.close(); } catch {}
+    },
+  };
+}
