@@ -102,6 +102,11 @@ HOME_DIR="$HOME/Library/Application Support/Apollo"
 LOG="$HOME_DIR/apollo-app.log"
 
 export APOLLO_PORT="$PORT"
+# Pin the app's own SQLite DB so a stray DATABASE_URL in the GUI/login
+# environment (e.g. a dev machine's prisma/postgres var) isn't inherited — the
+# boot shim uses setdefault(), so an unset-or-correct value here is required or
+# the frozen app crashes with NoSuchModuleError.
+export DATABASE_URL="sqlite:///$HOME_DIR/data/app.db"
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Apollo\"" >/dev/null 2>&1; }
 die_gui() {
