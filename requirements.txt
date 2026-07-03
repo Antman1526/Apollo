@@ -43,5 +43,12 @@ qrcode[pil]
 croniter
 pytest
 pytest-asyncio
+# starlette>=1.2 TestClient prefers httpx2 (falls back to httpx with a
+# deprecation warning). Test-time only.
+httpx2
 # Mandatory web-agent integration for research/source extraction into Markdown.
 crawl4ai
+# Content-based upload MIME detection (src/upload_handler.py) — degrades to
+# extension-based detection if missing. Needs the libmagic system library
+# (brew install libmagic / apt install libmagic1).
+python-magic

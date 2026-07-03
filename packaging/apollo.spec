@@ -54,6 +54,9 @@ hiddenimports += [
     "uvicorn.protocols.websockets.auto",
     "uvicorn.protocols.websockets.websockets_impl",
     "uvicorn.protocols.websockets.wsproto_impl",
+    # upload_handler imports python-magic inside a try — make it explicit so
+    # hooks-contrib's hook-magic.py collects libmagic + the magic database.
+    "magic",
 ]
 
 # The app imports routes/services/etc. dynamically at startup; pull whole trees.
