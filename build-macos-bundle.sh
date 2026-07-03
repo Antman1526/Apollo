@@ -142,6 +142,11 @@ if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
 fi
 
 notify "Starting…"
+# Rotate the log if it's grown past ~5 MB — keep the last 2000 lines so a
+# crash is still diagnosable without the file growing without bound.
+if [ -f "$LOG" ] && [ "$(/usr/bin/stat -f%z "$LOG" 2>/dev/null || echo 0)" -gt 5242880 ]; then
+  /usr/bin/tail -n 2000 "$LOG" > "$LOG.tmp" && /bin/mv "$LOG.tmp" "$LOG"
+fi
 "$SERVER" >>"$LOG" 2>&1 &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; exit 0' TERM INT

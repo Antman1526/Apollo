@@ -184,8 +184,8 @@ python setup.py
 python -m uvicorn app:app --host 127.0.0.1 --port 7000
 ```
 `app:app` is the ASGI application object in `app.py`. `setup.py` creates the data dirs,
-initializes the SQLite DB, and prints the first-boot admin password. Use `--host 0.0.0.0`
-only when you intentionally want LAN/reverse-proxy access.
+initializes the SQLite DB, and prints the first-boot admin password.
+Use `--host 0.0.0.0` only when you intentionally want LAN/reverse-proxy access.
 
 ### Apple Silicon (one command)
 Docker on macOS is a Linux VM with no Metal GPU access. For GPU-accelerated

@@ -126,6 +126,20 @@ def _patch_constants(home: Path) -> None:
 
 
 def main() -> None:
+    # Script re-exec mode: ``apollo <script>.py [args...]`` runs a bundled
+    # Python script inside the frozen environment instead of booting the
+    # server. src/builtin_mcp.py spawns its stdio MCP servers as
+    # ``sys.executable mcp_servers/<x>.py`` — in the frozen app
+    # sys.executable IS this binary, so without this branch every such spawn
+    # would try to start a second Apollo server (and die on the bind).
+    if len(sys.argv) > 1 and sys.argv[1].endswith(".py") and os.path.isfile(sys.argv[1]):
+        import runpy
+
+        script = sys.argv[1]
+        sys.argv = sys.argv[1:]  # the script sees itself as argv[0]
+        runpy.run_path(script, run_name="__main__")
+        return
+
     bundle = _bundle_root()
     home = _apollo_home()
 

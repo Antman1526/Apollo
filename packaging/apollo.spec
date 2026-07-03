@@ -77,6 +77,10 @@ def tree(src, dst=None):
 
 datas += tree("static")
 datas += tree("config")
+# Built-in MCP servers are spawned as SCRIPT FILES (src/builtin_mcp.py runs
+# `sys.executable mcp_servers/<x>.py` over stdio) — collect_submodules alone
+# embeds them as bytecode with no file on disk, so ship the tree too.
+datas += tree("mcp_servers")
 # Seed data (small JSON only — skip large caches/DBs; boot shim copies these).
 for name in ("auth.json", "presets.json", "features.json", "settings.json",
              "memory.json", "user_prefs.json"):
