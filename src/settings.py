@@ -141,6 +141,10 @@ DEFAULT_SETTINGS = {
     # Ordered fallback chain for the Utility model (summarization, naming,
     # tidy actions, etc.).
     "utility_model_fallbacks": [],
+    # Adversarial reviewer (/api/review + Review Gate). Unset falls back to
+    # the Utility model, then Default Chat (see endpoint_resolver).
+    "reviewer_endpoint_id": "",
+    "reviewer_model": "",
     "teacher_model": "",
     "teacher_enabled": False,
     # Skills: minimum self-reported confidence for an auto-written (LLM-authored)
@@ -251,6 +255,7 @@ _PER_USER_KEYS = {
     "default_endpoint_id", "default_model", "default_model_fallbacks",
     "utility_endpoint_id", "utility_model", "utility_model_fallbacks",
     "research_endpoint_id", "research_model",
+    "reviewer_endpoint_id", "reviewer_model",
 }
 
 

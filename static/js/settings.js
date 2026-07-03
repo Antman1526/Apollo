@@ -840,6 +840,61 @@ async function initUtilityModel() {
   });
 }
 
+/* ── Reviewer Model ── */
+// Adversarial reviewer (/api/review + Review Gate). Unset falls back to the
+// utility model, then default chat (backend endpoint_resolver handles it).
+async function initReviewerModel() {
+  var epSel = el('set-reviewerEpSelect');
+  var modelSel = el('set-reviewerModelSelect');
+  var msg = el('set-reviewerMsg');
+  if (!epSel || !modelSel) return;
+  var _endpoints = [];
+  if (epSel.options[0]) epSel.options[0].textContent = 'Same as utility';
+  if (modelSel.options[0]) modelSel.options[0].textContent = 'Same as utility';
+
+  try {
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+  } catch (e) { console.warn('Failed to load endpoints for reviewer model', e); }
+
+  function refreshModels(selectedModel) {
+    var epId = epSel.value;
+    var ep = _endpoints.find(function(e) { return e.id === epId; });
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true,
+      { chatOnly: true, modelMeta: ep && ep.model_meta });
+  }
+
+  try {
+    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settings = await res.json();
+    if (settings.reviewer_endpoint_id) epSel.value = settings.reviewer_endpoint_id;
+    refreshModels(settings.reviewer_model || '');
+  } catch (e) { console.warn('Failed to load reviewer model settings', e); }
+
+  async function saveReviewer() {
+    try {
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reviewer_endpoint_id: epSel.value || '',
+          reviewer_model: modelSel.value || ''
+        })
+      });
+      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      setTimeout(function() { msg.textContent = ''; }, 1500);
+    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+  }
+
+  epSel.addEventListener('change', function() { refreshModels(''); saveReviewer(); });
+  modelSel.addEventListener('change', saveReviewer);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
+}
+
 /* ── Teacher Model ── */
 // SOTA model called automatically when a self-hosted student model
 // fails an agent-mode task. Stored as a single `teacher_model` string
@@ -2670,6 +2725,7 @@ function initAll() {
   initDefaultChat();
   initTeacherModel();
   initUtilityModel();
+  initReviewerModel();
   initImageSettings();
   initVisionSettings();
   initTtsSettings();
