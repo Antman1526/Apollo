@@ -2249,6 +2249,26 @@ function initializeEventListeners() {
     });
   })();
 
+  // ── Review gate toggle (blocking-style visual gate) ──
+  // Mirrors initReviewToggle: persisted under toggle key `reviewGate`. When on,
+  // review.js marks each completed assistant answer "under review" until the
+  // verdict returns. Independent of Review Mode (either can be on).
+  (function initReviewGateToggle() {
+    const gateBtn = document.getElementById('overflow-review-gate-btn');
+    if (!gateBtn) return;
+    try {
+      const st = loadToggleState();
+      if (st.reviewGate) gateBtn.classList.add('active');
+    } catch (e) {}
+
+    gateBtn.addEventListener('click', () => {
+      const isActive = !gateBtn.classList.contains('active');
+      gateBtn.classList.toggle('active', isActive);
+      const s = loadToggleState(); s.reviewGate = isActive; saveToggleState(s);
+      updatePlusDot();
+    });
+  })();
+
 
   // ── Compare indicator (sidebar only, no overflow) ──
   const compareIndicatorBtn = el('compare-indicator-btn');

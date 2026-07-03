@@ -643,6 +643,9 @@ class Memory(Base):
     session_id = Column(String, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True, index=True)
 
     # Timestamp as Unix timestamp
+    # NOTE (schema smell): this is a Unix int for historical reasons, whereas
+    # other tables store naive-UTC DateTime columns. Left as-is to avoid a risky
+    # migration; a future migration could unify this to DateTime for consistency.
     timestamp = Column(Integer, default=lambda: int(_utcnow().timestamp()))
 
     # Relationship to Session

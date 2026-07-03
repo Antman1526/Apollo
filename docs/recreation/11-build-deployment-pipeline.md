@@ -62,6 +62,15 @@ fi
 
 ## 1b. `build-macos-bundle.sh` + `packaging/` — self-contained PyInstaller bundle
 
+> **Which build to ship.** `build-macos-bundle.sh` (this section) is the
+> **distributable** one: a self-contained PyInstaller `.dmg` (~233 MB) that ships
+> Python + every dependency and runs on any Apple-Silicon Mac with **no repo and no
+> preinstalled venv**. Ship this to end users. `build-macos-app.sh` (§1) is a *thin
+> launcher* that drives this repo's `venv` at runtime — use it for **local dev only**,
+> not distribution. Before handing the self-contained `.dmg` to other Macs it needs a
+> real **Developer-ID signature + notarization** (the build only ad-hoc signs, which
+> just satisfies Gatekeeper on the build machine — see §1b signing note below).
+
 Source: `/Users/Antman/Apollo/build-macos-bundle.sh`,
 `/Users/Antman/Apollo/packaging/apollo.spec`,
 `/Users/Antman/Apollo/packaging/apollo_boot.py`. Produces

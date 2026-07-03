@@ -10,6 +10,19 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# Known STT provider identifiers. Endpoint providers are expressed as
+# "endpoint:<id>" and matched by the ENDPOINT_PREFIX below rather than by an
+# exact name. Centralized here so `available`, `transcribe`, and `get_stats`
+# share one source of truth instead of scattering the literals.
+PROVIDER_DISABLED = "disabled"
+PROVIDER_BROWSER = "browser"
+PROVIDER_LOCAL = "local"
+PROVIDER_VOICEBOX = "voicebox"
+ENDPOINT_PREFIX = "endpoint:"
+
+# Providers that produce no server-side transcript (short-circuit in transcribe()).
+_NON_TRANSCRIBE_PROVIDERS = (PROVIDER_DISABLED, PROVIDER_BROWSER)
+
 
 class STTService:
     """Multi-provider STT service.
@@ -44,15 +57,15 @@ class STTService:
         if settings.get("stt_enabled") is False:
             return False
         provider = settings["stt_provider"]
-        if provider == "disabled":
+        if provider == PROVIDER_DISABLED:
             return False
-        if provider == "browser":
+        if provider == PROVIDER_BROWSER:
             return True  # handled client-side
-        if provider == "local":
+        if provider == PROVIDER_LOCAL:
             return self._get_whisper() is not None
-        if provider == "voicebox":
+        if provider == PROVIDER_VOICEBOX:
             return self._voicebox_reachable(settings.get("voicebox_url"))
-        if provider.startswith("endpoint:"):
+        if provider.startswith(ENDPOINT_PREFIX):
             return True  # assume reachable
         return False
 
@@ -226,14 +239,14 @@ class STTService:
         model = settings["stt_model"]
         language = settings.get("stt_language", "")
 
-        if provider in ("disabled", "browser"):
+        if provider in _NON_TRANSCRIBE_PROVIDERS:
             return None
 
-        if provider == "local":
+        if provider == PROVIDER_LOCAL:
             return self._transcribe_local(audio_bytes, language)
-        elif provider == "voicebox":
+        elif provider == PROVIDER_VOICEBOX:
             return self._transcribe_voicebox(audio_bytes, model, settings.get("voicebox_url"))
-        elif provider.startswith("endpoint:"):
+        elif provider.startswith(ENDPOINT_PREFIX):
             endpoint_id = provider.split(":", 1)[1]
             return self._transcribe_api(audio_bytes, endpoint_id, model, language)
         else:
@@ -245,7 +258,7 @@ class STTService:
         provider = settings["stt_provider"]
         stt_enabled = settings.get("stt_enabled", False)
         # If toggle is off, report as disabled
-        effective_provider = provider if stt_enabled else "disabled"
+        effective_provider = provider if stt_enabled else PROVIDER_DISABLED
 
         stats = {
             "available": self.available and stt_enabled,
@@ -254,12 +267,12 @@ class STTService:
             "language": settings.get("stt_language", ""),
         }
 
-        if provider == "local":
+        if provider == PROVIDER_LOCAL:
             whisper = self._get_whisper()
             stats["model_loaded"] = whisper is not None
-        elif provider == "browser":
+        elif provider == PROVIDER_BROWSER:
             stats["model"] = "Browser (Web Speech API)"
-        elif provider.startswith("endpoint:"):
+        elif provider.startswith(ENDPOINT_PREFIX):
             stats["endpoint_id"] = provider.split(":", 1)[1]
 
         return stats

@@ -12,6 +12,20 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger(__name__)
 
+# Known TTS provider identifiers. Endpoint providers are expressed as
+# "endpoint:<id>" and matched by the ENDPOINT_PREFIX below rather than by an
+# exact name. Centralized here so `available`, `synthesize`, and `get_stats`
+# share one source of truth instead of scattering the literals.
+PROVIDER_DISABLED = "disabled"
+PROVIDER_BROWSER = "browser"
+PROVIDER_LOCAL = "local"
+PROVIDER_PIPER = "piper"
+PROVIDER_VOICEBOX = "voicebox"
+ENDPOINT_PREFIX = "endpoint:"
+
+# Providers that produce no server-side audio (short-circuit in synthesize()).
+_NON_SYNTH_PROVIDERS = (PROVIDER_DISABLED, PROVIDER_BROWSER)
+
 
 class TTSService:
     """Multi-provider TTS service.
@@ -49,18 +63,18 @@ class TTSService:
         if settings.get("tts_enabled") is False:
             return False
         provider = settings["tts_provider"]
-        if provider == "disabled":
+        if provider == PROVIDER_DISABLED:
             return False
-        if provider == "browser":
+        if provider == PROVIDER_BROWSER:
             return True  # handled client-side
-        if provider == "local":
+        if provider == PROVIDER_LOCAL:
             kokoro = self._get_kokoro()
             return kokoro is not None and kokoro.available
-        if provider == "piper":
+        if provider == PROVIDER_PIPER:
             return self._get_piper().available
-        if provider == "voicebox":
+        if provider == PROVIDER_VOICEBOX:
             return self._voicebox_reachable(settings.get("voicebox_url"))
-        if provider.startswith("endpoint:"):
+        if provider.startswith(ENDPOINT_PREFIX):
             return True  # assume reachable; errors surface at synthesis time
         return False
 
@@ -217,7 +231,7 @@ class TTSService:
         voice = settings["tts_voice"]
         speed = float(settings.get("tts_speed", "1"))
 
-        if provider in ("disabled", "browser"):
+        if provider in _NON_SYNTH_PROVIDERS:
             return None
 
         if len(text) > 5000:
@@ -232,23 +246,23 @@ class TTSService:
 
         audio_data = None
 
-        if provider == "local":
+        if provider == PROVIDER_LOCAL:
             kokoro = self._get_kokoro()
             if kokoro and kokoro.available:
                 audio_data = kokoro.synthesize_raw(text, voice)
             else:
                 logger.warning("Kokoro TTS not available")
                 return None
-        elif provider == "piper":
+        elif provider == PROVIDER_PIPER:
             # `voice` holds the path to a Piper `.onnx` voice (with its
             # `.onnx.json` beside it). CPU-only, works on Apple Silicon.
             audio_data = self._get_piper().synthesize_raw(text, voice)
             if audio_data is None:
                 logger.warning("Piper TTS not available or voice failed to load")
                 return None
-        elif provider == "voicebox":
+        elif provider == PROVIDER_VOICEBOX:
             audio_data = self._synthesize_voicebox(text, voice, settings.get("voicebox_url"))
-        elif provider.startswith("endpoint:"):
+        elif provider.startswith(ENDPOINT_PREFIX):
             endpoint_id = provider.split(":", 1)[1]
             audio_data = self._synthesize_api(text, endpoint_id, model, voice, speed)
         else:
@@ -291,17 +305,17 @@ class TTSService:
             "cache_size_mb": round(cache_size / (1024 * 1024), 2),
         }
 
-        if provider == "local":
+        if provider == PROVIDER_LOCAL:
             kokoro = self._get_kokoro()
             stats["model"] = "Kokoro-82M (GPU)" if (kokoro and kokoro.available) else "Kokoro (not loaded)"
-        elif provider == "piper":
+        elif provider == PROVIDER_PIPER:
             import os as _os
             stats["model"] = f"Piper ({_os.path.basename(settings['tts_voice'] or 'no voice set')})"
-        elif provider == "browser":
+        elif provider == PROVIDER_BROWSER:
             stats["model"] = "Browser (Web Speech API)"
-        elif provider == "voicebox":
+        elif provider == PROVIDER_VOICEBOX:
             stats["model"] = f"Voicebox ({settings['tts_voice'] or 'default profile'})"
-        elif provider.startswith("endpoint:"):
+        elif provider.startswith(ENDPOINT_PREFIX):
             stats["endpoint_id"] = provider.split(":", 1)[1]
 
         return stats

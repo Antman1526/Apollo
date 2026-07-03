@@ -114,6 +114,35 @@ import { createVadGate, createMicVad } from './vad.js';
 
 let _active = null; // { machine, mic, stream, recorder, chunks, prevAutoPlay }
 
+// Default VAD tuning, matching the pure createVadGate() defaults.
+export const VAD_DEFAULTS = { threshold: 0.02, silenceMs: 1200 };
+
+// Pure resolver: given a toggle-state object, return the effective VAD config,
+// falling back to defaults for missing / non-finite / non-positive values. No
+// browser globals — unit-testable in Node.
+export function resolveVadConfig(toggles) {
+  const st = toggles || {};
+  const threshold = Number(st.voiceVadThreshold);
+  const silenceMs = Number(st.voiceSilenceMs);
+  return {
+    threshold: Number.isFinite(threshold) && threshold > 0 ? threshold : VAD_DEFAULTS.threshold,
+    silenceMs: Number.isFinite(silenceMs) && silenceMs > 0 ? silenceMs : VAD_DEFAULTS.silenceMs,
+  };
+}
+
+// Read persisted VAD tuning from the shared toggle-state blob (localStorage key
+// `apollo-toggles`). Falls back to defaults on any error so the call still works
+// if nothing is configured. Browser-only — only invoked from startCall(), never
+// at import, so the module still loads cleanly in Node.
+function _readVadConfig() {
+  try {
+    const raw = localStorage.getItem('apollo-toggles');
+    return resolveVadConfig(raw ? JSON.parse(raw) : {});
+  } catch (e) {
+    return { ...VAD_DEFAULTS };
+  }
+}
+
 function _overlay() { return document.getElementById('voice-call-overlay'); }
 function _setState(state) {
   const ov = _overlay();
@@ -162,7 +191,7 @@ export async function startCall() {
   // skipped.
   try { await window.aiTTSManager?.checkAvailability?.(); } catch {}
 
-  const gate = createVadGate({ threshold: 0.02, silenceMs: 1200 });
+  const gate = createVadGate(_readVadConfig());
   const prevAutoPlay = window.aiTTSManager ? window.aiTTSManager.autoPlay : false;
   if (window.aiTTSManager) window.aiTTSManager.autoPlay = false; // we drive TTS explicitly
 

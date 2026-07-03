@@ -279,6 +279,7 @@ def setup_webhook_routes(
             model = body.model or "deepseek-chat"
 
             # Resolve base_url: explicit > provider name > model prefix auto-detect
+            _caller_supplied_base = bool(body.base_url and body.base_url.strip())
             base_url = body.base_url.strip().rstrip("/") if body.base_url else None
             if not base_url:
                 base_url = _resolve_base_url(model, body.provider)
@@ -288,6 +289,14 @@ def setup_webhook_routes(
                     "or provider ('deepseek', 'openai', 'groq', etc.)")
 
             base_url = normalize_base(base_url)
+            # SSRF guard: a chat-scoped token must not point the server at
+            # internal/loopback/cloud-metadata hosts. Provider-resolved URLs are
+            # trusted constants; only a CALLER-supplied base_url is validated
+            # through the same public-address filter used for web fetch.
+            if _caller_supplied_base:
+                from src.search.content import _public_http_url
+                if not _public_http_url(base_url):
+                    raise HTTPException(403, "base_url must resolve to a public http(s) host")
             endpoint_url = build_chat_url(base_url)
 
             if not session_manager:

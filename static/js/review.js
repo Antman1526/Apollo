@@ -152,12 +152,82 @@ export function addReviewButton(messageElement, question, answer) {
   actions.appendChild(btn);
 }
 
+// ── Review gate: mark a completed answer "under review" (dim + badge) until the
+//    /api/review verdict returns, then swap the pending badge for the verdict.
+//    This is a purely VISUAL gate — the answer is already saved and the chat
+//    stream is never blocked. Independent of Review Mode. ──
+
+// Add (or reuse) a small "⏳ under review" badge in the message's action bar and
+// dim the message body while the review is in flight.
+function addPendingBadge(messageElement) {
+  const actions = messageElement.querySelector('.msg-actions');
+  if (!actions) return null;
+  let badge = actions.querySelector('.review-gate-badge');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'review-gate-badge';
+    actions.appendChild(badge);
+  }
+  badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-weight:600;font-size:12px;color:#fff;background:#6b7280;';
+  badge.textContent = '⏳ under review';
+  messageElement.classList.add('review-pending');
+  messageElement.style.opacity = '0.6';
+  messageElement.style.transition = 'opacity .2s';
+  return badge;
+}
+
+// Replace the pending badge with the final verdict badge and un-dim the message.
+function resolvePendingBadge(messageElement, verdict) {
+  messageElement.classList.remove('review-pending');
+  messageElement.style.opacity = '';
+  const badge = messageElement.querySelector('.review-gate-badge');
+  if (!badge) return;
+  const color = verdictColor(verdict);
+  badge.style.background = color;
+  badge.style.textTransform = 'capitalize';
+  badge.textContent = verdict || 'unknown';
+}
+
+// Run the review for the gate: show pending state, POST /api/review, render the
+// full review box AND swap the inline pending badge for the verdict badge.
+async function runGatedReview(messageElement, question, answer) {
+  const badge = addPendingBadge(messageElement);
+  const box = ensureReviewBox(messageElement);
+  box.innerHTML = '<summary style="cursor:pointer;color:#9ca3af;list-style:none;">Review</summary><div style="margin-top:6px;color:#9ca3af;">Reviewing…</div>';
+  try {
+    const response = await fetch('/api/review', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question: question || '', answer: answer || '' }),
+    });
+    if (!response.ok) {
+      let detail = 'Review failed (' + response.status + ')';
+      try { const err = await response.json(); if (err && err.detail) detail = err.detail; } catch (e) { /* ignore */ }
+      renderError(box, detail);
+      resolvePendingBadge(messageElement, 'error');
+      if (badge) badge.style.background = '#ef4444';
+      return;
+    }
+    const result = await response.json();
+    renderReview(box, result);
+    resolvePendingBadge(messageElement, result.verdict || 'unknown');
+  } catch (e) {
+    renderError(box, (e && e.message) || 'Review request failed');
+    resolvePendingBadge(messageElement, 'error');
+    if (badge) badge.style.background = '#ef4444';
+  }
+}
+
 // ── Auto-review: listen for the assistant-complete event and, when Review mode
-//    is on, run a review for the just-finished message automatically. ──
+//    OR Review gate is on, run a review for the just-finished message. The gate
+//    variant adds the pending badge / dim state; Review mode alone does not. ──
 window.addEventListener('apollo:assistant-complete', (ev) => {
-  let on = false;
-  try { on = !!(loadToggleState() || {}).reviewMode; } catch (e) { /* ignore */ }
-  if (!on) return;
+  let toggles = {};
+  try { toggles = loadToggleState() || {}; } catch (e) { /* ignore */ }
+  const gateOn = !!toggles.reviewGate;
+  const modeOn = !!toggles.reviewMode;
+  if (!gateOn && !modeOn) return;
 
   const answer = (ev && ev.detail && ev.detail.text) || '';
   if (!answer) return;
@@ -169,8 +239,12 @@ window.addEventListener('apollo:assistant-complete', (ev) => {
   if (!messageElement.querySelector('.msg-actions')) return;
 
   const question = findPrecedingQuestion(messageElement);
-  const btn = messageElement.querySelector('.review-button');
-  runReview(messageElement, question, answer, btn);
+  if (gateOn) {
+    runGatedReview(messageElement, question, answer);
+  } else {
+    const btn = messageElement.querySelector('.review-button');
+    runReview(messageElement, question, answer, btn);
+  }
 });
 
 const reviewModule = { addReviewButton };

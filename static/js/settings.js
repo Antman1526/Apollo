@@ -1313,6 +1313,41 @@ async function initTtsSettings() {
       }
     });
   }
+
+  // ── Call-mode VAD tuning ──
+  // Persisted into the shared `apollo-toggles` localStorage blob (keys
+  // voiceVadThreshold / voiceSilenceMs) that voiceCall.js reads at startCall().
+  // Blank field ⇒ delete the override ⇒ voiceCall falls back to its defaults.
+  (function initVadSettings() {
+    var thrInput = el('set-voiceVadThreshold');
+    var silInput = el('set-voiceSilenceMs');
+    if (!thrInput && !silInput) return;
+
+    function readToggles() {
+      try { return JSON.parse(localStorage.getItem('apollo-toggles') || '{}') || {}; }
+      catch (e) { return {}; }
+    }
+    function writeToggles(st) {
+      try { localStorage.setItem('apollo-toggles', JSON.stringify(st)); } catch (e) {}
+    }
+
+    var st = readToggles();
+    if (thrInput && typeof st.voiceVadThreshold === 'number') thrInput.value = st.voiceVadThreshold;
+    if (silInput && typeof st.voiceSilenceMs === 'number') silInput.value = st.voiceSilenceMs;
+
+    if (thrInput) thrInput.addEventListener('change', function() {
+      var cur = readToggles();
+      var v = parseFloat(thrInput.value);
+      if (Number.isFinite(v) && v > 0) cur.voiceVadThreshold = v; else delete cur.voiceVadThreshold;
+      writeToggles(cur);
+    });
+    if (silInput) silInput.addEventListener('change', function() {
+      var cur = readToggles();
+      var v = parseInt(silInput.value, 10);
+      if (Number.isFinite(v) && v > 0) cur.voiceSilenceMs = v; else delete cur.voiceSilenceMs;
+      writeToggles(cur);
+    });
+  })();
 }
 
 /* ── Speech to Text ── */
@@ -1326,10 +1361,13 @@ async function initSttSettings() {
   var sttMsg = el('set-sttSettingsMsg');
   var sttEnabledToggle = el('set-sttEnabledToggle');
   var sttConfigWrap = el('set-sttConfigWrap');
+  var voiceboxUrlRow = el('set-sttVoiceboxUrlRow');
+  var voiceboxUrlInput = el('set-sttVoiceboxUrlInput');
   // STT was removed from AI Defaults — bail if the UI isn't present.
   if (!provSel) return;
 
   function isEndpoint() { return provSel.value.startsWith('endpoint:'); }
+  function isVoicebox() { return provSel.value === 'voicebox'; }
   function getModel() { return isEndpoint() ? modelInput.value : modelSelect.value; }
 
   function updateVisibility() {
@@ -1343,6 +1381,8 @@ async function initSttSettings() {
     } else {
       modelSelect.style.display = ''; modelInput.style.display = 'none';
     }
+    // Voicebox: shared base-URL row (mirrors the TTS Voicebox URL row).
+    if (voiceboxUrlRow) voiceboxUrlRow.style.display = prov === 'voicebox' ? 'flex' : 'none';
   }
 
   function syncSttDisabled() {
@@ -1375,6 +1415,7 @@ async function initSttSettings() {
     if (settings.stt_provider) provSel.value = settings.stt_provider;
     if (settings.stt_model) { modelSelect.value = settings.stt_model; modelInput.value = settings.stt_model; }
     if (settings.stt_language) langInput.value = settings.stt_language;
+    if (voiceboxUrlInput) voiceboxUrlInput.value = settings.voicebox_url || 'http://127.0.0.1:17493';
     if (sttEnabledToggle) sttEnabledToggle.checked = settings.stt_enabled !== false;
   } catch (e) { console.warn('Failed to load STT settings', e); }
 
@@ -1384,9 +1425,12 @@ async function initSttSettings() {
   async function saveSTT() {
     try {
       var enabled = sttEnabledToggle ? sttEnabledToggle.checked : false;
+      var body = { stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() };
+      // Voicebox shares the base URL with TTS (voicebox_url setting).
+      if (voiceboxUrlInput) body.voicebox_url = (voiceboxUrlInput.value || 'http://127.0.0.1:17493').trim();
       await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stt_enabled: enabled, stt_provider: provSel.value, stt_model: getModel() || 'base', stt_language: langInput.value.trim() }) });
+        body: JSON.stringify(body) });
       sttMsg.textContent = 'Saved'; sttMsg.style.color = 'var(--fg)'; setTimeout(() => { sttMsg.textContent = ''; }, 2000);
       // Notify voiceRecorder of effective provider and update send button icon
       if (window.voiceRecorderModule) window.voiceRecorderModule._sttProvider = effectiveProvider();
@@ -1398,6 +1442,7 @@ async function initSttSettings() {
   modelSelect.addEventListener('change', saveSTT);
   modelInput.addEventListener('change', saveSTT);
   langInput.addEventListener('change', saveSTT);
+  if (voiceboxUrlInput) voiceboxUrlInput.addEventListener('change', saveSTT);
   if (sttEnabledToggle) sttEnabledToggle.addEventListener('change', function() { syncSttDisabled(); saveSTT(); });
 }
 
