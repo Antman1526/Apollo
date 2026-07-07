@@ -2549,6 +2549,9 @@ body.bg-pattern-sparkles {
       min-width:0;
       margin-top:8px;
       margin-bottom: 0;
+      /* Reading-column width for messages AND the input bar. Overridden by
+         the html.chat-width-* classes (Theme → Chat width). */
+      --chat-max: 800px;
     }
     .chat-meta { font-size:12px; color:color-mix(in srgb, var(--fg) 60%, transparent); margin-bottom:6px; }
     .chat-history {
@@ -2559,9 +2562,38 @@ body.bg-pattern-sparkles {
       margin-bottom:8px;
       white-space:normal;
       min-height:0;
-      --chat-max: 800px;
-      padding-left: max(0px, calc((100% - var(--chat-max)) / 2));
-      padding-right: max(12px, calc((100% - var(--chat-max)) / 2 + 12px));
+      /* --chat-max inherits from .chat-container so the input bar and the
+         message column resize together. */
+      padding-left: max(0px, calc((100% - var(--chat-max, 800px)) / 2));
+      padding-right: max(12px, calc((100% - var(--chat-max, 800px)) / 2 + 12px));
+      transition: padding-left .3s ease, padding-right .3s ease;
+    }
+    /* Chat width modes (Theme → Chat width). "Full" resolves the centering
+       padding to zero via a 100% chat-max. */
+    html.chat-width-cozy   .chat-container { --chat-max: 660px; }
+    html.chat-width-wide   .chat-container { --chat-max: 1060px; }
+    html.chat-width-full   .chat-container { --chat-max: 100%; }
+    /* Chat typography modes (Theme → Chat text): prose gets a proportional
+       face tuned for reading; role labels, timestamps, and code keep the
+       terminal mono so chrome stays chrome. */
+    html.chat-font-reading .msg .body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      font-size: 1.07em;
+      line-height: 1.65;
+      letter-spacing: 0.1px;
+    }
+    html.chat-font-book .msg .body {
+      font-family: ui-serif, 'New York', 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
+      font-size: 1.12em;
+      line-height: 1.7;
+      letter-spacing: 0.1px;
+    }
+    /* In prose modes, code (inline + blocks) must stay mono. pre already
+       pins Fira Code; cover inline code + kbd here. */
+    html.chat-font-reading .msg .body :is(code, kbd, samp),
+    html.chat-font-book .msg .body :is(code, kbd, samp) {
+      font-family: 'Fira Code', 'Courier New', monospace;
+      font-size: 0.88em;
     }
     /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
        a header was clickable (the Newest sort on the Model column was invisible).
@@ -2709,7 +2741,9 @@ body.bg-pattern-sparkles {
       margin-bottom:30vh;
       margin-left:auto;
       margin-right:auto;
-      max-width: 800px;
+      /* On the welcome screen keep the bar at a sane width even in Full
+         chat-width mode — a viewport-wide empty composer looks unmoored. */
+      max-width: min(800px, var(--chat-max, 800px));
       width: 100%;
     }
     @media (max-width:768px) {
@@ -2943,7 +2977,9 @@ body.bg-pattern-sparkles {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-width: 800px;
+      /* Follows the chat column (Theme → Chat width) so the composer and the
+         messages resize as one. */
+      max-width: var(--chat-max, 800px);
       margin-left: auto;
       margin-right: auto;
       width: 100%;

@@ -387,6 +387,26 @@ function _injectFontFace(familyName, variants) {
   _injectedFonts.add(familyName);
 }
 
+// ── Chat typography + width modes (per-device, independent of themes) ──
+// The heavy lifting is CSS (html.chat-font-* / html.chat-width-* classes in
+// style.css); these just toggle the root class and persist the choice.
+const CHAT_FONT_MODES = ['match', 'reading', 'book'];
+const CHAT_WIDTH_MODES = ['cozy', 'comfortable', 'wide', 'full'];
+const CHAT_FONT_KEY = 'apollo-chat-font';
+const CHAT_WIDTH_KEY = 'apollo-chat-width';
+
+export function applyChatFont(mode) {
+  const m = CHAT_FONT_MODES.includes(mode) ? mode : 'match';
+  document.documentElement.classList.remove('chat-font-reading', 'chat-font-book');
+  if (m !== 'match') document.documentElement.classList.add('chat-font-' + m);
+}
+
+export function applyChatWidth(mode) {
+  const m = CHAT_WIDTH_MODES.includes(mode) ? mode : 'comfortable';
+  document.documentElement.classList.remove('chat-width-cozy', 'chat-width-wide', 'chat-width-full');
+  if (m !== 'comfortable') document.documentElement.classList.add('chat-width-' + m);
+}
+
 export function applyFontDensity(font, density) {
   const f = font || DEFAULT_FONT;
   const d = density || DEFAULT_DENSITY;
@@ -1148,6 +1168,29 @@ export function initThemeUI() {
     nd.addEventListener('change', () => {
       applyFontDensity(document.getElementById('theme-font-select').value, nd.value);
       const s = getSaved(); if (s) _saveFull(s.name, s.colors);
+    });
+  }
+
+  // Chat text + chat width — per-device prefs in localStorage, not part of a
+  // saved theme (they're reading ergonomics, not palette).
+  const chatFontSelect = document.getElementById('theme-chatfont-select');
+  const _initChatFont = localStorage.getItem(CHAT_FONT_KEY) || 'match';
+  applyChatFont(_initChatFont);
+  if (chatFontSelect) {
+    chatFontSelect.value = _initChatFont;
+    chatFontSelect.addEventListener('change', () => {
+      applyChatFont(chatFontSelect.value);
+      try { localStorage.setItem(CHAT_FONT_KEY, chatFontSelect.value); } catch (_) {}
+    });
+  }
+  const chatWidthSelect = document.getElementById('theme-chatwidth-select');
+  const _initChatWidth = localStorage.getItem(CHAT_WIDTH_KEY) || 'comfortable';
+  applyChatWidth(_initChatWidth);
+  if (chatWidthSelect) {
+    chatWidthSelect.value = _initChatWidth;
+    chatWidthSelect.addEventListener('change', () => {
+      applyChatWidth(chatWidthSelect.value);
+      try { localStorage.setItem(CHAT_WIDTH_KEY, chatWidthSelect.value); } catch (_) {}
     });
   }
   if (patternSelect) {
