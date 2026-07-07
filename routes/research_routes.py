@@ -182,11 +182,15 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_status(session_id: str, request: Request):
         user = _require_user(request)
         _validate_session_id(session_id)
+        # "No research" is a normal answer to a status poll, not an error —
+        # the frontend probes on every session open and a 404 logged a console
+        # error each time. Callers only act on "running"/"done", so "none" is
+        # inert. (cancel/result below keep their 404s: those are actions.)
         if not _owns_in_memory(session_id, user):
-            raise HTTPException(404, "No research found for this session")
+            return {"status": "none"}
         status = research_handler.get_status(session_id)
         if status is None:
-            raise HTTPException(404, "No research found for this session")
+            return {"status": "none"}
         return status
 
     @router.post("/api/research/cancel/{session_id}")

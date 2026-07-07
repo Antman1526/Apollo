@@ -107,6 +107,11 @@ export APOLLO_PORT="$PORT"
 # boot shim uses setdefault(), so an unset-or-correct value here is required or
 # the frozen app crashes with NoSuchModuleError.
 export DATABASE_URL="sqlite:///$HOME_DIR/data/app.db"
+# The desktop bundle serves 127.0.0.1 only — a login screen on a single-user
+# local app is pure friction, so auth is off unless the user opts back in
+# (export AUTH_ENABLED=true before launch, e.g. when reverse-proxying).
+# Server/Docker deployments are unaffected: their default stays auth-on.
+export AUTH_ENABLED="${AUTH_ENABLED:-false}"
 
 notify() { /usr/bin/osascript -e "display notification \"$1\" with title \"Apollo\"" >/dev/null 2>&1; }
 die_gui() {

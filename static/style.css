@@ -129,18 +129,21 @@ pre, code, .hljs {
   ::-webkit-scrollbar-track {
     background: var(--panel);
   }
+  /* Muted accent thumb — a solid --red bar the full height of the window
+     competed with the content for attention; keep the brand hue but let it
+     recede until hovered. */
   ::-webkit-scrollbar-thumb {
-    background-color: var(--red);
+    background-color: color-mix(in srgb, var(--red) 45%, var(--panel));
     border-radius: 4px;
     border: 2px solid var(--panel);
   }
   ::-webkit-scrollbar-thumb:hover {
-    background-color: color-mix(in srgb, var(--red) 80%, white);
+    background-color: var(--red);
   }
 }
 
 html {
-  scrollbar-color: var(--red) var(--panel);
+  scrollbar-color: color-mix(in srgb, var(--red) 45%, var(--panel)) var(--panel);
   scrollbar-width: thin;
 }
 

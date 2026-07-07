@@ -1175,7 +1175,11 @@ def setup_chat_routes(
         if rec is None:
             if agent_runs.is_active(session_id):
                 return {"status": "streaming", "detached": True}
-            raise HTTPException(404, "No active stream for this session")
+            # "Nothing streaming" is a normal answer to a status poll, not an
+            # error — the frontend asks on every session open, and a 404 here
+            # put a red console error on every page load. Callers only act on
+            # status === "streaming", so "idle" is inert.
+            return {"status": "idle"}
         return rec
 
     # ------------------------------------------------------------------ #
