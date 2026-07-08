@@ -38,7 +38,7 @@ function ensureReviewBox(messageElement) {
   box = document.createElement('details');
   box.className = 'review-box';
   box.open = true;
-  box.style.cssText = 'margin:8px 0 4px;border:1px solid #2a2a2a;border-radius:8px;padding:6px 10px;font-size:13px;background:rgba(255,255,255,0.02);';
+  box.style.cssText = 'margin:8px 0 4px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px;background:color-mix(in srgb, var(--fg) 3%, transparent);';
   messageElement.appendChild(box);
   return box;
 }
@@ -51,22 +51,28 @@ function renderReview(box, result) {
 
   const badge = '<span class="review-verdict-badge" style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:10px;font-weight:600;font-size:12px;color:#fff;background:' + color + ';text-transform:capitalize;">' + escapeHtml(verdict) + '</span>';
 
+  // Theme-aware greys: full-strength fg for body text, a muted mix for
+  // labels/summary — so the box is legible on light themes too (was hard-coded
+  // #c9c9c9 / #9ca3af, near-invisible on the light paper palette).
+  const bodyColor = 'var(--fg)';
+  const mutedColor = 'color-mix(in srgb, var(--fg) 55%, transparent)';
+
   let issuesHtml = '';
   if (issues.length) {
-    issuesHtml = '<ul style="margin:8px 0 0;padding-left:18px;color:#c9c9c9;">' +
+    issuesHtml = '<ul style="margin:8px 0 0;padding-left:18px;color:' + bodyColor + ';">' +
       issues.map((i) => '<li style="margin:2px 0;">' + escapeHtml(i) + '</li>').join('') +
       '</ul>';
   } else {
-    issuesHtml = '<div style="margin-top:8px;color:#9ca3af;">No issues flagged.</div>';
+    issuesHtml = '<div style="margin-top:8px;color:' + mutedColor + ';">No issues flagged.</div>';
   }
 
   let suggestionHtml = '';
   if (suggestion) {
-    suggestionHtml = '<div style="margin-top:8px;color:#c9c9c9;"><strong style="color:#9ca3af;">Suggestion:</strong> ' + escapeHtml(suggestion) + '</div>';
+    suggestionHtml = '<div style="margin-top:8px;color:' + bodyColor + ';"><strong style="color:' + mutedColor + ';">Suggestion:</strong> ' + escapeHtml(suggestion) + '</div>';
   }
 
   box.innerHTML =
-    '<summary style="cursor:pointer;color:#9ca3af;list-style:none;display:flex;align-items:center;gap:8px;">' +
+    '<summary style="cursor:pointer;color:' + mutedColor + ';list-style:none;display:flex;align-items:center;gap:8px;">' +
       '<span style="font-weight:600;">Review</span>' + badge +
     '</summary>' +
     '<div style="margin-top:6px;">' + issuesHtml + suggestionHtml + '</div>';
@@ -74,14 +80,14 @@ function renderReview(box, result) {
 
 function renderError(box, message) {
   box.innerHTML =
-    '<summary style="cursor:pointer;color:#9ca3af;list-style:none;">Review</summary>' +
-    '<div style="margin-top:6px;color:#ef4444;">' + escapeHtml(message || 'Review failed') + '</div>';
+    '<summary style="cursor:pointer;color:color-mix(in srgb, var(--fg) 55%, transparent);list-style:none;">Review</summary>' +
+    '<div style="margin-top:6px;color:var(--red, #ef4444);">' + escapeHtml(message || 'Review failed') + '</div>';
 }
 
 // Perform the /api/review call and render the result into the message's box.
 async function runReview(messageElement, question, answer, buttonEl) {
   const box = ensureReviewBox(messageElement);
-  box.innerHTML = '<summary style="cursor:pointer;color:#9ca3af;list-style:none;">Review</summary><div style="margin-top:6px;color:#9ca3af;">Reviewing…</div>';
+  box.innerHTML = '<summary style="cursor:pointer;color:color-mix(in srgb, var(--fg) 55%, transparent);list-style:none;">Review</summary><div style="margin-top:6px;color:color-mix(in srgb, var(--fg) 55%, transparent);">Reviewing…</div>';
   if (buttonEl) { buttonEl.innerHTML = ICON_LOADING; buttonEl.classList.add('loading'); }
 
   try {
@@ -193,7 +199,7 @@ function resolvePendingBadge(messageElement, verdict) {
 async function runGatedReview(messageElement, question, answer) {
   const badge = addPendingBadge(messageElement);
   const box = ensureReviewBox(messageElement);
-  box.innerHTML = '<summary style="cursor:pointer;color:#9ca3af;list-style:none;">Review</summary><div style="margin-top:6px;color:#9ca3af;">Reviewing…</div>';
+  box.innerHTML = '<summary style="cursor:pointer;color:color-mix(in srgb, var(--fg) 55%, transparent);list-style:none;">Review</summary><div style="margin-top:6px;color:color-mix(in srgb, var(--fg) 55%, transparent);">Reviewing…</div>';
   try {
     const response = await fetch('/api/review', {
       method: 'POST',
