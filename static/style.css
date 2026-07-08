@@ -5033,9 +5033,16 @@ body.bg-pattern-sparkles {
         padding: 6px !important;
         border-radius: 12px !important;
       }
-      /* Safe area padding for notched devices */
+      /* Safe area padding for notched devices; tighten side padding + gap so
+         the composer doesn't feel cramped under the model chip on phones. */
       .chat-input-bar {
-        padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        padding: 8px 10px;
+        padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+        gap: 10px;
+      }
+      /* A touch more clearance between the textarea row and the control row. */
+      .chat-input-bar textarea#message {
+        margin-bottom: 2px;
       }
       /* Mode toggle — larger touch targets */
       .mode-toggle {
@@ -8342,6 +8349,14 @@ button.hamburger {
 .msg em, .msg i {
   color: var(--hl-params, #abb2bf);
   font-style: italic;
+}
+
+/* In the default "Match UI font" chat mode (monospace terminal look), models
+   emit heavy *emphasis* and whole italic paragraphs in Fira Code read poorly.
+   Drop the slant there — the color tint still signals emphasis. Reading/Book
+   chat-text modes keep true italics (they use proportional faces). */
+html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
+  font-style: normal;
 }
 
 /* Bold + italic */
