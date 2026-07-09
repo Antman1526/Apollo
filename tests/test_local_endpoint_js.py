@@ -1,4 +1,4 @@
-"""Pin the billing/display classifier `isLocalEndpoint` in chatRenderer.js.
+"""Pin the billing/display classifier `isLocalEndpoint` in modelMeta.js.
 
 Self-hosted endpoints reached by a bare Docker/Compose service name (e.g.
 `http://llamaswap:8000`) must classify as LOCAL so they aren't priced at cloud
@@ -6,9 +6,9 @@ rates against the substring-matched MODEL_PRICING table. Cloud FQDNs must stay
 billable.
 
 Driven through `node --input-type=module` against the real function (extracted
-from source — chatRenderer.js can't be imported standalone since it pulls in
-browser-only modules), same spirit as test_reply_recipients_js.py. Skips when
-`node` is not installed rather than failing.
+from source). isLocalEndpoint lives in the dependency-free leaf module
+modelMeta.js (moved out of chatRenderer.js, which pulls in browser-only
+modules and can't import standalone). Skips when `node` is not installed.
 """
 import json
 import re
@@ -19,14 +19,14 @@ from pathlib import Path
 import pytest
 
 _REPO = Path(__file__).resolve().parent.parent
-_SRC = _REPO / "static" / "js" / "chatRenderer.js"
+_SRC = _REPO / "static" / "js" / "modelMeta.js"
 _HAS_NODE = shutil.which("node") is not None
 
 
 def _is_local(url: str) -> bool:
     src = _SRC.read_text(encoding="utf-8")
     m = re.search(r"export function isLocalEndpoint\(.*?\n\}", src, re.DOTALL)
-    assert m, "isLocalEndpoint not found in chatRenderer.js"
+    assert m, "isLocalEndpoint not found in modelMeta.js"
     fn = m.group(0).replace("export function", "function", 1)
     js = fn + f"\nconsole.log(JSON.stringify(isLocalEndpoint({json.dumps(url)})));"
     proc = subprocess.run(
