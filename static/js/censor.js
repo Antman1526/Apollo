@@ -35,6 +35,37 @@ const PATTERNS = [
   { re: /\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}(?::\d+)?\b/g, label: 'internal-ip' },
 ];
 
+/**
+ * Pure: find sensitive substrings in `text`. Returns deduped, start-sorted
+ * matches [{start, end, text, label}] with overlapping ranges merged (the
+ * earlier pattern's label wins). No DOM access — unit-testable in Node.
+ * _processElement wraps each returned match in a `.censored-item` span.
+ */
+export function detectSensitive(text) {
+  if (!text) return [];
+  const matches = [];
+  for (const pattern of PATTERNS) {
+    pattern.re.lastIndex = 0;
+    let m;
+    while ((m = pattern.re.exec(text)) !== null) {
+      matches.push({ start: m.index, end: m.index + m[0].length, text: m[0], label: pattern.label });
+    }
+  }
+  if (matches.length === 0) return [];
+
+  matches.sort((a, b) => a.start - b.start);
+  const deduped = [matches[0]];
+  for (let i = 1; i < matches.length; i++) {
+    const prev = deduped[deduped.length - 1];
+    if (matches[i].start < prev.end) {
+      if (matches[i].end > prev.end) prev.end = matches[i].end;
+    } else {
+      deduped.push(matches[i]);
+    }
+  }
+  return deduped;
+}
+
 export function init() {
   // Load enabled state from feature flags
   _loadState();
@@ -141,26 +172,8 @@ function _processElement(el) {
     const text = textNode.textContent;
     if (!text || text.trim().length < 4) continue;
 
-    const matches = [];
-    for (const pattern of PATTERNS) {
-      pattern.re.lastIndex = 0;
-      let m;
-      while ((m = pattern.re.exec(text)) !== null) {
-        matches.push({ start: m.index, end: m.index + m[0].length, text: m[0], label: pattern.label });
-      }
-    }
-    if (matches.length === 0) continue;
-
-    matches.sort((a, b) => a.start - b.start);
-    const deduped = [matches[0]];
-    for (let i = 1; i < matches.length; i++) {
-      const prev = deduped[deduped.length - 1];
-      if (matches[i].start < prev.end) {
-        if (matches[i].end > prev.end) prev.end = matches[i].end;
-      } else {
-        deduped.push(matches[i]);
-      }
-    }
+    const deduped = detectSensitive(text);
+    if (deduped.length === 0) continue;
 
     const frag = document.createDocumentFragment();
     let lastIdx = 0;
