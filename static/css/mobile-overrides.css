@@ -1,0 +1,294 @@
+/* ══ iOS focus-zoom fix — touch devices only; desktop sizes untouched ══
+   16px is the threshold below which iOS Safari auto-zooms on focus.
+   Selects and date/time inputs are excluded on purpose — they open native
+   pickers and never zoom. */
+@media (hover: none) and (pointer: coarse) {
+
+  /* 1 ── Catch-all: every text-entry control NOT pinned with its own
+     !important. !important here beats any non-important rule regardless of
+     specificity, so this clears the long tail (settings, admin, memory,
+     notes, calendar, email, gallery, tasks, model picker, etc.). */
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="url"],
+  input[type="tel"],
+  input[type="password"],
+  input[type="number"],
+  input:not([type]),
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* 2 ── Fields that pin their own !important at specificity our catch-all
+     can't beat. Each is matched at equal-or-higher specificity and, being
+     later in the file, wins the tie. */
+  #message { font-size: 16px !important; }                                  /* chat composer (was 13px !important) */
+  .cookbook-dl-repo,
+  .hwfit-search { font-size: 16px !important; }                             /* cookbook repo path + hardware search */
+  .ge-topbar input { font-size: 16px !important; }                          /* image-editor topbar input */
+  .ge-transform-field > input.ge-transform-popup-input {                    /* image-editor transform values */
+    font-size: 16px !important;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  /* Only the sub-16px tiers need bumping; large lands ABOVE 16 so it
+     stays zoom-safe AND visibly larger than medium (otherwise L collapses
+     onto M on touch). All three editor layers move together so the
+     highlight/line-number overlay stays metrically aligned with the textarea. */
+  .doc-font-m .doc-editor-textarea, .doc-font-m .doc-editor-highlight, .doc-font-m .doc-line-numbers {
+    font-size: 16px !important;   /* was 13px */
+  }
+  .doc-font-l .doc-editor-textarea, .doc-font-l .doc-editor-highlight, .doc-font-l .doc-line-numbers {
+    font-size: 18px !important;   /* was 15px — keep L > M */
+  }
+  /* Email compose rich-body. Medium (15px) zooms, so bump it; large (17px)
+     is already ≥16px and never zoomed — leave it so we don't shrink it. */
+  .doc-email-richbody.doc-font-m { font-size: 16px !important; }
+}
+
+/* Paperclip's workspace is a full-screen app surface; keep these overrides
+   late so shared modal width/body rules cannot collapse the floor grid. */
+#paperclip-modal .paperclip-modal-content {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#paperclip-modal .modal-body.paperclip-body {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+#paperclip-modal .paperclip-floor-view {
+  width: 100%;
+}
+/* Browser workspace */
+.browser-modal-content {
+  width: min(1180px, calc(100vw - 72px));
+  height: min(820px, calc(100vh - 48px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.browser-modal-header {
+  flex: 0 0 auto;
+}
+
+.browser-toolbar {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 32px 32px 32px minmax(160px, 1fr) auto 32px;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 72%, var(--bg));
+}
+
+.browser-tool-btn,
+.browser-go {
+  height: 30px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--fg);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.browser-tool-btn {
+  width: 32px;
+  font-size: 18px;
+  line-height: 1;
+}
+
+.browser-go {
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.browser-tool-btn:hover,
+.browser-go:hover {
+  border-color: color-mix(in srgb, var(--brand-color, var(--red)) 45%, var(--border));
+}
+
+.browser-address {
+  min-width: 0;
+  height: 30px;
+  border: 1px solid var(--border);
+  background: var(--input-bg, var(--panel));
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 0 10px;
+  font: 12px var(--font-family, inherit);
+}
+
+.browser-status-row {
+  flex: 0 0 auto;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+  font-size: 11px;
+}
+
+.browser-security {
+  color: var(--color-warning, #d19a66);
+}
+
+.browser-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 260px;
+  /* One definite row filling the modal body. Without this the implicit
+     auto row grows to the console column's full unscrolled height and the
+     canvas stretches with it (thousands of px tall). */
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.browser-viewport {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.browser-canvas {
+  /* flex-basis 0: unlike the old iframe, a canvas has an intrinsic size
+     (its bitmap, e.g. 1366x900) which would otherwise inflate the flex
+     layout far beyond the panel. Grow from zero and letterbox instead. */
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  height: auto;
+  display: block;
+  border: 0;
+  background: #fff;
+  object-fit: contain;
+}
+
+.browser-canvas:focus {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.browser-hint {
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+.browser-console {
+  min-width: 0;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 78%, var(--bg));
+  display: flex;
+  flex-direction: column;
+}
+
+.browser-console-title {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--fg) 55%, transparent);
+}
+
+.browser-console-log {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 8px 10px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: color-mix(in srgb, var(--fg) 78%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.browser-console-line {
+  padding: 3px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+}
+
+@media (max-width: 820px) {
+  .browser-modal-content {
+    width: calc(100vw - 20px);
+    height: calc(100vh - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .browser-toolbar {
+    grid-template-columns: 30px 30px 30px minmax(0, 1fr) 46px 30px;
+    padding: 7px;
+  }
+
+  .browser-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .browser-console {
+    display: none;
+  }
+}
+
+/* ── Voice call mode overlay ── */
+.voice-call-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: 1.5rem; background: rgba(0,0,0,0.6); backdrop-filter: blur(2px);
+}
+.voice-call-overlay[data-state]:not([data-state="idle"]) { display: flex; }
+.vc-status { display: flex; align-items: center; gap: 8px; color: #9aa0a6; font-size: 13px; }
+.vc-dot { width: 8px; height: 8px; border-radius: 50%; background: #34a853; }
+.vc-orb {
+  width: 150px; height: 150px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(55,138,221,0.15); border: 2px solid rgba(55,138,221,0.6);
+  transition: transform .12s ease, background .2s ease, border-color .2s ease;
+}
+.vc-orb-inner {
+  width: 96px; height: 96px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center; color: #fff;
+  background: #378add;
+}
+.voice-call-overlay[data-state="listening"] .vc-orb { animation: vc-pulse 1.4s ease-in-out infinite; }
+.voice-call-overlay[data-state="thinking"] .vc-orb-inner { background: #7f77dd; }
+.voice-call-overlay[data-state="speaking"] .vc-orb-inner { background: #1d9e75; }
+.voice-call-overlay[data-state="capturing"] .vc-orb { transform: scale(1.08); border-color: #34a853; }
+@keyframes vc-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+.vc-caption { text-align: center; }
+.vc-state-label { margin: 0; font-size: 16px; font-weight: 500; color: #f1f3f4; }
+.vc-transcript { margin: 4px 0 0; font-size: 14px; color: #bdc1c6; min-height: 20px; }
+.vc-controls { display: flex; gap: 12px; }
+.vc-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid #5f6368; background: transparent; color: #e8eaed; cursor: pointer; }
+.vc-btn:hover { background: rgba(255,255,255,0.06); }
+.vc-btn.vc-active { border-color: #378add; color: #8ab4f8; }
+.vc-btn-danger { border-color: #a3312d; color: #f28b82; }

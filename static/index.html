@@ -214,7 +214,29 @@
       }, { once: true });
     })();
   </script>
-  <link rel="stylesheet" href="/static/style.css?v=paperclip-floor-20260611d">
+  <!-- style.css was split into per-feature files under /static/css/ (see
+       static/css/README or git log). Linked in source order — order carries
+       specificity intent, so mobile-overrides.css MUST stay last. -->
+  <link rel="stylesheet" href="/static/css/variables.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/base.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/paperclip-floor.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/layout.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/controls.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/overlays.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/chat-components.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/agent-thread.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/memory.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/doc-editor.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/admin.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/gallery-compare.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/cookbook.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/settings-tasks.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/research.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/email.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/notes.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/calendar.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/theme-extras.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/mobile-overrides.css?v=split-20260708">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
   <link rel="modulepreload" href="/static/js/ui.js">

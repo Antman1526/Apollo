@@ -1,0 +1,825 @@
+/* ── Paperclip Floor ── */
+
+.paperclip-modal-content {
+  width: 100vw;
+  height: 100vh;
+  max-width: 100vw;
+  max-height: 100vh;
+  border-radius: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.paperclip-body {
+  padding: 0;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.paperclip-view-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  margin: 0 8px 0 0;
+  border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--panel) 82%, var(--bg));
+}
+
+.paperclip-view-btn {
+  min-width: 58px;
+  height: 26px;
+  border: 0;
+  border-radius: 4px;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.paperclip-view-btn.active {
+  color: var(--bg);
+  background: var(--fg);
+}
+
+.paperclip-live-shell,
+.paperclip-classic-view {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.paperclip-floor-view {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 320px) minmax(210px, 260px);
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--fg) 4%, transparent) 1px, transparent 1px),
+    linear-gradient(color-mix(in srgb, var(--fg) 4%, transparent) 1px, transparent 1px),
+    var(--bg);
+  background-size: 28px 28px;
+}
+
+.paperclip-floor-stage,
+.paperclip-focus-pane,
+.paperclip-activity-pane,
+.paperclip-board-lane {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  background: color-mix(in srgb, var(--panel) 78%, var(--bg));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+}
+
+.paperclip-floor-stage {
+  position: relative;
+  overflow: hidden;  /* the stage scales itself to fit */
+}
+
+.paperclip-floor-meta {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+  font-size: 11px;
+}
+
+.paperclip-live-state {
+  color: var(--green);
+}
+
+.paperclip-live-count {
+  opacity: 0.62;
+}
+
+.paperclip-zone-grid {
+  width: 100%;
+  height: calc(100% - 40px);
+  min-width: 760px;
+  min-height: 520px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+/* Fixed-size isometric stage; renderZones() scales it to fit the container. */
+.paperclip-workspace-map {
+  position: relative;
+  width: 1200px;
+  height: 740px;
+  transform-origin: top left;
+}
+
+.paperclip-iso-scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.paperclip-iso-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  fill: rgba(74, 53, 34, 0.62);
+}
+
+.paperclip-desk-nameplate {
+  font-size: 10px;
+  font-weight: 600;
+  fill: rgba(74, 53, 34, 0.78);
+}
+
+.paperclip-agent-desk.empty { opacity: 0.82; }
+
+.paperclip-agent-desk .paperclip-desk-screen { opacity: 0.3; }
+
+.paperclip-agent-desk.active .paperclip-desk-screen {
+  opacity: 1;
+  animation: paperclip-screen-glow 1.2s steps(3) infinite;
+}
+
+.paperclip-interaction-arc {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: 5 7;
+  opacity: 0.7;
+  animation: paperclip-arc-flow 1.4s linear infinite;
+}
+
+.paperclip-chat-bubble {
+  position: absolute;
+  left: var(--bubble-x);
+  top: var(--bubble-y);
+  z-index: 400;
+  max-width: 170px;
+  padding: 6px 8px;
+  transform: translate(26px, -132px);
+  border: 1px solid color-mix(in srgb, var(--green) 66%, var(--border));
+  border-radius: 8px 8px 8px 2px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 94%, var(--bg));
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.32);
+  font-size: 10px;
+  line-height: 1.35;
+  animation: paperclip-bubble-pop 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.paperclip-chat-bubble strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.paperclip-chat-bubble.from-bubble {
+  transform: translate(calc(-100% - 22px), -142px);
+  border-radius: 8px 8px 2px 8px;
+}
+
+.paperclip-chat-bubble.to-bubble {
+  border-color: color-mix(in srgb, #3b82f6 66%, var(--border));
+  animation-delay: 0.7s;
+}
+
+.paperclip-exit-sign {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  fill: #50fa7b;
+}
+
+/* Status callouts: review/blocked/leaving agents narrate their state. */
+.paperclip-callout-bubble {
+  position: absolute;
+  left: var(--bubble-x);
+  top: var(--bubble-y);
+  z-index: 380;
+  max-width: 160px;
+  padding: 4px 8px;
+  transform: translate(-50%, -118px);
+  border: 1px solid color-mix(in srgb, var(--warn, #f0ad4e) 55%, var(--border));
+  border-radius: 8px 8px 8px 2px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  font-size: 9px;
+  line-height: 1.35;
+  animation: paperclip-bubble-pop 2.4s ease-in-out infinite;
+  animation-delay: 1.1s;
+  pointer-events: none;
+}
+
+.paperclip-murmur-bubble {
+  position: absolute;
+  left: var(--bubble-x);
+  top: var(--bubble-y);
+  z-index: 380;
+  max-width: 150px;
+  padding: 4px 7px;
+  transform: translate(-50%, -118px);
+  border: 1px dashed color-mix(in srgb, var(--fg) 36%, transparent);
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+  background: color-mix(in srgb, var(--panel) 88%, var(--bg));
+  font-size: 9px;
+  font-style: italic;
+  line-height: 1.3;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  animation: paperclip-bubble-pop 2.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.paperclip-zone {
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--border) 64%, transparent);
+  background: color-mix(in srgb, var(--bg) 64%, var(--panel));
+}
+
+.paperclip-zone-head,
+.paperclip-board-lane-head {
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.paperclip-zone-agents,
+.paperclip-board-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 9px;
+}
+
+/* Focus-pane header card: shares the SVG minifig with the floor scene. */
+.paperclip-focus-card {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  color: var(--fg);
+  background: color-mix(in srgb, var(--panel) 72%, var(--bg));
+}
+
+.paperclip-focus-fig {
+  width: 56px;
+  height: 80px;
+  filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.28));
+}
+
+.paperclip-focus-card.thinking .paperclip-fig-arm {
+  animation: paperclip-lego-arm 680ms ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 10%;
+}
+
+.paperclip-view-btn:focus-visible,
+.paperclip-roaming-agent:focus-visible,
+.paperclip-board-card:focus-visible,
+#paperclip-modal .close-btn:focus-visible,
+#paperclip-modal #paperclip-popout-btn:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 3px;
+}
+
+/* ── SVG minifigs (drawn inside the iso scene for true occlusion) ── */
+g.paperclip-roaming-agent {
+  cursor: pointer;
+  pointer-events: auto;
+  outline: none;
+  transform: translate(var(--agent-x), var(--agent-y));
+}
+
+g.paperclip-roaming-agent.walking {
+  animation: paperclip-agent-walk 1.25s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+g.paperclip-roaming-agent:hover .paperclip-fig,
+g.paperclip-roaming-agent:focus-visible .paperclip-fig,
+g.paperclip-roaming-agent.selected .paperclip-fig {
+  filter: brightness(1.14) drop-shadow(0 0 6px rgba(80, 250, 123, 0.45));
+}
+
+.paperclip-agent-shadow { fill: rgba(30, 20, 12, 0.3); }
+
+.paperclip-select-ring {
+  fill: none;
+  stroke: color-mix(in srgb, var(--green) 80%, transparent);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+.paperclip-fig,
+.paperclip-fig-body,
+.paperclip-fig-headgroup,
+.paperclip-fig-legs,
+.paperclip-fig-leg {
+  transform-box: fill-box;
+}
+
+.paperclip-fig { transform-origin: 50% 100%; }
+.paperclip-fig-headgroup { transform-origin: 50% 80%; }
+.paperclip-fig-legs { transform-origin: 50% 100%; }
+.paperclip-fig-leg { transform-origin: 50% 0%; }
+
+.paperclip-fig-head,
+.paperclip-fig-arm,
+.paperclip-fig-hand {
+  fill: #f4c542;
+  stroke: rgba(0, 0, 0, 0.32);
+  stroke-width: 1.5;
+}
+
+.paperclip-fig-stud {
+  fill: #d6a72d;
+  stroke: rgba(0, 0, 0, 0.28);
+  stroke-width: 1.5;
+}
+
+.paperclip-fig-eye { fill: #1b1b1b; }
+
+.paperclip-fig-smile {
+  fill: none;
+  stroke: #1b1b1b;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.paperclip-fig-leg,
+.paperclip-fig-hip {
+  fill: #2f3a52;
+  stroke: rgba(0, 0, 0, 0.34);
+  stroke-width: 1.5;
+}
+
+.paperclip-fig-torso {
+  fill: #3b82f6;
+  stroke: rgba(0, 0, 0, 0.32);
+  stroke-width: 1.5;
+}
+
+/* Minifig "uniforms": torso color follows the agent's role (applies on the
+   floor scene g and the focus card alike). */
+.role-research .paperclip-fig-torso { fill: #20b486; }
+.role-coding .paperclip-fig-torso { fill: #3b82f6; }
+.role-review .paperclip-fig-torso { fill: #c678dd; }
+.role-ops .paperclip-fig-torso { fill: #e06c75; }
+
+/* Poses. */
+g.pose-sitting .paperclip-fig-legs { transform: translateY(8px) scaleY(0.45); }
+g.pose-sitting .paperclip-fig-body,
+g.pose-sitting .paperclip-fig-headgroup { transform: translateY(9px); }
+
+g.pose-talking .paperclip-fig-headgroup {
+  animation: paperclip-lego-nod 820ms ease-in-out infinite;
+}
+
+g.pose-standing:not(.walking) .paperclip-fig {
+  animation: paperclip-idle-bob 3.4s ease-in-out infinite;
+}
+
+g.paperclip-roaming-agent.walking .paperclip-fig {
+  animation: paperclip-lego-stride 440ms ease-in-out 3;
+}
+
+g.paperclip-roaming-agent.walking .paperclip-fig-leg.left {
+  animation: paperclip-lego-step-left 440ms ease-in-out 3;
+}
+
+g.paperclip-roaming-agent.walking .paperclip-fig-leg.right {
+  animation: paperclip-lego-step-right 440ms ease-in-out 3;
+}
+
+/* Name chip, speech and thinking indicators. */
+.paperclip-iso-chip rect {
+  fill: rgba(12, 14, 18, 0.84);
+  stroke: rgba(255, 255, 255, 0.16);
+}
+
+.paperclip-iso-name {
+  font-size: 9px;
+  font-weight: 600;
+  fill: var(--fg);
+}
+
+/* Status dot on the name chip, colored by the agent's zone. */
+.paperclip-chip-dot { fill: #8a8f98; }
+.zone-working .paperclip-chip-dot { fill: #3b82f6; }
+.zone-review .paperclip-chip-dot { fill: #c678dd; }
+.zone-blocked .paperclip-chip-dot { fill: #e06c75; }
+.zone-done .paperclip-chip-dot { fill: #50fa7b; }
+
+g.paperclip-speech-burst rect {
+  fill: color-mix(in srgb, var(--panel) 92%, var(--bg));
+  stroke: color-mix(in srgb, var(--green) 60%, var(--border));
+}
+
+g.paperclip-speech-burst circle,
+g.paperclip-iso-thinking circle {
+  fill: var(--green);
+  animation: paperclip-svg-dot 820ms ease-in-out infinite;
+}
+
+g.paperclip-speech-burst circle:nth-of-type(2),
+g.paperclip-iso-thinking circle:nth-of-type(2) { animation-delay: 120ms; }
+
+g.paperclip-speech-burst circle:nth-of-type(3),
+g.paperclip-iso-thinking circle:nth-of-type(3) { animation-delay: 240ms; }
+
+/* Trail left behind a walking minifig (drawn in the scene SVG). */
+line.paperclip-walk-path {
+  stroke: var(--green);
+  stroke-width: 2;
+  stroke-dasharray: 6 8;
+  stroke-linecap: round;
+  opacity: 0;
+  animation: paperclip-trail-fade 1.25s ease-out;
+}
+
+.paperclip-board-card:hover,
+.paperclip-board-card.selected {
+  transform: translateY(-1px);
+  border-color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 8%, var(--panel));
+}
+
+.paperclip-agent-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.paperclip-agent-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.paperclip-agent-role,
+.paperclip-agent-task,
+.paperclip-focus-status,
+.paperclip-empty-line {
+  font-size: 10px;
+  line-height: 1.35;
+  color: color-mix(in srgb, var(--fg) 62%, transparent);
+}
+
+.paperclip-agent-task {
+  min-height: 28px;
+  overflow: hidden;
+}
+
+/* Typing wiggle while a seated minifig works. */
+g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
+  animation: paperclip-lego-arm 680ms ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 10%;
+}
+
+.paperclip-focus-pane,
+.paperclip-activity-pane {
+  padding: 12px;
+  overflow: auto;
+}
+
+
+.paperclip-pane-title {
+  margin: 12px 0 7px;
+  color: color-mix(in srgb, var(--fg) 76%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.paperclip-tool-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.paperclip-tool-chip {
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 999px;
+  font-size: 10px;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+
+.paperclip-tool-chip.muted {
+  opacity: 0.55;
+}
+
+.paperclip-transcript,
+.paperclip-messages,
+.paperclip-activity-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.paperclip-transcript-line,
+.paperclip-message-line,
+.paperclip-activity-item {
+  padding: 7px 8px;
+  border-left: 2px solid color-mix(in srgb, var(--fg) 38%, transparent);
+  background: color-mix(in srgb, var(--bg) 60%, var(--panel));
+  font-size: 10px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.paperclip-activity-item.message {
+  border-left-color: var(--green);
+}
+
+.paperclip-board-view {
+  height: 100%;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(170px, 1fr));
+  gap: 12px;
+  padding: 12px;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.paperclip-board-card {
+  min-height: 74px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 72%, var(--bg));
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.paperclip-board-card small {
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  line-height: 1.35;
+}
+
+/* Role accent matching the minifig torso colors. */
+.paperclip-board-card.role-research { border-left: 3px solid #20b486; }
+.paperclip-board-card.role-coding { border-left: 3px solid #3b82f6; }
+.paperclip-board-card.role-review { border-left: 3px solid #c678dd; }
+.paperclip-board-card.role-ops { border-left: 3px solid #e06c75; }
+
+.paperclip-classic-view iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+  background: var(--bg);
+}
+
+@keyframes paperclip-lego-arm {
+  0%, 100% { transform: rotate(-8deg); }
+  50% { transform: rotate(-38deg); }
+}
+
+@keyframes paperclip-lego-nod {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-2px) rotate(-4deg); }
+}
+
+@keyframes paperclip-agent-walk {
+  0% { transform: translate(var(--from-x), var(--from-y)); }
+  100% { transform: translate(var(--agent-x), var(--agent-y)); }
+}
+
+@keyframes paperclip-trail-fade {
+  0% { opacity: 0; }
+  25% { opacity: 0.6; }
+  100% { opacity: 0; }
+}
+
+@keyframes paperclip-svg-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+@keyframes paperclip-idle-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes paperclip-screen-glow {
+  0% { fill-opacity: 0.75; }
+  50% { fill-opacity: 1; }
+  100% { fill-opacity: 0.85; }
+}
+
+@keyframes paperclip-lego-stride {
+  0%, 100% { transform: translateY(0) rotate(0deg); }
+  50% { transform: translateY(-5px) rotate(-2deg); }
+}
+
+@keyframes paperclip-lego-step-left {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes paperclip-lego-step-right {
+  0%, 100% { transform: translateY(-4px); }
+  50% { transform: translateY(0); }
+}
+
+@keyframes paperclip-path-fade {
+  0% { opacity: 0; transform: scaleX(0.15); }
+  35% { opacity: 0.66; }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
+@keyframes paperclip-arc-flow {
+  0% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -14; }
+}
+
+@keyframes paperclip-bubble-pop {
+  0%, 100% { opacity: 0.55; }
+  30%, 72% { opacity: 1; }
+}
+
+@media (max-width: 1100px) {
+  .paperclip-floor-view {
+    grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  }
+  .paperclip-activity-pane {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  #paperclip-modal .modal-header {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding: 8px;
+  }
+  #paperclip-modal .modal-header h4 {
+    flex: 1 0 100%;
+    min-width: 0;
+    margin-right: 0 !important;
+    font-size: 14px;
+  }
+  #paperclip-modal .modal-header h4 span {
+    display: none;
+  }
+  .paperclip-view-toggle {
+    flex: 1 1 auto;
+    max-width: calc(100% - 104px);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .paperclip-view-toggle::-webkit-scrollbar {
+    display: none;
+  }
+  .paperclip-view-btn {
+    min-width: 54px;
+  }
+  #paperclip-modal #paperclip-popout-btn {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    margin-right: 0 !important;
+    font-size: 0;
+  }
+  #paperclip-modal #paperclip-popout-btn::before {
+    content: "↗";
+    font-size: 14px;
+  }
+  #paperclip-modal #close-paperclip-modal {
+    display: inline-flex !important;
+    position: static !important;
+  }
+  .paperclip-floor-view {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .paperclip-floor-stage,
+  .paperclip-focus-pane {
+    min-height: 420px;
+  }
+  .paperclip-floor-stage {
+    overflow: hidden;
+  }
+  .paperclip-zone-grid,
+  .paperclip-board-view {
+    grid-template-columns: 1fr;
+    min-width: 0;
+  }
+  .paperclip-zone-grid {
+    min-width: 0;
+  }
+  .paperclip-zone {
+    min-height: 220px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #paperclip-modal .paperclip-roaming-agent,
+  #paperclip-modal .paperclip-roaming-agent.walking,
+  #paperclip-modal .paperclip-fig,
+  #paperclip-modal .paperclip-fig-headgroup,
+  #paperclip-modal .paperclip-fig-arm,
+  #paperclip-modal .paperclip-fig-leg,
+  #paperclip-modal .paperclip-speech-burst circle,
+  #paperclip-modal .paperclip-iso-thinking circle,
+  #paperclip-modal .paperclip-desk-screen,
+  #paperclip-modal .paperclip-agent-desk.active .paperclip-desk-screen,
+  #paperclip-modal .paperclip-interaction-arc,
+  #paperclip-modal .paperclip-chat-bubble,
+  #paperclip-modal .paperclip-murmur-bubble,
+  #paperclip-modal .paperclip-callout-bubble,
+  #paperclip-modal .paperclip-walk-path {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  #paperclip-modal .paperclip-walk-path {
+    display: none;
+  }
+}
+
+/* Utility */
+.red-text { color: var(--red); }
+
+/* ── Density Overrides ── */
+
+:root.density-compact { font-size: 13px; }
+:root.density-compact .msg { padding: 6px 10px; margin-bottom: 4px; }
+:root.density-compact .list-item { padding: 4px 8px; }
+:root.density-compact .sidebar .section { padding: 0; }
+:root.density-spacious { font-size: 16px; }
+:root.density-spacious .msg { padding: 14px 18px; margin-bottom: 12px; }
+:root.density-spacious .list-item { padding: 8px 12px; }
+:root.density-spacious .sidebar .section { padding: 0; }
+
+/* ── Background Patterns ── */
+
+:root { --bg-effect-intensity: 1; }
+
+/* Canvas-based effects — single source of truth for intensity */
+#synapse-canvas, #rain-canvas, #constellations-canvas,
+#perlin-flow-canvas, #petals-canvas, #sparkles-canvas,
+#embers-canvas {
+  opacity: var(--bg-effect-intensity, 1);
+}
+
+body.bg-pattern-dots {
+  background-image: radial-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+  background-size: 20px 20px; background-attachment: fixed;
+}
+body.bg-pattern-synapse {
+  /* CSS grid as base, canvas pulses overlay */
+  background-image: linear-gradient(color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--bg-effect-color, var(--fg)) calc(3.5% * var(--bg-effect-intensity, 1)), transparent) 1px, transparent 1px);
+  background-size: 24px 24px; background-attachment: fixed;
+}
+body.bg-pattern-perlin-flow,
+body.bg-pattern-petals,
+body.bg-pattern-sparkles {
+  /* canvas-only backgrounds */
+}
+
+

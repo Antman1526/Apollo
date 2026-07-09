@@ -7,14 +7,35 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'apollo-v335';
+const CACHE_NAME = 'apollo-v336';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
 // and <link rel="stylesheet"> in index.html.
 const PRECACHE = [
   '/',
-  '/static/style.css',
+  // style.css was split into per-feature files under /static/css/ (linked in
+  // source order from index.html). Keep this list in sync with those links.
+  '/static/css/variables.css',
+  '/static/css/base.css',
+  '/static/css/paperclip-floor.css',
+  '/static/css/layout.css',
+  '/static/css/controls.css',
+  '/static/css/overlays.css',
+  '/static/css/chat-components.css',
+  '/static/css/agent-thread.css',
+  '/static/css/memory.css',
+  '/static/css/doc-editor.css',
+  '/static/css/admin.css',
+  '/static/css/gallery-compare.css',
+  '/static/css/cookbook.css',
+  '/static/css/settings-tasks.css',
+  '/static/css/research.css',
+  '/static/css/email.css',
+  '/static/css/notes.css',
+  '/static/css/calendar.css',
+  '/static/css/theme-extras.css',
+  '/static/css/mobile-overrides.css',
   '/static/app.js',
   '/static/js/storage.js',
   '/static/js/ui.js',
