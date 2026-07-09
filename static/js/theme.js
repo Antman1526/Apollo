@@ -276,6 +276,18 @@ export function applyColors(colors) {
   s.setProperty('--border', colors.border);
   if (colors.red) s.setProperty('--red', colors.red);
 
+  // Match native form controls, scrollbars, and date/color pickers to the
+  // theme's brightness. The theme system swaps CSS variables but never adds a
+  // `.light` class, so the `:root.light` overrides that were meant to fix this
+  // never fired — every <select> popup and scrollbar rendered with dark OS
+  // chrome even on a light theme. Bg lightness (same signal deriveSyntaxColors
+  // uses) drives it; element rules that need to follow suit use
+  // `color-scheme: inherit`.
+  try {
+    const bgL = hexToHSL(colors.bg)[2];
+    s.colorScheme = bgL < 50 ? 'dark' : 'light';
+  } catch (_e) { /* keep whatever's set if bg is unparseable */ }
+
   // Keep the mobile browser toolbar / status bar matched to the theme bg
   // (same as the early head-script does on first paint).
   const _mtc = document.querySelector('meta[name="theme-color"]');

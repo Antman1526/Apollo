@@ -618,7 +618,7 @@
     #chat-form button[type="submit"] { height:38px; }
     select {
       height:32px;
-      color-scheme: dark;
+      color-scheme: inherit; /* follow the themed root color-scheme (set by applyColors) so light-theme popups aren't dark */
       background-color: var(--select-bg);
       color: var(--select-fg);
     }

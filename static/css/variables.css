@@ -16,6 +16,12 @@
  */
 
 :root {
+  /* Native form controls / scrollbars default to dark (the default theme).
+     applyColors() overrides this inline per theme brightness; elements that
+     must follow the theme use `color-scheme: inherit`. Keeping a default here
+     means `inherit` resolves sensibly before applyColors() runs (first paint)
+     and if it never runs. */
+  color-scheme: dark;
   /* Core palette */
   --bg: #282c34;
   --fg: #9cdef2;
