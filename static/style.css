@@ -15,7 +15,10 @@
 @import url("css/variables.css");
 @import url("css/base.css");
 @import url("css/paperclip-floor.css");
-@import url("css/layout.css");
+@import url("css/layout-sidebar.css");
+@import url("css/layout-sidebar-sections.css");
+@import url("css/layout-chat.css");
+@import url("css/layout-mobile.css");
 @import url("css/controls.css");
 @import url("css/overlays.css");
 @import url("css/chat-components.css");

@@ -11,7 +11,10 @@ Order:
 1. `variables.css` — `:root` palette tokens (dark + `:root.light`)
 2. `base.css` — reset, Fira Code font, code/scrollbar baseline
 3. `paperclip-floor.css` — the isometric "paperclip floor" agent scene
-4. `layout.css` — sidebar, chat container, composer, mobile shell
+4. `layout-sidebar.css` — top bar, chat-meta, sidebar user bar, icon rail
+5. `layout-sidebar-sections.css` — sidebar sections, model categories, folders
+6. `layout-chat.css` — chat container, history, welcome screen, composer (desktop)
+7. `layout-mobile.css` — the `@media (max-width:768px)` layout block + loading spinner
 5. `controls.css` — radio/preset/toolbar controls, color palette
 6. `overlays.css` — voice, search overlay, theme popup, syntax highlighting
 7. `chat-components.css` — chat markdown, agent UI, input area
