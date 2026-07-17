@@ -28,6 +28,12 @@ from core.platform_compat import (
     which_tool,
 )
 from routes.shell_routes import TMUX_LOG_DIR
+from routes.cookbook_runner_files import (
+    bash_secret_loader,
+    powershell_secret_loader,
+    write_hf_token_sidecar,
+)
+from src.secure_temp import ensure_private_dir, remove_private_file, write_private_text
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +41,7 @@ from routes.cookbook_helpers import (
     _SSH_PORT_RE, _REMOTE_HOST_RE, _SESSION_ID_RE,
     _validate_repo_id, _validate_serve_model_id, _validate_include, _validate_remote_host, _validate_token,
     _validate_local_dir, _validate_ssh_port, _validate_gpus, _shell_path,
-    _ps_squote, _bash_squote, _validate_serve_cmd, _parse_serve_phase,
+    _bash_squote, _validate_serve_cmd, _parse_serve_phase,
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _venv_safe_local_pip_install_cmd,
@@ -362,13 +368,14 @@ def setup_cookbook_routes() -> APIRouter:
             # all output to the log the poller reads. Paths handed to bash use
             # POSIX form + shell-quoting so drive paths / spaces survive.
             inner = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            inner.write_text("\n".join(bash_lines) + "\n", encoding="utf-8")
+            write_private_text(inner, "\n".join(bash_lines) + "\n", executable=True)
             lp = shlex.quote(log_path.as_posix())
             ip = shlex.quote(inner.as_posix())
             script_path = TMUX_LOG_DIR / f"{session_id}.sh"
-            script_path.write_text(
+            write_private_text(
+                script_path,
                 f"bash {ip} > {lp} 2>&1\n",
-                encoding="utf-8",
+                executable=True,
             )
             argv = [bash, str(script_path)]
         else:
@@ -376,11 +383,12 @@ def setup_cookbook_routes() -> APIRouter:
             # to a cmd.exe wrapper that just records a clear error to the log so
             # the UI surfaces "install Git Bash" instead of silently hanging.
             script_path = TMUX_LOG_DIR / f"{session_id}.cmd"
-            script_path.write_text(
+            write_private_text(
+                script_path,
                 "@echo off\r\n"
                 f'echo Cookbook LOCAL execution on Windows needs Git Bash ^(bash.exe^) on PATH. > "{log_path}" 2>&1\r\n'
                 f'echo Install Git for Windows, then retry. >> "{log_path}"\r\n',
-                encoding="utf-8",
+                executable=True,
             )
             argv = [os.environ.get("ComSpec", "cmd.exe"), "/c", str(script_path)]
         env = os.environ.copy()
@@ -412,7 +420,7 @@ def setup_cookbook_routes() -> APIRouter:
         req.local_dir = _validate_local_dir(req.local_dir)
         req.hf_token = req.hf_token or _load_stored_hf_token()
         _validate_token(req.hf_token)
-        TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(TMUX_LOG_DIR)
         session_id = f"cookbook-{uuid.uuid4().hex[:8]}"
         wrapper_script = TMUX_LOG_DIR / f"{session_id}.sh"
 
@@ -437,8 +445,6 @@ def setup_cookbook_routes() -> APIRouter:
         # No script/tee needed — we'll use tmux capture-pane to read output
         lines = ["#!/bin/bash"]
         lines.extend(_user_shell_path_bootstrap())
-        if req.hf_token:
-            lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
         # Ensure pip-user scripts (e.g. hf CLI installed via --user) are on PATH
         lines.append('export PATH="$HOME/.local/bin:$PATH"')
         # When Apollo runs from a venv (e.g. native macOS install), put its bin
@@ -474,14 +480,26 @@ def setup_cookbook_routes() -> APIRouter:
                 "session_id": session_id,
             }
 
+        token_sidecar = None
+        if req.hf_token:
+            token_sidecar = write_hf_token_sidecar(
+                TMUX_LOG_DIR,
+                session_id,
+                req.hf_token,
+                shell="powershell" if remote and is_windows else "bash",
+            )
+        if token_sidecar and not remote:
+            lines.extend(bash_secret_loader(token_sidecar))
+
         if remote and is_windows:
             # ── Windows remote: generate .ps1 runner, use Start-Process for background ──
             remote_runner = f".{session_id}_run.ps1"
+            remote_token = f".{session_id}.hf-token"
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\apollo-sessions"')
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
-            if req.hf_token:
-                ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+            if token_sidecar:
+                ps_lines.extend(powershell_secret_loader(Path(remote_token)))
             if req.env_prefix:
                 ps_lines.append(_safe_env_prefix(req.env_prefix))
             # Try hf CLI, fall back to Python huggingface_hub, then auto-install
@@ -509,9 +527,11 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append('}} catch {{')
             ps_lines.append('  Write-Host ""; Write-Host "DOWNLOAD_FAILED ($_)"')
             ps_lines.append('}}')
+            if token_sidecar:
+                ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_token}" -ErrorAction SilentlyContinue')
             ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_runner}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-            runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
+            write_private_text(runner_path, "\r\n".join(ps_lines) + "\r\n", executable=True)
 
             # scp the .ps1 script, then launch it as a detached process with log + pid files
             _port = req.ssh_port
@@ -525,20 +545,23 @@ def setup_cookbook_routes() -> APIRouter:
                 f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
                 f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
             )
+            token_upload = f"scp -O {_Pf}-q '{token_sidecar}' {remote}:{remote_token} && " if token_sidecar else ""
             setup_cmd = (
                 f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                f"{token_upload}"
                 f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
             )
 
         elif remote:
             # ── Linux/Termux remote: create tmux session ON the remote host ──
             remote_runner = f".{session_id}_run.sh"
+            remote_token = f".{session_id}.hf-token"
             runner_lines = ["#!/bin/bash"]
             runner_lines.extend(_user_shell_path_bootstrap())
             runner_lines.append("# Auto-detect environment")
             runner_lines.append("deactivate 2>/dev/null; hash -r")
-            if req.hf_token:
-                runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
+            if token_sidecar:
+                runner_lines.extend(bash_secret_loader(Path(remote_token)))
             if req.env_prefix:
                 runner_lines.append(_safe_env_prefix(req.env_prefix))
             else:
@@ -585,21 +608,22 @@ def setup_cookbook_routes() -> APIRouter:
             runner_lines.append(f'  python3 -c "import os; from huggingface_hub import snapshot_download; snapshot_download(\'{req.repo_id}\'{_dl_pyarg}, max_workers={4 if req.disable_hf_transfer else 8})"')
             runner_lines.append('fi')
             runner_lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
+            if token_sidecar:
+                runner_lines.append(f"rm -f {shlex.quote(remote_token)}")
             runner_lines.append(f"rm -f {remote_runner}")
             runner_lines.append('exec "${SHELL:-/bin/bash}"')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
-            # Local temp file is scp'd then chmod'd on the remote; the local bit
-            # is irrelevant (no-op on Windows).
-            safe_chmod(runner_path, 0o755)
+            write_private_text(runner_path, "\n".join(runner_lines) + "\n", executable=True)
 
             # scp the runner script, then create tmux session on the remote
             _port = req.ssh_port
             _pf = f"-P {_port} " if _port and _port != "22" else ""
             _spf = f"-p {_port} " if _port and _port != "22" else ""
+            token_upload = f"scp -O {_pf}-q '{token_sidecar}' {remote}:{remote_token} && " if token_sidecar else ""
             setup_cmd = (
                 f"scp -O {_pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                f"ssh {_spf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
+                f"{token_upload}"
+                f"ssh {_spf}{remote} 'chmod 700 {remote_runner} && if [ -f {remote_token} ]; then chmod 600 {remote_token}; fi && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
             )
         else:
             # Local: run hf download in the background (tmux on POSIX, a detached
@@ -622,8 +646,7 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append('_ec=$?; if [ $_ec -eq 0 ]; then echo ""; echo "DOWNLOAD_OK"; else echo ""; echo "DOWNLOAD_FAILED (exit $_ec)"; fi')
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')
-                wrapper_script.write_text("\n".join(lines) + "\n", encoding="utf-8")
-                wrapper_script.chmod(0o755)
+                write_private_text(wrapper_script, "\n".join(lines) + "\n", executable=True)
             setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
@@ -634,6 +657,7 @@ def setup_cookbook_routes() -> APIRouter:
             try:
                 _launch_local_detached(session_id, lines)
             except Exception as e:
+                remove_private_file(token_sidecar)
                 logger.error(f"Local detached download launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
@@ -646,8 +670,14 @@ def setup_cookbook_routes() -> APIRouter:
 
             if proc.returncode != 0:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
+                if remote:
+                    remove_private_file(token_sidecar)
+                    remove_private_file(runner_path)
                 logger.error(f"Download failed (rc={proc.returncode}): {stderr}")
                 return {"ok": False, "error": stderr, "session_id": session_id}
+            if remote:
+                remove_private_file(token_sidecar)
+                remove_private_file(runner_path)
 
         # Log to assistant
         try:
@@ -674,7 +704,7 @@ def setup_cookbook_routes() -> APIRouter:
         host = _validate_remote_host(host)
         if ssh_port is not None and ssh_port != "" and not _SSH_PORT_RE.fullmatch(ssh_port):
             raise HTTPException(400, "Invalid ssh_port")
-        TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(TMUX_LOG_DIR)
 
         model_dirs = []
         if model_dir:
@@ -853,7 +883,7 @@ def setup_cookbook_routes() -> APIRouter:
                 raise HTTPException(400, "Invalid pip package name")
         else:
             _validate_serve_model_id(req.repo_id)
-        TMUX_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        ensure_private_dir(TMUX_LOG_DIR)
         session_id = f"serve-{uuid.uuid4().hex[:8]}"
         remote = req.remote_host
         is_windows = req.platform == "windows"
@@ -874,14 +904,24 @@ def setup_cookbook_routes() -> APIRouter:
                 "session_id": session_id,
             }
 
+        token_sidecar = None
+        if req.hf_token:
+            token_sidecar = write_hf_token_sidecar(
+                TMUX_LOG_DIR,
+                session_id,
+                req.hf_token,
+                shell="powershell" if remote and is_windows else "bash",
+            )
+
         if is_windows and remote:
             # ── Windows remote: generate .ps1 serve runner ──
             remote_runner = f".{session_id}_run.ps1"
             ps_lines = []
             ps_lines.append('$sessionDir = "$env:TEMP\\apollo-sessions"')
             ps_lines.append('New-Item -ItemType Directory -Force -Path $sessionDir | Out-Null')
-            if req.hf_token:
-                ps_lines.append(f"$env:HF_TOKEN = '{_ps_squote(req.hf_token)}'")
+            remote_token = f".{session_id}.hf-token"
+            if token_sidecar:
+                ps_lines.extend(powershell_secret_loader(Path(remote_token)))
             if req.gpus:
                 ps_lines.append(f"$env:CUDA_VISIBLE_DEVICES = '{req.gpus}'")
             if req.env_prefix:
@@ -906,8 +946,10 @@ def setup_cookbook_routes() -> APIRouter:
             ps_lines.append(req.cmd)
             ps_lines.append('Write-Host ""')
             ps_lines.append('Write-Host "=== Process exited with code $LASTEXITCODE ==="')
+            if token_sidecar:
+                ps_lines.append(f'Remove-Item -Force "$HOME\\{remote_token}" -ErrorAction SilentlyContinue')
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.ps1"
-            runner_path.write_text("\r\n".join(ps_lines) + "\r\n", encoding="utf-8")
+            write_private_text(runner_path, "\r\n".join(ps_lines) + "\r\n", executable=True)
 
             _port = req.ssh_port
             _Pf = f"-P {_port} " if _port and _port != "22" else ""
@@ -919,8 +961,10 @@ def setup_cookbook_routes() -> APIRouter:
                 f"-RedirectStandardError \\\"$sd\\{session_id}.err.log\\\" "
                 f"-NoNewWindow -PassThru | ForEach-Object {{ $_.Id | Out-File \\\"$sd\\{session_id}.pid\\\" }}"
             )
+            token_upload = f"scp -O {_Pf}-q '{token_sidecar}' {remote}:{remote_token} && " if token_sidecar else ""
             setup_cmd = (
                 f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
+                f"{token_upload}"
                 f'ssh {_pf}{remote} "powershell -Command \\"{launch_ps}\\""'
             )
         else:
@@ -933,8 +977,8 @@ def setup_cookbook_routes() -> APIRouter:
             if not remote:
                 runner_lines.append(_local_tooling_path_export(sys.executable))
             runner_lines.append("export FLASHINFER_DISABLE_VERSION_CHECK=1")
-            if req.hf_token:
-                runner_lines.append(f"export HF_TOKEN='{_bash_squote(req.hf_token)}'")
+            if token_sidecar:
+                runner_lines.extend(bash_secret_loader(Path(f".{session_id}.hf-token") if remote else token_sidecar))
             if req.gpus:
                 runner_lines.append(f"export CUDA_VISIBLE_DEVICES='{req.gpus}'")
             if req.env_prefix:
@@ -1095,10 +1139,7 @@ def setup_cookbook_routes() -> APIRouter:
                     _append_serve_exit_code_lines(runner_lines, keep_shell_open=True)
 
             runner_path = TMUX_LOG_DIR / f"{session_id}_run.sh"
-            runner_path.write_text("\n".join(runner_lines) + "\n", encoding="utf-8")
-            # chmod is a no-op on Windows; bash on Windows runs the script
-            # regardless of the executable bit.
-            safe_chmod(runner_path, 0o755)
+            write_private_text(runner_path, "\n".join(runner_lines) + "\n", executable=True)
 
             if local_windows:
                 # LOCAL Windows: launch the bash runner detached (tmux replacement).
@@ -1115,16 +1156,20 @@ def setup_cookbook_routes() -> APIRouter:
                     diff_script = Path(BASE_DIR) / "scripts" / "diffusion_server.py"
                     if diff_script.exists():
                         scp_extras = f"scp -O {_Pf}-q '{diff_script}' {remote}:.diffusion_server.py && "
-                        runner_path.write_text(
+                        write_private_text(
+                            runner_path,
                             runner_path.read_text(encoding="utf-8").replace(
                                 "scripts/diffusion_server.py", ".diffusion_server.py"
                             ),
-                            encoding="utf-8",
+                            executable=True,
                         )
+                remote_token = f".{session_id}.hf-token"
+                token_upload = f"scp -O {_Pf}-q '{token_sidecar}' {remote}:{remote_token} && " if token_sidecar else ""
                 setup_cmd = (
                     f"{scp_extras}"
                     f"scp -O {_Pf}-q '{runner_path}' {remote}:{remote_runner} && "
-                    f"ssh {_pf}{remote} 'chmod +x {remote_runner} && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
+                    f"{token_upload}"
+                    f"ssh {_pf}{remote} 'chmod 700 {remote_runner} && if [ -f {remote_token} ]; then chmod 600 {remote_token}; fi && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
             else:
                 setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
@@ -1134,6 +1179,7 @@ def setup_cookbook_routes() -> APIRouter:
             try:
                 _launch_local_detached(session_id, runner_lines)
             except Exception as e:
+                remove_private_file(token_sidecar)
                 logger.error(f"Local detached serve launch failed: {e}")
                 return {"ok": False, "error": str(e), "session_id": session_id}
         else:
@@ -1146,7 +1192,13 @@ def setup_cookbook_routes() -> APIRouter:
 
             if proc.returncode != 0:
                 stderr = (await proc.stderr.read()).decode(errors="replace")
+                if remote:
+                    remove_private_file(token_sidecar)
+                    remove_private_file(runner_path)
                 return {"ok": False, "error": stderr, "session_id": session_id}
+            if remote:
+                remove_private_file(token_sidecar)
+                remove_private_file(runner_path)
 
         # Auto-register as model endpoint if serving a diffusion model
         endpoint_id = None
