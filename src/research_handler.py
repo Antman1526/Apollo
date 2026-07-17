@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from src.research_utils import strip_thinking, is_low_quality
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
-RESEARCH_DATA_DIR = Path("data/deep_research")
+RESEARCH_DATA_DIR = data_path("deep_research")
 
 
 def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:

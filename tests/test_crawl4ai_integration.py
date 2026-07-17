@@ -73,7 +73,8 @@ def test_crawl4ai_adapter_extracts_markdown(monkeypatch):
 
 
 def test_research_crawl4ai_route_saves_owned_report(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    data_root = tmp_path / "apollo-data"
+    monkeypatch.setenv("APOLLO_DATA_DIR", str(data_root))
 
     async def fake_crawl_url(url, **kwargs):
         return crawl4ai_adapter.Crawl4AIExtract(
@@ -98,7 +99,7 @@ def test_research_crawl4ai_route_saves_owned_report(tmp_path, monkeypatch):
 
     assert out["ok"] is True
     assert out["saved"] is True
-    path = tmp_path / "data" / "deep_research" / f"{out['session_id']}.json"
+    path = data_root / "deep_research" / f"{out['session_id']}.json"
     saved = json.loads(path.read_text(encoding="utf-8"))
     assert saved["owner"] == "alice"
     assert saved["category"] == "crawl4ai"

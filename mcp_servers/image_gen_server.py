@@ -9,6 +9,7 @@ import base64
 import sys
 import uuid
 from pathlib import Path
+from src.runtime_paths import data_path
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -117,7 +118,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             image_url = None
 
             if img.get("b64_json"):
-                img_dir = Path("data/generated_images")
+                img_dir = data_path("generated_images")
                 img_dir.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex[:12]}.png"
                 img_path = img_dir / filename

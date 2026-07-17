@@ -4,8 +4,9 @@ import os
 from typing import Optional
 from fastapi import APIRouter, Request
 from src.auth_helpers import get_current_user
+from src.runtime_paths import data_path
 
-PREFS_FILE = os.path.join("data", "user_prefs.json")
+PREFS_FILE = str(data_path("user_prefs.json"))
 
 
 def _load():

@@ -17,10 +17,11 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
-VAULT_FILE = Path("data/vault.json")
+VAULT_FILE = data_path("vault.json")
 
 
 def _find_bw() -> str:

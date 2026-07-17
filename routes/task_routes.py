@@ -14,6 +14,7 @@ from core.database import SessionLocal, ScheduledTask, TaskRun
 from src.auth_helpers import get_current_user
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -481,7 +482,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
 
         removed_files = 0
         if action == "check_email_urgency":
-            cache_dir = Path("data/email_urgency_cache")
+            cache_dir = data_path("email_urgency_cache")
             if cache_dir.exists():
                 for child in cache_dir.glob("*.json"):
                     try:

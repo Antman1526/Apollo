@@ -6,6 +6,7 @@ from sqlalchemy import event, create_engine, Column, String, Text, Boolean, Date
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import declarative_base, declared_attr, relationship, sessionmaker, backref
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +29,7 @@ class TimestampMixin:
         return Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
 
 # Get database URL from environment, default to SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/app.db")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{data_path('app.db')}")
 
 # A fresh checkout (CI, new clone) has no data/ directory — SQLite cannot
 # create the DB file when its parent directory is missing.
@@ -1022,7 +1023,7 @@ def _migrate_assign_legacy_owner():
     # fell through to "first user" every time.
     auth_path = os.path.join(os.path.dirname(DATABASE_URL.replace("sqlite:///", "")), "auth.json")
     if not os.path.isabs(auth_path):
-        auth_path = os.path.join("data", "auth.json")
+        auth_path = str(data_path("auth.json"))
     admin_user = None
     try:
         with open(auth_path, "r", encoding="utf-8") as f:
@@ -1075,7 +1076,7 @@ def _migrate_assign_legacy_owner():
         logger.warning(f"Legacy owner migration failed: {e}")
 
     # Also migrate memory.json
-    mem_path = os.path.join("data", "memory.json")
+    mem_path = str(data_path("memory.json"))
     try:
         if os.path.exists(mem_path):
             with open(mem_path, "r", encoding="utf-8") as f:
@@ -1093,7 +1094,7 @@ def _migrate_assign_legacy_owner():
         logger.warning(f"memory.json legacy migration failed: {e}")
 
     # Also migrate user_prefs.json to per-user format
-    prefs_path = os.path.join("data", "user_prefs.json")
+    prefs_path = str(data_path("user_prefs.json"))
     try:
         if os.path.exists(prefs_path):
             with open(prefs_path, "r", encoding="utf-8") as f:
@@ -1461,8 +1462,7 @@ def _migrate_seed_email_account():
 
         import json as _json
         import uuid as _uuid
-        from pathlib import Path
-        settings_file = Path("data/settings.json")
+        settings_file = data_path("settings.json")
         if not settings_file.exists():
             return
         try:

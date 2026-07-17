@@ -92,7 +92,8 @@ def migrate_rag():
     from src.chroma_client import get_chroma_client
     from src.embeddings import get_embedding_client
 
-    docs_path = os.path.join("data", "rag", "docs.json")
+    from src.runtime_paths import data_path
+    docs_path = str(data_path("rag", "docs.json"))
     if not os.path.exists(docs_path):
         logger.info("No RAG DocStore found, skipping RAG migration")
         return

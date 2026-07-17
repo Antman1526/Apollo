@@ -13,6 +13,7 @@ import socket
 import uuid
 
 import bcrypt
+from src.runtime_paths import data_path
 
 PAIRING_VERSION = 1
 COMPANION_SCOPE = "chat"
@@ -61,7 +62,7 @@ def lan_ip_candidates() -> list[str]:
 def find_admin_user() -> str | None:
     """Resolve an admin username from data/auth.json (schema uses is_admin),
     falling back to the first user."""
-    auth_path = os.path.join("data", "auth.json")
+    auth_path = str(data_path("auth.json"))
     try:
         with open(auth_path, "r", encoding="utf-8") as f:
             users = (json.load(f) or {}).get("users", {})

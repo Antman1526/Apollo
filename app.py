@@ -43,6 +43,7 @@ from datetime import datetime
 from typing import Dict
 
 from fastapi import FastAPI, Request, HTTPException
+from src.runtime_paths import data_path
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -417,11 +418,10 @@ app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
 @app.get("/api/generated-image/{filename}")
 async def serve_generated_image(filename: str, request: Request):
     """Serve generated images from the data directory."""
-    from pathlib import Path
     import re
     if not re.match(r'^[a-f0-9]{8,64}\.(png|jpg|jpeg|webp|gif|mp4|mov|webm|mkv|m4v)$', filename):
         raise HTTPException(status_code=400, detail="Invalid filename")
-    img_path = Path("data/generated_images") / filename
+    img_path = data_path("generated_images", filename)
     if not img_path.exists():
         raise HTTPException(status_code=404, detail="Image not found")
     # SECURITY: filename is the only key, so anyone who knows / guesses a

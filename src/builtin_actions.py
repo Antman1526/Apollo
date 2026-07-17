@@ -351,9 +351,9 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
     backed by chat-session rows — so a file must never be deleted just because
     no chat session matches its id. Only prune files that fail to load."""
     try:
-        from pathlib import Path
         import json as _json
-        research_dir = Path("data/deep_research")
+        from src.runtime_paths import data_path
+        research_dir = data_path("deep_research")
         if not research_dir.exists():
             raise TaskNoop("no research directory")
         files = list(research_dir.glob("*.json"))
@@ -387,11 +387,11 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
     """
     try:
         import json
-        from pathlib import Path
         from core.database import SessionLocal, CalendarEvent
         from sqlalchemy import func
+        from src.runtime_paths import data_path
 
-        STATE_FILE = Path("data/tidy_calendar_state.json")
+        STATE_FILE = data_path("tidy_calendar_state.json")
         last_watermark = None
         try:
             if STATE_FILE.exists():

@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -16,8 +17,7 @@ logger = logging.getLogger(__name__)
 
 def _load_vault_config() -> Dict:
     """Load Vaultwarden config from data/vault.json."""
-    from pathlib import Path
-    p = Path("data/vault.json")
+    p = data_path("vault.json")
     if p.exists():
         try:
             return json.loads(p.read_text(encoding="utf-8"))
@@ -174,8 +174,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": "bw returned empty session", "exit_code": 1}
 
     # Save session to vault.json
-    from pathlib import Path
-    p = Path("data/vault.json")
+    p = data_path("vault.json")
     cfg = {}
     if p.exists():
         try:

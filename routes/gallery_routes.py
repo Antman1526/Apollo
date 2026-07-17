@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, require_privilege
+from src.runtime_paths import data_path
 
 from routes.gallery_helpers import (
     GalleryPatch, _extract_exif, _image_to_dict, _owner_filter, _human_size,
@@ -65,7 +66,7 @@ def setup_gallery_routes() -> APIRouter:
                 return {"ok": False, "duplicate": True, "filename": existing.filename,
                         "id": existing.id, "message": "Duplicate photo skipped"}
 
-            img_dir = Path("data/generated_images")
+            img_dir = data_path("generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
 
             ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "png"
@@ -131,7 +132,7 @@ def setup_gallery_routes() -> APIRouter:
                 raise HTTPException(400, "No image provided")
 
             content = await file.read()
-            img_dir = Path("data/generated_images")
+            img_dir = data_path("generated_images")
             img_dir.mkdir(parents=True, exist_ok=True)
             img_path = img_dir / _sanitize_gallery_filename(img.filename)
             img_path.write_bytes(content)
@@ -207,7 +208,7 @@ def setup_gallery_routes() -> APIRouter:
             if not user or img.owner != user:
                 raise HTTPException(403, "Not your image")
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = data_path("generated_images", img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -688,7 +689,7 @@ def setup_gallery_routes() -> APIRouter:
             used = set()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 for img in imgs:
-                    src = os.path.join("data", "generated_images", img.filename)
+                    src = str(data_path("generated_images", img.filename))
                     if not os.path.exists(src):
                         continue
                     ext = os.path.splitext(img.filename)[1] or ".png"
@@ -814,7 +815,7 @@ def setup_gallery_routes() -> APIRouter:
 
             img_filename = img.filename
             # Remove the file from disk
-            img_path = os.path.join("data", "generated_images", img_filename)
+            img_path = str(data_path("generated_images", img_filename))
             if os.path.exists(img_path):
                 os.remove(img_path)
 
@@ -1682,7 +1683,7 @@ def setup_gallery_routes() -> APIRouter:
         try:
             img = _get_or_404_image(db, image_id, user)
 
-            img_path = Path("data/generated_images") / img.filename
+            img_path = data_path("generated_images", img.filename)
             if not img_path.exists():
                 raise HTTPException(404, "Image file not found")
 
@@ -1781,5 +1782,4 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     return router
-
 

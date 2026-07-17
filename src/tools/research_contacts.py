@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args, _internal_headers
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,6 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     Args (JSON): {"action": "list|read|delete", "id": "<id>", "search": "..."}.
     Research is stored as data/deep_research/<id>.json (query, summary, sources)."""
     import json as _json
-    from pathlib import Path as _Path
     try:
         args = _parse_tool_args(content) if content.strip().startswith("{") else {}
     except ValueError:
@@ -28,7 +28,7 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         args = {}
     action = (args.get("action") or "list").lower()
     rid = (args.get("id") or args.get("session_id") or args.get("research_id") or "").strip()
-    data_dir = _Path("data/deep_research")
+    data_dir = data_path("deep_research")
 
     # SECURITY: the research id is interpolated straight into a filesystem
     # path (data/deep_research/<rid>.json) for read AND delete. Without this
