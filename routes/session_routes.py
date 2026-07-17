@@ -12,7 +12,7 @@ from core.session_manager import SessionManager
 from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
-from src.auth_helpers import get_current_user, effective_user
+from src.auth_helpers import require_user
 
 
 def _auth_disabled() -> bool:
@@ -46,11 +46,9 @@ def _verify_session_owner(request: Request, session_id: str, session_manager=Non
     ``session_manager`` is optional and defaults to ``None`` so existing callers
     that only care about persisted sessions keep their exact prior behavior.
     """
-    user = effective_user(request)
+    user = require_user(request)
     if not user:
-        if _auth_disabled():
-            return  # single-user mode: every session belongs to the user
-        raise HTTPException(403, "Authentication required")
+        return  # single-user / first-run local mode
     db = SessionLocal()
     try:
         row = db.query(DbSession.owner).filter(DbSession.id == session_id).first()
@@ -149,7 +147,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.get("/sessions")
     def list_sessions(request: Request):
-        user = effective_user(request)
+        user = require_user(request)
         # Lazy purge: incognito sessions are ephemeral by design — wipe leftovers
         # from the DB and session_manager so they vanish on the next page refresh.
         # BUT: skip sessions that were created within the last 10 minutes.
@@ -258,7 +256,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         endpoint_id: str = Form(""),
     ):
         skip_val = str(skip_validation).lower() == "true"
-        user = get_current_user(request)
+        user = require_user(request)
         endpoint_api_key = ""
         endpoint_base_url = ""
         _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
@@ -333,7 +331,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                 model_to_use = found
         
         sid = str(uuid.uuid4())
-        user = effective_user(request)
+        user = require_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name=name or "",
@@ -400,7 +398,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         # it standalone); requiring endpoint_url too made API calls that sent
         # model+endpoint_id silently no-op with a 200.
         if model is not None and (endpoint_url is not None or (endpoint_id and endpoint_id.strip())):
-            user = get_current_user(request)
+            user = require_user(request)
             _reject_raw_endpoint_url_for_non_admin(request, user, endpoint_id, endpoint_url)
             endpoint_api_key = ""
             endpoint_base_url = ""
@@ -623,7 +621,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     @router.get("/sessions/archived")
     def list_archived_sessions(request: Request, search: str = "", offset: int = 0, limit: int = 20, sort: str = "recent", model: str = ""):
         """List archived sessions for the archive browser."""
-        user = effective_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             q = db.query(DbSession).filter(DbSession.archived == True)
@@ -761,7 +759,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
     
     @router.post("/sessions/save")
     def sessions_save_now(request: Request):
-        user = effective_user(request)
+        user = require_user(request)
         if not user:
             raise HTTPException(401, "Not authenticated")
         session_manager.save_sessions()
@@ -777,7 +775,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         if not OPENAI_API_KEY:
             raise HTTPException(400, "Server missing OPENAI_API_KEY")
         sid = str(uuid.uuid4())
-        user = effective_user(request)
+        user = require_user(request)
         session = session_manager.create_session(
             session_id=sid,
             name="",
@@ -854,7 +852,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        url, model, headers = resolve_endpoint("utility", owner=get_current_user(request))
+        url, model, headers = resolve_endpoint("utility", owner=require_user(request))
         if not url or not model:
             url, model, headers = session.endpoint_url, session.model, session.headers
         if not url or not model:
@@ -917,7 +915,7 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         users can clean junk without spending tokens.
         """
         from src.llm_core import llm_call
-        user = effective_user(request)
+        user = require_user(request)
         user_sessions = session_manager.get_sessions_for_user(user)
 
         # Delete empty and throwaway sessions before sorting

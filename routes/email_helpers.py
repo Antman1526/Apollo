@@ -32,7 +32,7 @@ from fastapi import Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List
 
-from src.auth_helpers import _auth_disabled, get_current_user
+from src.auth_helpers import require_user as _shared_require_user
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
@@ -133,41 +133,13 @@ def _apply_email_style_mechanics(text: str) -> str:
     )
 
 
-def _require_auth(request: Request) -> str:
-    """Defense-in-depth: reject unauthenticated callers even if upstream
-    middleware was bypassed (e.g. localhost-bypass, SSRF from a sibling
-    service). Mirrors core.middleware.require_admin's resolution path.
-
-    v2 review HIGH-13: previously fell open whenever auth_manager wasn't
-    `is_configured`, exposing IMAP creds and SMTP send to any network
-    caller on a half-configured deploy. Now: anonymous callers in
-    unconfigured mode are only honoured if they're coming from
-    localhost; everyone else gets 401.
-    """
-    u = get_current_user(request)
-    if u:
-        return u
-    if _auth_disabled():
-        return ""
-    auth_mgr = getattr(request.app.state, "auth_manager", None)
-    if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
-        raise HTTPException(401, "Not authenticated")
-    # Unconfigured / first-run mode: only allow loopback callers. Public
-    # network traffic must authenticate even before auth is set up.
-    client = getattr(request, "client", None)
-    host = (client.host if client else "") or ""
-    if host in ("127.0.0.1", "::1", "localhost"):
-        return ""
-    raise HTTPException(401, "Not authenticated")
-
-
 def require_owner(request: Request, account_id: str | None = Query(None)) -> str:
     """FastAPI dependency: authenticate the caller and, if `account_id` is in
     the query string, assert ownership. Returns the resolved owner ("" in
     unconfigured single-user mode). Routes whose `account_id` lives in the
     request body or path must still call `_assert_owns_account(body_id, owner)`
     explicitly. Use `require_user` (no Query read) for path-param routes."""
-    owner = _require_auth(request)
+    owner = _shared_require_user(request)
     if account_id:
         _assert_owns_account(account_id, owner)
     return owner
@@ -176,7 +148,7 @@ def require_owner(request: Request, account_id: str | None = Query(None)) -> str
 def require_user(request: Request) -> str:
     """Auth-only dependency for routes where `account_id` is a path param
     or absent. Avoids `require_owner`'s Query collision with path params."""
-    return _require_auth(request)
+    return _shared_require_user(request)
 
 
 def _assert_owns_account(account_id: str, owner: str) -> None:
