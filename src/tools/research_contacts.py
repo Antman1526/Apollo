@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args, _internal_headers
-from src.runtime_paths import data_path
+from src.research_handler import ResearchRepository
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,6 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     """List, read/open, or delete saved deep-research results from the Library.
     Args (JSON): {"action": "list|read|delete", "id": "<id>", "search": "..."}.
     Research is stored as data/deep_research/<id>.json (query, summary, sources)."""
-    import json as _json
     try:
         args = _parse_tool_args(content) if content.strip().startswith("{") else {}
     except ValueError:
@@ -28,7 +27,8 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
         args = {}
     action = (args.get("action") or "list").lower()
     rid = (args.get("id") or args.get("session_id") or args.get("research_id") or "").strip()
-    data_dir = data_path("deep_research")
+    repository = ResearchRepository()
+    allow_legacy = owner == ""
 
     # SECURITY: the research id is interpolated straight into a filesystem
     # path (data/deep_research/<rid>.json) for read AND delete. Without this
@@ -39,19 +39,12 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     if rid and not re.fullmatch(r"[A-Za-z0-9_-]+", rid):
         return {"error": "Invalid research id."}
 
-    def _load(p):
-        try:
-            return _json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            return None
-
     if action in ("read", "open", "view", "get"):
         if not rid:
             return {"error": "Provide the research id (from action='list')."}
-        p = data_dir / f"{rid}.json"
-        if not p.exists():
+        d = repository.load_for_owner(rid, owner, allow_legacy=allow_legacy)
+        if d is None:
             return {"error": f"Research '{rid}' not found."}
-        d = _load(p) or {}
         summary = d.get("result") or d.get("raw_report") or d.get("summary") or d.get("report") or "(no report body)"
         srcs = d.get("sources", []) or []
         out = f"# {d.get('query', '(untitled)')}\n\n{summary}"
@@ -64,27 +57,18 @@ async def do_manage_research(content: str, owner: Optional[str] = None) -> Dict:
     if action == "delete":
         if not rid:
             return {"error": "Provide the research id to delete (from action='list')."}
-        p = data_dir / f"{rid}.json"
-        if p.exists():
-            try:
-                p.unlink()
-            except Exception as e:
-                return {"error": f"Failed to delete: {e}"}
+        if repository.delete_for_owner(rid, owner, allow_legacy=allow_legacy):
             return {"output": f"Deleted research '{rid}'.", "exit_code": 0}
         return {"error": f"Research '{rid}' not found."}
 
     # default: list — clickable [query](#research-<id>) rows, most-recent first
     search = (args.get("search") or "").lower()
     items = []
-    if data_dir.exists():
-        for p in data_dir.glob("*.json"):
-            d = _load(p)
-            if not d:
-                continue
-            q = d.get("query", "")
-            if search and search not in q.lower():
-                continue
-            items.append((d.get("completed_at", 0) or 0, p.stem, q, len(d.get("sources", []) or [])))
+    for session_id, d in repository.list_for_owner(owner, allow_legacy=allow_legacy):
+        q = d.get("query", "")
+        if search and search not in q.lower():
+            continue
+        items.append((d.get("completed_at", 0) or 0, session_id, q, len(d.get("sources", []) or [])))
     items.sort(reverse=True)
     if not items:
         return {"output": "No research found in the library." + (f" (search: {search})" if search else ""), "exit_code": 0}

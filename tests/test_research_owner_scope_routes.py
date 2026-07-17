@@ -18,6 +18,12 @@ def _request(user: str):
     return SimpleNamespace(state=SimpleNamespace(current_user=user))
 
 
+def _owned_token_request(owner: str):
+    return SimpleNamespace(
+        state=SimpleNamespace(current_user="api", api_token=True, api_token_owner=owner),
+    )
+
+
 def _route(router, path: str, method: str):
     for route in router.routes:
         if getattr(route, "path", "") != path:
@@ -124,3 +130,40 @@ def test_delete_rejects_cross_owner_without_unlinking_report(tmp_path, monkeypat
     assert exc.value.status_code == 404
     assert path.exists()
     assert json.loads(path.read_text(encoding="utf-8"))["result"] == "bob secret"
+
+
+def test_owned_api_token_sees_the_same_library_as_its_cookie_owner(tmp_path, monkeypatch):
+    data_dir = _research_data_dir(tmp_path, monkeypatch)
+    _write_research(data_dir, "alice-report", owner="alice", query="Alice", completed_at=1)
+    router = setup_research_routes(_research_handler())
+    target = _route(router, "/api/research/library", "GET")
+
+    cookie = asyncio.run(target(request=_request("alice"), search=None, sort="recent", limit=50, archived=False))
+    token = asyncio.run(target(request=_owned_token_request("alice"), search=None, sort="recent", limit=50, archived=False))
+
+    assert token == cookie
+
+
+def test_ownerless_api_token_cannot_read_research_library(tmp_path, monkeypatch):
+    data_dir = _research_data_dir(tmp_path, monkeypatch)
+    _write_research(data_dir, "alice-report", owner="alice", query="Alice", completed_at=1)
+    router = setup_research_routes(_research_handler())
+    target = _route(router, "/api/research/library", "GET")
+    request = SimpleNamespace(state=SimpleNamespace(current_user="api", api_token=True, api_token_owner=None))
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(target(request=request, search=None, sort="recent", limit=50, archived=False))
+    assert exc.value.status_code == 401
+
+
+def test_auth_disabled_mode_explicitly_allows_legacy_unowned_reports(tmp_path, monkeypatch):
+    data_dir = _research_data_dir(tmp_path, monkeypatch)
+    _write_research(data_dir, "legacy-report", query="Legacy", completed_at=1)
+    monkeypatch.setenv("AUTH_ENABLED", "false")
+    router = setup_research_routes(_research_handler())
+    target = _route(router, "/api/research/library", "GET")
+    request = SimpleNamespace(state=SimpleNamespace(current_user=None))
+
+    out = asyncio.run(target(request=request, search=None, sort="recent", limit=50, archived=False))
+
+    assert [item["id"] for item in out["research"]] == ["legacy-report"]

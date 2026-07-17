@@ -185,8 +185,9 @@ def _fake_request(user=None):
     matters to `get_current_user`."""
     req = SimpleNamespace()
     req.state = SimpleNamespace(current_user=user)
-    # Some endpoints touch .client too — provide a benign default.
-    req.client = SimpleNamespace(host="127.0.0.1")
+    # Anonymous auth-regression cases represent a configured remote caller;
+    # first-run loopback is intentionally a separate allowed identity mode.
+    req.client = SimpleNamespace(host="203.0.113.10")
     return req
 
 

@@ -7,15 +7,14 @@ import re
 import time
 import uuid
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
-from src.auth_helpers import _auth_disabled, get_current_user
-from src.runtime_paths import data_path
+from src.auth_helpers import require_privilege, require_user
+from src.research_handler import ResearchRepository
 from services.research import crawl4ai_adapter
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
@@ -53,18 +52,7 @@ def _resolve_research_endpoint(sess) -> tuple:
 
 def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     router = APIRouter(tags=["research"])
-
-    def _require_user(request: Request) -> str:
-        """All research endpoints require an authenticated user. Research
-        data isn't owner-scoped in the on-disk JSON yet, so we at least
-        block anonymous access. Multi-tenant deploys should additionally
-        verify the session belongs to this user."""
-        user = get_current_user(request)
-        if not user:
-            if _auth_disabled():
-                return ""
-            raise HTTPException(401, "Not authenticated")
-        return user
+    repository = ResearchRepository()
 
     def _validate_session_id(session_id: str) -> None:
         if not _SESSION_ID_RE.fullmatch(session_id):
@@ -76,14 +64,9 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         entry = research_handler._active_tasks.get(session_id)
         if entry is not None:
             return entry.get("owner", "") == user
-        # Task no longer in memory — check the persisted JSON.
-        path = data_path("deep_research", f"{session_id}.json")
-        if not path.exists():
-            return False
-        try:
-            return json.loads(path.read_text(encoding="utf-8")).get("owner") == user
-        except Exception:
-            return False
+        # Task no longer in memory — check the persisted report using the
+        # same owner rules as library, report, archive, and tool access.
+        return repository.load_for_owner(session_id, user, allow_legacy=user == "") is not None
 
     class Crawl4AIRequest(BaseModel):
         url: str
@@ -93,13 +76,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
     @router.get("/api/research/crawl4ai/status")
     async def crawl4ai_status(request: Request):
-        _require_user(request)
+        require_user(request)
         return crawl4ai_adapter.status()
 
     @router.post("/api/research/crawl4ai/crawl")
     async def crawl4ai_crawl(body: Crawl4AIRequest, request: Request):
-        from src.auth_helpers import require_privilege
-
         user = require_privilege(request, "can_use_research")
         try:
             result = await crawl4ai_adapter.crawl_url(
@@ -119,8 +100,6 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
         session_id = ""
         if body.save:
-            data_dir = data_path("deep_research")
-            data_dir.mkdir(parents=True, exist_ok=True)
             session_id = f"c4a-{uuid.uuid4().hex[:12]}"
             now = time.time()
             record = {
@@ -147,7 +126,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                 },
                 "crawl4ai": result.to_dict(),
             }
-            (data_dir / f"{session_id}.json").write_text(json.dumps(record, default=str), encoding="utf-8")
+            repository.save(session_id, record)
 
         return {
             "ok": result.success,
@@ -163,7 +142,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.get("/api/research/active")
     async def research_active(request: Request):
         """List all currently active (running) research tasks."""
-        user = _require_user(request)
+        user = require_user(request)
         active = []
         for sid, entry in research_handler._active_tasks.items():
             # SECURITY: only show this user's running tasks.
@@ -181,7 +160,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
     @router.get("/api/research/status/{session_id}")
     async def research_status(session_id: str, request: Request):
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         # "No research" is a normal answer to a status poll, not an error —
         # the frontend probes on every session open and a 404 logged a console
@@ -196,7 +175,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
     @router.post("/api/research/cancel/{session_id}")
     async def research_cancel(session_id: str, request: Request):
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
@@ -205,7 +184,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
 
     @router.post("/api/research/result/{session_id}")
     async def research_result(session_id: str, request: Request):
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research result available")
@@ -220,20 +199,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     def _assert_owns_research(session_id: str, user: str) -> None:
         """404-not-403 ownership gate for a research session's on-disk JSON.
         Use BEFORE returning any data or mutating the file."""
-        path = data_path("deep_research", f"{session_id}.json")
-        if not path.exists():
-            raise HTTPException(404, "Research not found")
-        try:
-            owner = json.loads(path.read_text(encoding="utf-8")).get("owner")
-        except Exception:
-            raise HTTPException(404, "Research not found")
-        if owner != user:
+        if repository.load_for_owner(session_id, user, allow_legacy=user == "") is None:
             raise HTTPException(404, "Research not found")
 
     @router.get("/api/research/report/{session_id}")
     async def research_report(session_id: str, request: Request):
         """Serve the visual HTML report for a completed research session."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         _assert_owns_research(session_id, user)
         logger.info(f"Visual report requested for session {session_id}")
@@ -254,7 +226,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_hide_image(session_id: str, body: HideImageRequest, request: Request):
         """Mark an image URL as hidden for this research's visual report.
         Persisted to the research JSON so subsequent /report renders skip it."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         _assert_owns_research(session_id, user)
         ok = research_handler.hide_image(session_id, body.url)
@@ -265,7 +237,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.post("/api/research/{session_id}/unhide-images")
     async def research_unhide_images(session_id: str, request: Request):
         """Clear the hidden-images list for a research session."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         _assert_owns_research(session_id, user)
         ok = research_handler.unhide_all_images(session_id)
@@ -281,18 +253,11 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         limit: int = Query(50),
         archived: bool = Query(False),
     ):
-        user = _require_user(request)
+        user = require_user(request)
         """List all completed research for the Library panel."""
-        data_dir = data_path("deep_research")
         items = []
-        for p in data_dir.glob("*.json"):
+        for session_id, d in repository.list_for_owner(user, allow_legacy=user == ""):
             try:
-                d = json.loads(p.read_text(encoding="utf-8"))
-                # SECURITY: only show research belonging to this user. Legacy
-                # JSONs without an `owner` field are hidden — auth was the only
-                # gate before, so every user saw every other user's reports.
-                if d.get("owner") != user:
-                    continue
                 # Archived view shows ONLY archived reports; default hides them.
                 if bool(d.get("archived")) != archived:
                     continue
@@ -301,7 +266,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     continue
                 sources = d.get("sources", [])
                 items.append({
-                    "id": p.stem,
+                    "id": session_id,
                     "query": query,
                     "category": d.get("category") or "",
                     "source_count": len(sources),
@@ -331,60 +296,31 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     async def research_detail(session_id: str, request: Request):
         """Return the full JSON for a single research result — sources,
         summary, stats — used by the Library preview panel."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
-        path = data_path("deep_research", f"{session_id}.json")
-        if not path.exists():
-            raise HTTPException(404, "Research not found")
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except Exception as e:
-            raise HTTPException(500, f"Failed to read research: {e}")
-        # SECURITY: 404 (not 403) so we don't leak that the report exists.
-        if data.get("owner") != user:
+        data = repository.load_for_owner(session_id, user, allow_legacy=user == "")
+        if data is None:
             raise HTTPException(404, "Research not found")
         return data
 
     @router.post("/api/research/{session_id}/archive")
     async def research_archive(session_id: str, request: Request, archived: bool = Query(True)):
         """Soft-archive / restore a research report (sets `archived` in its JSON)."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
-        path = data_path("deep_research", f"{session_id}.json")
-        if not path.exists():
+        if repository.update_for_owner(session_id, user, {"archived": bool(archived)}, allow_legacy=user == "") is None:
             raise HTTPException(404, "Research not found")
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if data.get("owner") != user:
-                raise HTTPException(404, "Research not found")
-            data["archived"] = bool(archived)
-            path.write_text(json.dumps(data), encoding="utf-8")
-        except HTTPException:
-            raise
-        except Exception as e:
-            raise HTTPException(500, f"Failed to update research: {e}")
         return {"ok": True, "id": session_id, "archived": bool(archived)}
 
     @router.delete("/api/research/{session_id}")
     async def research_delete(session_id: str, request: Request):
         """Delete a research result from disk."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
-        data_dir = data_path("deep_research")
-        json_path = data_dir / f"{session_id}.json"
-        deleted = False
-        if json_path.exists():
-            # SECURITY: verify ownership before letting the caller delete it.
-            try:
-                data = json.loads(json_path.read_text(encoding="utf-8"))
-                if data.get("owner") != user:
-                    raise HTTPException(404, "Research not found")
-            except HTTPException:
-                raise
-            except Exception:
-                raise HTTPException(404, "Research not found")
-            json_path.unlink()
-            deleted = True
+        existing = repository.load(session_id)
+        deleted = repository.delete_for_owner(session_id, user, allow_legacy=user == "")
+        if existing is not None and not deleted:
+            raise HTTPException(404, "Research not found")
         return {"deleted": deleted}
 
     # ------------------------------------------------------------------
@@ -406,22 +342,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.post("/api/research/start")
     async def research_start(body: ResearchStartRequest, request: Request):
         """Launch a research job from the dedicated panel."""
-        from src.auth_helpers import require_privilege
         user = require_privilege(request, "can_use_research")
-        if user == "internal-tool":
-            tool_owner = (request.headers.get("X-Apollo-Owner") or "").strip()
-            if tool_owner and tool_owner not in {"internal-tool", "api", "demo", "system"}:
-                auth_mgr = getattr(request.app.state, "auth_manager", None)
-                if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
-                    try:
-                        privs = auth_mgr.get_privileges(tool_owner) or {}
-                        if not privs.get("can_use_research", True):
-                            raise HTTPException(403, f"Your account is not allowed to can use research.")
-                    except HTTPException:
-                        raise
-                    except Exception:
-                        pass
-                user = tool_owner
         session_id = f"rp-{uuid.uuid4().hex[:12]}"
 
         if body.endpoint_id:
@@ -512,7 +433,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.get("/api/research/stream/{session_id}")
     async def research_stream(session_id: str, request: Request):
         """SSE stream of research progress events."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
@@ -546,15 +467,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
     @router.post("/api/research/result-peek/{session_id}")
     async def research_result_peek(session_id: str, request: Request):
         """Get research result without clearing it (for panel use)."""
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         if not _owns_in_memory(session_id, user):
             raise HTTPException(404, "No research found for this session")
         result = research_handler.get_result(session_id)
         if result is None:
-            p = data_path("deep_research", f"{session_id}.json")
-            if p.exists():
-                d = json.loads(p.read_text(encoding="utf-8"))
+            d = repository.load_for_owner(session_id, user, allow_legacy=user == "")
+            if d is not None:
                 return {
                     "result": d.get("result", ""),
                     "sources": d.get("sources", []),
@@ -576,7 +496,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         injects a single system message containing the report and sources so
         the user can ask follow-up questions in a clean conversation.
         """
-        user = _require_user(request)
+        user = require_user(request)
         _validate_session_id(session_id)
         # SECURITY: gate on ownership before reading the persisted research —
         # otherwise any authenticated user could spin off (and thereby read)
@@ -592,17 +512,13 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         sources = research_handler.get_sources(session_id) or []
         query = ""
 
-        path = data_path("deep_research", f"{session_id}.json")
-        if path.exists():
-            try:
-                disk = json.loads(path.read_text(encoding="utf-8"))
-                if not result:
-                    result = disk.get("result")
-                if not sources:
-                    sources = disk.get("sources", []) or []
-                query = disk.get("query", "") or ""
-            except Exception as e:
-                logger.warning(f"Could not read research JSON for spinoff: {e}")
+        disk = repository.load_for_owner(session_id, user, allow_legacy=user == "")
+        if disk is not None:
+            if not result:
+                result = disk.get("result")
+            if not sources:
+                sources = disk.get("sources", []) or []
+            query = disk.get("query", "") or ""
 
         if not result:
             raise HTTPException(404, "No research result available for this session")

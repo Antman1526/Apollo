@@ -21,6 +21,78 @@ from src.runtime_paths import data_path
 logger = logging.getLogger(__name__)
 
 RESEARCH_DATA_DIR = data_path("deep_research")
+_RESEARCH_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+
+class ResearchRepository:
+    """Owner-aware persistence for completed research reports.
+
+    Browser routes and agent tools both use this layer so an ownership fix in
+    one entry point cannot leave the other entry point exposed.
+    """
+
+    @staticmethod
+    def _path(session_id: str):
+        if not _RESEARCH_ID_RE.fullmatch(session_id or ""):
+            return None
+        return data_path("deep_research", f"{session_id}.json")
+
+    @staticmethod
+    def _can_access(record: dict, owner: Optional[str], *, allow_legacy: bool = False) -> bool:
+        record_owner = record.get("owner")
+        if owner:
+            return record_owner == owner
+        return allow_legacy and not record_owner
+
+    def load(self, session_id: str) -> Optional[dict]:
+        path = self._path(session_id)
+        if path is None or not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def load_for_owner(self, session_id: str, owner: Optional[str], *, allow_legacy: bool = False) -> Optional[dict]:
+        record = self.load(session_id)
+        if record is None or not self._can_access(record, owner, allow_legacy=allow_legacy):
+            return None
+        return record
+
+    def save(self, session_id: str, record: dict) -> None:
+        path = self._path(session_id)
+        if path is None:
+            raise ValueError("Invalid research session ID")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, default=str), encoding="utf-8")
+
+    def list_for_owner(self, owner: Optional[str], *, allow_legacy: bool = False) -> list[tuple[str, dict]]:
+        data_dir = data_path("deep_research")
+        if not data_dir.exists():
+            return []
+        results: list[tuple[str, dict]] = []
+        for path in data_dir.glob("*.json"):
+            record = self.load(path.stem)
+            if record is not None and self._can_access(record, owner, allow_legacy=allow_legacy):
+                results.append((path.stem, record))
+        return results
+
+    def update_for_owner(self, session_id: str, owner: Optional[str], changes: dict, *, allow_legacy: bool = False) -> Optional[dict]:
+        record = self.load_for_owner(session_id, owner, allow_legacy=allow_legacy)
+        if record is None:
+            return None
+        record.update(changes)
+        self.save(session_id, record)
+        return record
+
+    def delete_for_owner(self, session_id: str, owner: Optional[str], *, allow_legacy: bool = False) -> bool:
+        record = self.load_for_owner(session_id, owner, allow_legacy=allow_legacy)
+        path = self._path(session_id)
+        if record is None or path is None:
+            return False
+        path.unlink(missing_ok=True)
+        return True
 
 
 def _bounded_int(value, *, default: int, minimum: int, maximum: int) -> int:
