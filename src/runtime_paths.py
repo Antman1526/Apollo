@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import json
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -43,6 +44,22 @@ def _configured_path(value: str) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def migration_receipt_path(target: Path) -> Path:
+    """Return the activation receipt stored beside a platform data root."""
+    return Path(target).parent / "apollo-data-migration.json"
+
+
+def _platform_root_is_activated(target: Path) -> bool:
+    receipt = migration_receipt_path(target)
+    if not target.exists() or not receipt.exists():
+        return False
+    try:
+        payload = json.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return payload.get("status") == "activated" and payload.get("target") == str(target)
+
+
 def data_root(
     *,
     env: Mapping[str, str] | None = None,
@@ -61,10 +78,13 @@ def data_root(
         value = env.get(key)
         if value:
             return _configured_path(value)
+    platform_root = platform_data_root(platform=platform, env=env, home=home)
+    if _platform_root_is_activated(platform_root):
+        return platform_root
     legacy = legacy_data_root(repo)
     if legacy.exists():
         return legacy
-    return platform_data_root(platform=platform, env=env, home=home)
+    return platform_root
 
 
 def data_path(

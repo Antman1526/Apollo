@@ -8,23 +8,57 @@ initial admin user. Safe to re-run (skips what already exists).
 import os
 import shutil
 import sys
+from pathlib import Path
+
+from src.data_migration import migrate_legacy_data, migration_status
+from src.runtime_paths import data_root, legacy_data_root, platform_data_root
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = str(data_root())
 
-DIRS = [
-    DATA_DIR,
-    os.path.join(DATA_DIR, "uploads"),
-    os.path.join(DATA_DIR, "personal_docs"),
-    os.path.join(DATA_DIR, "personal_uploads"),
-    os.path.join(DATA_DIR, "tts_cache"),
-    os.path.join(DATA_DIR, "generated_images"),
-    os.path.join(DATA_DIR, "deep_research"),
-    os.path.join(DATA_DIR, "chroma"),
-    os.path.join(DATA_DIR, "rag"),
-    os.path.join(DATA_DIR, "memory_vectors"),
-    os.path.join(BASE_DIR, "logs"),
-]
+
+def _directories(data_dir: str) -> list[str]:
+    return [
+        data_dir,
+        os.path.join(data_dir, "uploads"),
+        os.path.join(data_dir, "personal_docs"),
+        os.path.join(data_dir, "personal_uploads"),
+        os.path.join(data_dir, "tts_cache"),
+        os.path.join(data_dir, "generated_images"),
+        os.path.join(data_dir, "deep_research"),
+        os.path.join(data_dir, "chroma"),
+        os.path.join(data_dir, "rag"),
+        os.path.join(data_dir, "memory_vectors"),
+        os.path.join(BASE_DIR, "logs"),
+    ]
+
+
+DIRS = _directories(DATA_DIR)
+
+
+def prepare_data_storage():
+    """Report or explicitly activate a verified legacy-data migration.
+
+    The default is intentionally non-mutating. Operators must opt in with
+    ``APOLLO_MIGRATE_DATA=true`` or run ``scripts/apollo-data-migrate --copy``.
+    """
+    global DATA_DIR, DIRS
+    if os.getenv("APOLLO_DATA_DIR") or os.getenv("DATA_DIR"):
+        return None
+    source = legacy_data_root(Path(BASE_DIR))
+    target = platform_data_root()
+    state = migration_status(source, target)
+    if state.status == "pending" and os.getenv("APOLLO_MIGRATE_DATA", "").lower() == "true":
+        state = migrate_legacy_data(source, target)
+    if state.status == "pending":
+        print("  [info] Existing data remains in the checkout. Run scripts/apollo-data-migrate --dry-run to review migration.")
+    elif state.status == "activated":
+        print(f"  [ok] Data migrated to {state.target}")
+    elif state.status == "already-activated":
+        print(f"  [ok] Using migrated data at {state.target}")
+    DATA_DIR = str(data_root())
+    DIRS = _directories(DATA_DIR)
+    return state
 
 
 def create_dirs():
@@ -170,7 +204,10 @@ def check_deps():
 def main():
     print("\n=== Apollo Setup ===\n")
 
-    print("1. Creating directories...")
+    print("0. Checking data storage...")
+    prepare_data_storage()
+
+    print("\n1. Creating directories...")
     create_dirs()
 
     print("\n2. Environment file...")

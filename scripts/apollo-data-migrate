@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Inspect or safely migrate legacy Apollo checkout data."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from src.data_migration import migration_status, migrate_legacy_data
+from src.runtime_paths import legacy_data_root, platform_data_root
+
+
+def _payload(result):
+    return {
+        "status": result.status,
+        "source": str(result.source),
+        "target": str(result.target),
+        "file_count": result.file_count,
+        "total_bytes": result.total_bytes,
+        "receipt_path": str(result.receipt_path) if result.receipt_path else None,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--status", action="store_true", help="report migration state without writing")
+    mode.add_argument("--dry-run", action="store_true", help="report what a copy would migrate")
+    mode.add_argument("--copy", action="store_true", help="copy, verify, and activate data without deleting the source")
+    mode.add_argument("--verify", action="store_true", help="report whether an activation receipt is valid")
+    parser.add_argument("--source", type=Path, default=legacy_data_root())
+    parser.add_argument("--target", type=Path, default=platform_data_root())
+    args = parser.parse_args()
+
+    if args.copy:
+        result = migrate_legacy_data(args.source, args.target)
+    elif args.dry_run:
+        result = migrate_legacy_data(args.source, args.target, dry_run=True)
+    else:
+        result = migration_status(args.source, args.target)
+        if args.verify and result.status != "already-activated":
+            print(json.dumps(_payload(result), sort_keys=True))
+            return 1
+    print(json.dumps(_payload(result), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
