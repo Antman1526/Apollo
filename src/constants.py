@@ -2,22 +2,24 @@
 """Application-wide constants and configuration values."""
 import os
 
+from src.runtime_paths import data_path, data_root, repo_root
+
 APP_VERSION = "1.0.0"
 
 # Base paths
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/"
+BASE_DIR = str(repo_root()) + os.sep
 STATIC_DIR = os.path.join(BASE_DIR, "static")
-DATA_DIR = os.path.join(BASE_DIR, "data")
+DATA_DIR = str(data_root())
 
 # Data file paths
-SESSIONS_FILE = os.path.join(DATA_DIR, "sessions.json")
-MEMORY_FILE = os.path.join(DATA_DIR, "memory.json")
-MEMORY_DOC = os.path.join(DATA_DIR, "memory_doc.md")
-PERSONAL_DIR = os.path.join(DATA_DIR, "personal_docs")
-RUNBOOK_DIR = os.path.join(PERSONAL_DIR, "runbook")
-UPLOAD_DIR = os.path.join(DATA_DIR, "uploads")
-FEATURES_FILE = os.path.join(DATA_DIR, "features.json")
-SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+SESSIONS_FILE = str(data_path("sessions.json"))
+MEMORY_FILE = str(data_path("memory.json"))
+MEMORY_DOC = str(data_path("memory_doc.md"))
+PERSONAL_DIR = str(data_path("personal_docs"))
+RUNBOOK_DIR = str(data_path("personal_docs", "runbook"))
+UPLOAD_DIR = str(data_path("uploads"))
+FEATURES_FILE = str(data_path("features.json"))
+SETTINGS_FILE = str(data_path("settings.json"))
 
 # API Configuration
 MAX_CONTEXT_MESSAGES = 90
