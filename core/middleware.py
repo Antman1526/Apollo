@@ -25,12 +25,12 @@ def require_admin(request: Request):
     # In-process bypass for tool-layer loopback calls. Two paths:
     # (a) header-direct (caller set X-Apollo-Internal-Token), or
     # (b) the auth middleware already validated the token and stamped
-    #     request.state.current_user = "internal-tool".
+    #     request.state.internal_tool = True.
     try:
         hdr = request.headers.get(INTERNAL_TOOL_HEADER)
         if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
             return
-        if getattr(request.state, "current_user", None) == "internal-tool":
+        if getattr(request.state, "internal_tool", False):
             return
     except Exception:
         pass

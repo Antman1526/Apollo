@@ -1,37 +1,115 @@
 """Shared auth helpers used by all route files."""
 
 import os
+from dataclasses import dataclass
 from typing import Optional
 from fastapi import Request, HTTPException
 
 
-def get_current_user(request: Request) -> Optional[str]:
-    """Get current username from request state (set by auth middleware)."""
-    return getattr(request.state, 'current_user', None)
+@dataclass(frozen=True)
+class RequestIdentity:
+    """The authenticated principal and the canonical owner for one request.
 
-
-def effective_user(request: Request):
-    """The real human behind the request, for ownership/attribution.
-
-    Cookie sessions resolve to the logged-in username. Bearer ``ody_`` callers
-    come through as the sandboxed pseudo-user "api" so they can't wander into
-    cookie/user routes by default, but their token was minted by, and belongs
-    to, a real owner stamped on ``request.state.api_token_owner``. Routes that
-    should attribute a token's actions to that owner (sessions, chat history)
-    call this instead of :func:`get_current_user`, so a paired client sees and
-    creates the SAME data as the owner's desktop UI rather than a separate
-    "api"-owned silo.
-
-    For cookie sessions this is identical to :func:`get_current_user`, so
-    swapping a route over is a no-op for browser users. A bearer token with no
-    owner falls back to :func:`get_current_user` (the "api" pseudo-user), so it
-    never escalates.
+    ``principal`` preserves the credential-facing identity used by legacy code
+    and audit trails. ``owner`` is the human account that owns persisted data;
+    it is deliberately ``None`` for an ownerless API token so that credential
+    can never inherit another account's records.
     """
-    if getattr(request.state, "api_token", False):
-        owner = getattr(request.state, "api_token_owner", None)
-        if owner:
-            return owner
-    return get_current_user(request)
+
+    principal: Optional[str]
+    owner: Optional[str]
+    auth_mode: str
+    is_authenticated: bool
+    is_admin: bool
+    is_local_bypass: bool
+
+
+def _auth_manager(request: Request):
+    app = getattr(request, "app", None)
+    state = getattr(app, "state", None)
+    return getattr(state, "auth_manager", None)
+
+
+def _is_loopback(request: Request) -> bool:
+    client = getattr(request, "client", None)
+    host = (getattr(client, "host", None) or "").lower()
+    return host in {"127.0.0.1", "::1", "localhost"}
+
+
+def _is_admin(auth_manager, username: Optional[str]) -> bool:
+    is_admin = getattr(auth_manager, "is_admin", None)
+    if not username or not callable(is_admin):
+        return False
+    try:
+        return bool(is_admin(username))
+    except Exception:
+        return False
+
+
+def resolve_identity(request: Request) -> RequestIdentity:
+    """Resolve all request identity state in one place.
+
+    Feature routes should use :func:`effective_user` or :func:`require_user`
+    for ownership decisions instead of reading request-state fields directly.
+    """
+
+    state = getattr(request, "state", None)
+    principal = getattr(state, "current_user", None)
+    auth_manager = _auth_manager(request)
+
+    # This marker is written only after the loopback internal-tool token was
+    # validated. Do not infer tool authority from a username string.
+    if getattr(state, "internal_tool", False):
+        owner = getattr(state, "internal_tool_owner", None) or None
+        return RequestIdentity(
+            principal=principal or "internal-tool",
+            owner=owner,
+            auth_mode="internal_tool",
+            is_authenticated=True,
+            is_admin=True,
+            is_local_bypass=False,
+        )
+
+    if getattr(state, "api_token", False):
+        owner = getattr(state, "api_token_owner", None) or None
+        return RequestIdentity(
+            principal=principal or "api",
+            owner=owner,
+            auth_mode="api_token",
+            is_authenticated=True,
+            is_admin=_is_admin(auth_manager, owner),
+            is_local_bypass=False,
+        )
+
+    if principal:
+        return RequestIdentity(
+            principal=principal,
+            owner=principal,
+            auth_mode="cookie",
+            is_authenticated=True,
+            is_admin=_is_admin(auth_manager, principal),
+            is_local_bypass=False,
+        )
+
+    if _auth_disabled():
+        return RequestIdentity(None, None, "auth_disabled", False, False, True)
+
+    configured = bool(auth_manager and getattr(auth_manager, "is_configured", False))
+    if _is_loopback(request) and not configured:
+        return RequestIdentity(None, None, "first_run_loopback", False, False, True)
+    if _is_loopback(request) and os.getenv("LOCALHOST_BYPASS", "false").lower() == "true":
+        return RequestIdentity(None, None, "localhost_bypass", False, False, True)
+    return RequestIdentity(None, None, "anonymous", False, False, False)
+
+
+def get_current_user(request: Request) -> Optional[str]:
+    """Return the compatibility principal set by the auth middleware."""
+    return resolve_identity(request).principal
+
+
+def effective_user(request: Request) -> Optional[str]:
+    """Return the canonical human owner for data ownership decisions."""
+    return resolve_identity(request).owner
 
 
 def _auth_disabled() -> bool:
@@ -60,30 +138,16 @@ def require_user(request: Request) -> str:
     Use this on routes that touch user data so middleware misconfig can't
     open them up.
     """
-    u = get_current_user(request)
-    if u:
-        return u
+    identity = resolve_identity(request)
+    if identity.owner:
+        return identity.owner
     # Operator-disabled auth: honor it at the route layer too. Without this,
     # routes that depend on require_user 401, the front-end fetch wrapper
     # redirects to /login, and the user sees a login page despite
     # AUTH_ENABLED=false (issue #622). Docker / reverse-proxy deployments
     # hit this because requests arrive from a non-loopback client.host, so
     # the loopback fall-through below never fires.
-    if _auth_disabled():
-        return ""
-    auth_mgr = getattr(request.app.state, "auth_manager", None)
-    client = getattr(request, "client", None)
-    host = (client.host if client else "") or ""
-    is_loopback = host in ("127.0.0.1", "::1", "localhost")
-    # LOCALHOST_BYPASS=true is the dev-only "I'm on loopback, skip auth"
-    # switch. Mirror the middleware so routes don't 401 the same caller
-    # the middleware just let through.
-    if is_loopback and os.getenv("LOCALHOST_BYPASS", "false").lower() == "true":
-        return ""
-    if auth_mgr is not None and getattr(auth_mgr, "is_configured", False):
-        raise HTTPException(401, "Not authenticated")
-    # Unconfigured / first-run mode: only allow loopback callers.
-    if is_loopback:
+    if identity.auth_mode in {"auth_disabled", "first_run_loopback", "localhost_bypass", "internal_tool"}:
         return ""
     raise HTTPException(401, "Not authenticated")
 

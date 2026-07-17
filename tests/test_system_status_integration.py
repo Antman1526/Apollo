@@ -225,7 +225,7 @@ def test_system_status_route_is_admin_gated(monkeypatch):
     target = _route(router, "/api/system/status", "GET")
     request = SimpleNamespace(
         headers={},
-        state=SimpleNamespace(current_user="internal-tool"),
+        state=SimpleNamespace(current_user="internal-tool", internal_tool=True),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
 
@@ -247,7 +247,7 @@ def test_system_status_route_uses_short_ttl_cache(monkeypatch):
     request = SimpleNamespace(
         headers={},
         query_params={},
-        state=SimpleNamespace(current_user="internal-tool"),
+        state=SimpleNamespace(current_user="internal-tool", internal_tool=True),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
 
@@ -271,7 +271,7 @@ def test_system_status_route_fresh_bypasses_cache(monkeypatch):
     request = SimpleNamespace(
         headers={},
         query_params={"fresh": "true"},
-        state=SimpleNamespace(current_user="internal-tool"),
+        state=SimpleNamespace(current_user="internal-tool", internal_tool=True),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
 
@@ -289,7 +289,7 @@ def test_system_action_rebuilds_memory_index(monkeypatch):
     target = _route(router, "/api/system/actions/{action_id}", "POST")
     request = SimpleNamespace(
         headers={},
-        state=SimpleNamespace(current_user="internal-tool"),
+        state=SimpleNamespace(current_user="internal-tool", internal_tool=True),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
 
@@ -366,7 +366,7 @@ def test_system_action_reconnects_failed_tool_servers(monkeypatch):
     target = _route(router, "/api/system/actions/{action_id}", "POST")
     request = SimpleNamespace(
         headers={},
-        state=SimpleNamespace(current_user="internal-tool"),
+        state=SimpleNamespace(current_user="internal-tool", internal_tool=True),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
 
@@ -445,7 +445,7 @@ def test_system_action_reconnects_missing_enabled_tool_servers(monkeypatch):
     target = _route(router, "/api/system/actions/{action_id}", "POST")
     request = SimpleNamespace(
         headers={},
-        state=SimpleNamespace(current_user="internal-tool"),
+        state=SimpleNamespace(current_user="internal-tool", internal_tool=True),
         app=SimpleNamespace(state=SimpleNamespace(auth_manager=None)),
     )
 

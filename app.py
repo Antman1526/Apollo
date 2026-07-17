@@ -296,8 +296,12 @@ if AUTH_ENABLED:
                     _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
                     if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
                         request.state.current_user = _impersonate
+                        request.state.internal_tool_owner = _impersonate
                     else:
                         request.state.current_user = "internal-tool"
+                        request.state.internal_tool_owner = None
+                    request.state.internal_tool = True
+                    request.state.auth_mode = "internal_tool"
                     request.state.api_token = False
                     return await call_next(request)
             except Exception as e:
@@ -312,6 +316,8 @@ if AUTH_ENABLED:
                 # documents) work without a login instead of 403-ing on an
                 # empty identity.
                 request.state.current_user = _bypass_user()
+                request.state.internal_tool = False
+                request.state.auth_mode = "localhost_bypass"
                 request.state.api_token = False
                 return await call_next(request)
             if not auth_manager.is_configured:
@@ -365,6 +371,8 @@ if AUTH_ENABLED:
                         # Keep bearer-token callers out of normal cookie/user
                         # routes. API-aware routes can read api_token_owner.
                         request.state.current_user = "api"
+                        request.state.internal_tool = False
+                        request.state.auth_mode = "api_token"
                         request.state.api_token = True
                         request.state.api_token_id = matched_id
                         request.state.api_token_owner = matched_owner
@@ -384,6 +392,8 @@ if AUTH_ENABLED:
 
             # Attach current username to request state for downstream routes
             request.state.current_user = auth_manager.get_username_for_token(token)
+            request.state.internal_tool = False
+            request.state.auth_mode = "cookie"
             request.state.api_token = False
             return await call_next(request)
 

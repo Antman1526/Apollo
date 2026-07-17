@@ -58,8 +58,8 @@ def test_bearer_token_attributes_to_its_owner():
 
 
 def test_bearer_token_without_owner_does_not_escalate():
-    # No owner on the token -> falls back to current_user ("api"), never another user.
-    assert effective_user(_req(api_token=True, api_token_owner=None, current_user="api")) == "api"
+    # An ownerless token has no canonical owner and cannot enter owner-scoped data.
+    assert effective_user(_req(api_token=True, api_token_owner=None, current_user="api")) is None
 
 
 # --- _verify_session_owner: bearer tokens cannot cross owners ---------------
