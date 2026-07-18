@@ -479,7 +479,9 @@ def _import_csv_contacts(text: str) -> Dict:
     try:
         has_header = csv.Sniffer().has_header(raw[:2048])
     except csv.Error:
-        has_header = True
+        # A failed heuristic gives us no evidence that row one is a header.
+        # Treat it as data so a one-row, headerless export is not discarded.
+        has_header = False
 
     rows = []
     if has_header:
