@@ -84,3 +84,17 @@ def test_constants_and_config_follow_explicit_data_root(tmp_path):
     result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
 
     assert result.returncode == 0, result.stderr
+
+
+def test_auth_manager_follows_explicit_data_root(tmp_path):
+    root = tmp_path / "application-state"
+    env = {**os.environ, "APOLLO_DATA_DIR": str(root)}
+    code = (
+        "from pathlib import Path; "
+        "from core.auth import AuthManager; "
+        "assert Path(AuthManager().auth_path) == Path(r'" + str(root / "auth.json") + "')"
+    )
+
+    result = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr

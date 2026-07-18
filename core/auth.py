@@ -9,11 +9,12 @@ import secrets
 import threading
 import time
 import logging
-from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 import bcrypt
 import pyotp
+
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +36,10 @@ DEFAULT_PRIVILEGES = {
 # Admins get everything
 ADMIN_PRIVILEGES = {k: (True if isinstance(v, bool) else (0 if isinstance(v, int) else [])) for k, v in DEFAULT_PRIVILEGES.items()}
 
-DEFAULT_AUTH_PATH = os.path.join(
-    Path(__file__).parent.parent, "data", "auth.json"
-)
+# Authentication is runtime state, not source-checkout state. Keeping this on
+# the shared resolver makes explicit data roots, packaged installs, and test
+# environments behave consistently with the rest of the application.
+DEFAULT_AUTH_PATH = str(data_path("auth.json"))
 TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 
 # Usernames the auth + middleware layer reserve as internal "synthetic owner"

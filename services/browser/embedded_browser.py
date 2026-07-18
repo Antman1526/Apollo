@@ -81,6 +81,7 @@ def status() -> dict[str, Any]:
         "package": "playwright",
         "engine": "chromium",
         "headless": os.getenv("APOLLO_BROWSER_HEADLESS", "true").lower() != "false",
+        "executable_path_configured": bool(os.getenv("APOLLO_BROWSER_EXECUTABLE_PATH")),
         "install_hint": "pip install playwright && python -m playwright install chromium",
         "security": {
             "allowed_schemes": sorted(ALLOWED_SCHEMES),
@@ -237,9 +238,13 @@ class EmbeddedBrowserSession:
         from playwright.async_api import async_playwright
 
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(
-            headless=os.getenv("APOLLO_BROWSER_HEADLESS", "true").lower() != "false",
-        )
+        launch_options: dict[str, Any] = {
+            "headless": os.getenv("APOLLO_BROWSER_HEADLESS", "true").lower() != "false",
+        }
+        executable_path = os.getenv("APOLLO_BROWSER_EXECUTABLE_PATH", "").strip()
+        if executable_path:
+            launch_options["executable_path"] = executable_path
+        self._browser = await self._playwright.chromium.launch(**launch_options)
         context = await self._browser.new_context(
             ignore_https_errors=False,
             java_script_enabled=True,
