@@ -49,7 +49,7 @@ def _publish(run: _Run, ev: str) -> None:
     for q in list(run.subscribers):
         try:
             q.put_nowait((seq, ev))
-        except Exception:
+        except asyncio.QueueFull:
             pass
 
 
@@ -101,8 +101,6 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
             await asyncio.wait({prev_task})
         except asyncio.CancelledError:
             raise            # our own cancellation — propagate
-        except Exception:
-            pass
     try:
         async for ev in agen:
             _publish(run, ev)
@@ -114,8 +112,16 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         # the partial response to the session).
         try:
             await agen.aclose()
-        except Exception:
-            pass
+        except Exception as error:
+            from src.observability import report_exception
+
+            report_exception(
+                logger,
+                "agent_run_generator_cleanup_failed",
+                error,
+                outcome="best_effort",
+                context={"session_id": session_id},
+            )
     except Exception as e:
         logger.error("[agent-run] %s failed: %s", session_id, e, exc_info=True)
         run.status = "error"
@@ -130,7 +136,7 @@ async def _drain(session_id: str, agen: AsyncGenerator[str, None],
         for q in list(run.subscribers):
             try:
                 q.put_nowait((None, None))
-            except Exception:
+            except asyncio.QueueFull:
                 pass
         # Run is terminal — arm the grace timer so it (and its buffer) is
         # eventually freed even if nobody ever reconnects. subscribe() cancels
