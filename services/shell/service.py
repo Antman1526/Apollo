@@ -4,9 +4,13 @@
 from dataclasses import dataclass
 from typing import Optional, AsyncIterator
 import asyncio
+import logging
 from pathlib import Path
 
+from src.observability import report_exception
 from src.subproc_env import build_agent_env
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -85,8 +89,9 @@ class ShellService:
                 exit_code=-1,
                 timed_out=True,
             )
-        except Exception as e:
-            return ShellResult(stdout="", stderr=str(e), exit_code=-1)
+        except Exception as error:
+            report_exception(logger, "shell_command_launch_failed", error, outcome="critical")
+            return ShellResult(stdout="", stderr="Command could not be started", exit_code=-1)
 
     async def stream(
         self,
@@ -158,8 +163,9 @@ class ShellService:
                     pass
             yield {"stream": "stderr", "data": f"Command timed out after {timeout}s"}
             yield {"exit_code": -1}
-        except Exception as e:
-            yield {"stream": "stderr", "data": str(e)}
+        except Exception as error:
+            report_exception(logger, "shell_stream_launch_failed", error, outcome="critical")
+            yield {"stream": "stderr", "data": "Command could not be started"}
             yield {"exit_code": -1}
         finally:
             for t in reader_tasks:
