@@ -5,33 +5,41 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from threading import Thread
 
+import httpx
 import pytest
 
 
-def _setup_and_login(page):
-    result = page.evaluate("""async () => {
-        const status = await fetch('/api/auth/status', { credentials: 'same-origin' });
-        const state = await status.json();
-        let setupStatus = null;
-        if (!state.configured) {
-          const setup = await fetch('/api/auth/setup', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: 'e2e-admin', password: 'e2e-password-123' }),
-          });
-          setupStatus = setup.status;
-        }
-        const login = await fetch('/api/auth/login', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: 'e2e-admin', password: 'e2e-password-123' }),
-        });
-        return { setup: setupStatus, login: login.status, loginBody: await login.json() };
-    }""")
-    assert result["setup"] in (None, 200), result
-    assert result["login"] == 200, result
-    assert result["loginBody"].get("ok") is True, result
-    # Workspace background polling may begin immediately after login, so a
-    # global network-idle wait is not a valid readiness signal here.
-    page.reload(wait_until="commit")
+def _authenticated_session(base_url):
+    """Create the isolated first-run account and return its session cookie."""
+
+    with httpx.Client(base_url=base_url, timeout=10.0) as client:
+        status = client.get("/api/auth/status")
+        assert status.status_code == 200, status.text
+        if not status.json()["configured"]:
+            setup = client.post(
+                "/api/auth/setup",
+                json={"username": "e2e-admin", "password": "e2e-password-123"},
+            )
+            assert setup.status_code == 200, setup.text
+        login = client.post(
+            "/api/auth/login",
+            json={"username": "e2e-admin", "password": "e2e-password-123"},
+        )
+        assert login.status_code == 200, login.text
+        assert login.json().get("ok") is True, login.text
+        token = client.cookies.get("apollo_session")
+        assert token, "login did not create an Apollo session cookie"
+        return token
+
+
+def _authenticated_page(browser, viewport):
+    base_url = os.environ["APOLLO_E2E_BASE_URL"]
+    context = browser.new_context(viewport=viewport)
+    context.add_cookies([{"name": "apollo_session", "value": _authenticated_session(base_url), "url": base_url}])
+    page = context.new_page()
+    page.goto(base_url, wait_until="commit", timeout=30_000)
+    page.locator("#rail-browser").wait_for(state="visible")
+    return context, page
 
 
 @contextmanager
@@ -84,20 +92,18 @@ def _browser_api(page, path, *, method="GET", body=None):
 @pytest.mark.e2e
 def test_landing_page_renders_without_console_errors():
     playwright = pytest.importorskip("playwright.sync_api")
-    base_url = os.environ["APOLLO_E2E_BASE_URL"]
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=os.getenv("APOLLO_E2E_CHROMIUM"))
         for viewport in ({"width": 1440, "height": 900}, {"width": 390, "height": 844}):
-            page = browser.new_page(viewport=viewport)
+            context, page = _authenticated_page(browser, viewport)
             errors = []
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
-            page.goto(base_url, wait_until="networkidle", timeout=30_000)
-            _setup_and_login(page)
             errors.clear()
-            page.reload(wait_until="networkidle")
+            page.reload(wait_until="domcontentloaded")
+            page.locator("#rail-browser").wait_for(state="visible")
             assert page.title() == "Apollo Chat"
             assert not errors
-            page.close()
+            context.close()
         browser.close()
 
 
@@ -106,9 +112,7 @@ def test_document_create_edit_and_save():
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=os.environ["APOLLO_E2E_CHROMIUM"])
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
-        page.goto(os.environ["APOLLO_E2E_BASE_URL"], wait_until="commit")
-        _setup_and_login(page)
+        context, page = _authenticated_page(browser, {"width": 1440, "height": 900})
         page.evaluate("window.documentModule.newDocument()")
         editor = page.locator("#doc-editor-textarea")
         editor.wait_for(state="visible")
@@ -123,6 +127,7 @@ def test_document_create_edit_and_save():
         assert payload["ok"], payload["body"]
         payload = payload["body"]
         assert payload.get("current_content") == "# E2E document\nSaved through the editor", payload
+        context.close()
         browser.close()
 
 
@@ -131,9 +136,7 @@ def test_browser_panel_and_agent_browser_local_fixture():
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=os.environ["APOLLO_E2E_CHROMIUM"])
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
-        page.goto(os.environ["APOLLO_E2E_BASE_URL"], wait_until="commit")
-        _setup_and_login(page)
+        context, page = _authenticated_page(browser, {"width": 1440, "height": 900})
 
         # The panel's HTTP fallback is a supported path. Keep its live viewer
         # disconnected here so this UI-only validation does not take over the
@@ -187,6 +190,7 @@ def test_browser_panel_and_agent_browser_local_fixture():
                 page.wait_for_timeout(100)
             else:
                 pytest.fail(f"fixture console log was not piped: {events}")
+        context.close()
         browser.close()
 
 
@@ -195,9 +199,7 @@ def test_paperclip_floor_renders_preview_and_live_agent_activity():
     playwright = pytest.importorskip("playwright.sync_api")
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=os.environ["APOLLO_E2E_CHROMIUM"])
-        page = browser.new_page(viewport={"width": 1440, "height": 900})
-        page.goto(os.environ["APOLLO_E2E_BASE_URL"], wait_until="commit")
-        _setup_and_login(page)
+        context, page = _authenticated_page(browser, {"width": 1440, "height": 900})
 
         rail = page.locator("#rail-paperclip")
         rail.wait_for(state="visible")
@@ -237,4 +239,5 @@ def test_paperclip_floor_renders_preview_and_live_agent_activity():
         assert content_box["width"] <= 390
         page.keyboard.press("Escape")
         modal.wait_for(state="hidden")
+        context.close()
         browser.close()
