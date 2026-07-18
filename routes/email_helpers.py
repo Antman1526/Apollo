@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 
 from src.auth_helpers import require_user as _shared_require_user
+from src.observability import report_exception
 from src.secret_storage import decrypt as _decrypt
 
 logger = logging.getLogger(__name__)
@@ -222,8 +223,8 @@ def _cleanup_compose_uploads(tokens) -> None:
     for token in tokens:
         try:
             (COMPOSE_UPLOADS_DIR / Path(token).name).unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "email_compose_upload_cleanup_failed", error, outcome="best_effort")
 
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -435,18 +436,18 @@ def _init_scheduled_db():
                             )
                 finally:
                     _db.close()
-            except Exception:
-                pass
-    except Exception:
-        pass
+            except Exception as error:
+                report_exception(logger, "scheduled_email_owner_backfill_failed", error, outcome="best_effort")
+    except Exception as error:
+        report_exception(logger, "scheduled_email_schema_migration_failed", error, outcome="best_effort")
     # Lazy migration: add turns_json to email_boundaries for server-side
     # thread parsing cache (talon-style precomputed reply chain).
     try:
         cols = [r[1] for r in conn.execute("PRAGMA table_info(email_boundaries)").fetchall()]
         if "turns_json" not in cols:
             conn.execute("ALTER TABLE email_boundaries ADD COLUMN turns_json TEXT")
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "email_boundary_schema_migration_failed", error, outcome="best_effort")
     # Per-sender signature cache. Populated by `learn_sender_signatures`
     # action: the LLM extracts the common trailing block across N emails
     # from each sender; the renderer folds it consistently for every
@@ -633,8 +634,8 @@ def _open_imap_connection(host: str, port: int, *, starttls: bool, timeout: int 
         conn = imaplib.IMAP4(host, port, timeout=timeout)
     try:
         conn.sock.settimeout(timeout)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "imap_socket_timeout_configuration_failed", error, outcome="best_effort")
     return conn
 
 def _imap_connect(account_id: str | None = None, owner: str = ""):
@@ -702,8 +703,8 @@ def _imap(account_id: str | None = None, owner: str = ""):
                     pool_release(account_id, conn, ok=ok, owner=owner)
                 except TypeError:
                     pool_release(account_id, conn, ok=ok)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "imap_pool_release_failed", error, outcome="best_effort", context={"account_id": account_id})
         return
     # Fallback: plain connect+logout. Used pre-setup or in tests.
     conn = _imap_connect(account_id, owner=owner)
@@ -712,8 +713,8 @@ def _imap(account_id: str | None = None, owner: str = ""):
     finally:
         try:
             conn.logout()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "imap_connection_logout_failed", error, outcome="best_effort", context={"account_id": account_id})
 
 
 def _decode_header(raw):
@@ -759,8 +760,8 @@ def _detect_sent_folder(conn):
         for c in candidates:
             if c in names:
                 return c
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "imap_sent_folder_probe_failed", error, outcome="best_effort")
     return "Sent"
 
 
@@ -787,8 +788,8 @@ def _detect_drafts_folder(conn):
         for c in candidates:
             if c in names:
                 return c
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "imap_drafts_folder_probe_failed", error, outcome="best_effort")
     return "Drafts"
 
 
@@ -813,7 +814,8 @@ def _detect_spam_folder(conn):
             if low in ("junk", "spam", "junk mail", "junk e-mail") or low.endswith("/junk") or low.endswith("/spam"):
                 fallback = fallback or name
         return preferred or fallback
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "imap_spam_folder_probe_failed", error, outcome="best_effort")
         return None
 
 
@@ -836,8 +838,8 @@ def _imap_move(uid, dest, src="INBOX", account_id: str | None = None, owner: str
         if c:
             try:
                 c.logout()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "imap_move_logout_failed", error, outcome="best_effort", context={"account_id": account_id})
 
 
 def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
@@ -866,8 +868,8 @@ def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
         if filename:
             try:
                 filename = _decode_header(filename)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_attachment_filename_decode_failed", error, outcome="best_effort")
         fname_lower = (filename or "").lower()
         payload = part.get_payload(decode=True)
         if not payload:
@@ -887,8 +889,8 @@ def _extract_attachment_text(msg, max_chars: int = 6000) -> str:
                 finally:
                     try:
                         _os.unlink(tmp.name)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "email_attachment_temp_cleanup_failed", error, outcome="best_effort")
             elif ct.startswith("text/") or fname_lower.endswith((".txt", ".md", ".csv", ".log", ".json")):
                 text = payload.decode("utf-8", errors="replace")
         except Exception as e:
@@ -1065,7 +1067,8 @@ def _fetch_sender_thread_context(sender_addr: str,
                 st_sel, _ = conn.select(_q(folder), readonly=True)
                 if st_sel != "OK":
                     continue
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "email_thread_folder_select_failed", error, outcome="best_effort")
                 continue
             try:
                 addr_escaped = sender_addr.replace('"', '\\"')
@@ -1075,7 +1078,8 @@ def _fetch_sender_thread_context(sender_addr: str,
                 uids = sdata[0].split()
                 # Most recent first.
                 uids = list(reversed(uids))
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "email_thread_sender_search_failed", error, outcome="best_effort")
                 continue
 
             for raw_uid in uids:
@@ -1125,10 +1129,14 @@ def _fetch_sender_thread_context(sender_addr: str,
                     lines.append(atts_text)
                 blocks.append("\n".join(lines))
     finally:
-        try: conn.close()
-        except Exception: pass
-        try: conn.logout()
-        except Exception: pass
+        try:
+            conn.close()
+        except Exception as error:
+            report_exception(logger, "email_thread_connection_close_failed", error, outcome="best_effort")
+        try:
+            conn.logout()
+        except Exception as error:
+            report_exception(logger, "email_thread_connection_logout_failed", error, outcome="best_effort")
 
     if not blocks:
         return ""
@@ -1171,7 +1179,8 @@ def _pre_retrieve_context(
         try:
             from src.tool_security import owner_is_admin_or_single_user
             contacts_allowed = owner_is_admin_or_single_user(owner or None)
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "email_contact_access_check_failed", error, outcome="best_effort")
             contacts_allowed = not bool(owner)
         is_known = False
         if contacts_allowed:
@@ -1190,8 +1199,8 @@ def _pre_retrieve_context(
                     if any((addr or "").strip().lower() == sender_addr for addr in contact_emails):
                         is_known = True
                         break
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_contact_lookup_failed", error, outcome="best_effort")
         if not is_known and sender_addr:
             try:
                 with _imap(account_id, owner=owner) as _ck:
@@ -1199,8 +1208,8 @@ def _pre_retrieve_context(
                     st_known, dk = _ck.search(None, f'(FROM "{sender_addr}")')
                     if st_known == "OK" and dk and dk[0]:
                         is_known = True
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_known_sender_check_failed", error, outcome="best_effort", context={"account_id": account_id})
         if not is_known:
             logger.info(f"Pre-retrieval skipped — unknown sender {sender_addr}")
             return [], []
@@ -1238,7 +1247,8 @@ def _pre_retrieve_context(
                     st_sel, _sd = ctx_conn.select(_q(folder), readonly=True)
                     if st_sel != "OK":
                         continue
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "email_context_folder_select_failed", error, outcome="best_effort")
                     continue
                 for term in terms_list:
                     try:
@@ -1262,15 +1272,16 @@ def _pre_retrieve_context(
                                 context_snippets.append(
                                     f"[{folder} match for \"{term}\"]\nFrom: {hfrom}\nDate: {hdate}\nSubject: {hsubj}\n{hbody}"
                                 )
-                            except Exception:
+                            except Exception as error:
+                                report_exception(logger, "email_context_message_parse_failed", error, outcome="best_effort")
                                 continue
                     except Exception as _e:
                         logger.warning(f"  search {folder} {term!r} failed: {_e}")
                         continue
             try:
                 ctx_conn.logout()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_context_search_logout_failed", error, outcome="best_effort", context={"account_id": account_id})
         except Exception as _e:
             logger.warning(f"IMAP context search failed: {_e}")
 
@@ -1289,8 +1300,8 @@ def _pre_retrieve_context(
                     if c.get("phones"):
                         parts.append(f"Phone: {', '.join(c['phones'])}")
                     context_snippets.append(f"[Contact match for \"{term}\"] " + ", ".join(parts))
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "email_context_contact_match_failed", error, outcome="best_effort")
     except Exception as e:
         logger.warning(f"Pre-retrieval failed: {e}")
     logger.info(f"Pre-retrieval snippets={len(context_snippets)}")
