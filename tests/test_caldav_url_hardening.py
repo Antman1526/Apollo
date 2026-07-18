@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import pytest
+from fastapi import HTTPException
 
 from src import caldav_sync
 
@@ -95,3 +96,25 @@ def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
     assert "pw = decrypt(pw)" in text
     assert "follow_redirects=False, trust_env=False" in text
     assert "Redirects are not followed for CalDAV safety" in text
+
+
+def test_calendar_config_rejects_malformed_payload_without_clearing_settings():
+    from routes.calendar_routes import setup_calendar_routes
+
+    class InvalidRequest:
+        state = types.SimpleNamespace(current_user="alice")
+
+        async def json(self):
+            raise ValueError("malformed request body")
+
+    router = setup_calendar_routes()
+    save_config = next(
+        route.endpoint
+        for route in router.routes
+        if getattr(route, "path", "") == "/api/calendar/config" and "POST" in route.methods
+    )
+
+    with pytest.raises(HTTPException, match="Invalid configuration payload") as error:
+        asyncio.run(save_config(InvalidRequest()))
+
+    assert error.value.status_code == 400

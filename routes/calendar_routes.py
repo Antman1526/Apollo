@@ -13,6 +13,7 @@ from dateutil.rrule import DAILY, WEEKLY, MONTHLY, YEARLY
 
 from core.database import SessionLocal, CalendarCal, CalendarEvent
 from src.auth_helpers import get_current_user, require_user
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -255,7 +256,7 @@ def parse_due_for_user(s: str) -> str:
         if parsed2.tzinfo is None:
             parsed2 = parsed2.replace(tzinfo=user_tz)
         return parsed2.isoformat()
-    except Exception:
+    except (OverflowError, TypeError, ValueError):
         # Final fallback: legacy parser, naive.
         return _parse_dt(s).isoformat()
 
@@ -533,8 +534,14 @@ def setup_calendar_routes() -> APIRouter:
             try:
                 from src.secret_storage import decrypt
                 caldav_password = decrypt(caldav_password)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "calendar_config_password_decrypt_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"owner": owner},
+                )
         # Surface url+username but never hand the password back to the
         # client — saved-state UI shouldn't leak the credential.
         return {
@@ -551,8 +558,11 @@ def setup_calendar_routes() -> APIRouter:
         from routes.prefs_routes import _load_for_user, _save_for_user
         try:
             body = await request.json()
-        except Exception:
-            body = {}
+        except (TypeError, UnicodeDecodeError, ValueError) as error:
+            report_exception(logger, "calendar_config_payload_parse_failed", error, outcome="best_effort", context={"owner": owner})
+            raise HTTPException(400, "Invalid configuration payload") from error
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Configuration payload must be an object")
         prefs = _load_for_user(owner) or {}
         cfg = dict(prefs.get("caldav") or {})
         # Empty url => clear the whole entry (treat as "remove integration").
@@ -589,8 +599,11 @@ def setup_calendar_routes() -> APIRouter:
         owner = _require_user(request)
         try:
             body = await request.json()
-        except Exception:
-            body = {}
+        except (TypeError, UnicodeDecodeError, ValueError) as error:
+            report_exception(logger, "calendar_connection_payload_parse_failed", error, outcome="best_effort", context={"owner": owner})
+            return {"ok": False, "error": "Invalid connection settings payload"}
+        if not isinstance(body, dict):
+            return {"ok": False, "error": "Connection settings payload must be an object"}
         url = (body.get("url") or "").strip()
         user = (body.get("username") or "").strip()
         pw = body.get("password") or ""
@@ -606,8 +619,14 @@ def setup_calendar_routes() -> APIRouter:
                     try:
                         from src.secret_storage import decrypt
                         pw = decrypt(pw)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(
+                            logger,
+                            "calendar_connection_password_decrypt_failed",
+                            error,
+                            outcome="best_effort",
+                            context={"owner": owner},
+                        )
         if not (url and user and pw):
             return {"ok": False, "error": "Missing URL, username, or password"}
         from src.caldav_sync import validate_caldav_url
@@ -646,8 +665,9 @@ def setup_calendar_routes() -> APIRouter:
             return {"ok": False, "error": f"Connection refused: {e}"[:200]}
         except httpx.TimeoutException:
             return {"ok": False, "error": "Connection timed out"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)[:200]}
+        except Exception as error:
+            report_exception(logger, "calendar_connection_probe_failed", error, outcome="degraded", context={"owner": owner})
+            return {"ok": False, "error": "Connection check failed"}
 
     @router.post("/sync")
     async def sync_caldav_endpoint(request: Request):
@@ -945,9 +965,16 @@ def setup_calendar_routes() -> APIRouter:
             return {"ok": True}
         except HTTPException:
             raise
-        except Exception as e:
+        except Exception as error:
             db.rollback()
-            return {"error": str(e)}
+            report_exception(
+                logger,
+                "calendar_delete_failed",
+                error,
+                outcome="critical",
+                context={"calendar_id": cal_id, "owner": owner},
+            )
+            raise HTTPException(500, "Failed to delete calendar") from error
         finally:
             db.close()
 
@@ -1154,7 +1181,7 @@ def setup_calendar_routes() -> APIRouter:
         "tomorrow", "next Tuesday", "in 30 minutes" resolve correctly.
         Uses the "utility" endpoint (small / fast model) to keep latency low.
         """
-        _require_user(request)
+        owner = _require_user(request)
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
         from src.text_helpers import strip_think
@@ -1211,8 +1238,9 @@ def setup_calendar_routes() -> APIRouter:
                 max_tokens=512,
                 timeout=20,
             )
-        except Exception as e:
-            return {"ok": False, "error": f"LLM call failed: {e}"}
+        except Exception as error:
+            report_exception(logger, "calendar_quick_parse_llm_failed", error, outcome="degraded", context={"owner": owner})
+            return {"ok": False, "error": "Calendar parsing service is unavailable"}
 
         cleaned = strip_think(raw or "", prose=False, prompt_echo=True)
         cleaned = _re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=_re.MULTILINE).strip()
@@ -1221,8 +1249,9 @@ def setup_calendar_routes() -> APIRouter:
             return {"ok": False, "error": "Could not extract JSON", "raw": cleaned[:400]}
         try:
             parsed = _json.loads(m.group())
-        except Exception as e:
-            return {"ok": False, "error": f"Invalid JSON: {e}", "raw": cleaned[:400]}
+        except (_json.JSONDecodeError, TypeError) as error:
+            report_exception(logger, "calendar_quick_parse_response_parse_failed", error, outcome="best_effort", context={"owner": owner})
+            return {"ok": False, "error": "Calendar parser returned invalid data", "raw": cleaned[:400]}
 
         # Light validation / defaults so the frontend can trust the shape.
         summary = (parsed.get("summary") or text)[:200]
@@ -1269,7 +1298,7 @@ def setup_calendar_routes() -> APIRouter:
                 else:
                     dt = datetime.fromisoformat(dtstart)
                     dtend = (dt + timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:00")
-            except Exception:
+            except ValueError:
                 dtend = dtstart
 
         return {
