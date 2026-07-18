@@ -13,6 +13,7 @@ from core.models import ChatMessage
 from src.request_models import SessionResponse
 from core.database import Session as DbSession, SessionLocal, Document, GalleryImage
 from src.auth_helpers import require_user
+from src.observability import report_exception
 
 
 def _auth_disabled() -> bool:
@@ -79,7 +80,14 @@ def _current_user_is_admin(request: Request, user: str | None) -> bool:
         return False
     try:
         return bool(is_admin(user))
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "session_admin_check_failed",
+            error,
+            outcome="best_effort",
+            context={"owner": user},
+        )
         return False
 
 
@@ -110,8 +118,15 @@ def _persist_session_headers(session_id: str, headers: dict | None) -> None:
             db_session.headers = headers or {}
             db_session.updated_at = datetime.utcnow()
             db.commit()
-    except Exception:
+    except Exception as error:
         db.rollback()
+        report_exception(
+            logger,
+            "session_header_persist_failed",
+            error,
+            outcome="critical",
+            context={"session_id": session_id},
+        )
         raise
     finally:
         db.close()
@@ -130,8 +145,14 @@ def _pick_endpoint_for_sort(owner=None):
         url, model, headers = resolve_task_endpoint(owner=owner)
         if url and model:
             return url, model, headers
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "session_sort_task_endpoint_resolve_failed",
+            error,
+            outcome="best_effort",
+            context={"owner": owner},
+        )
     # Fall back to default
     url, model, headers = resolve_endpoint("default", owner=owner)
     if url and model:
@@ -173,14 +194,26 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     if hasattr(session_manager, "delete_session"):
                         try:
                             session_manager.delete_session(_g.id)
-                        except Exception:
-                            pass
+                        except Exception as error:
+                            report_exception(
+                                logger,
+                                "session_incognito_memory_purge_failed",
+                                error,
+                                outcome="best_effort",
+                                context={"session_id": _g.id, "owner": user},
+                            )
                 if _ghosts:
                     _purge_db.commit()
             finally:
                 _purge_db.close()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "session_incognito_database_purge_failed",
+                error,
+                outcome="best_effort",
+                context={"owner": user},
+            )
         user_sessions = session_manager.get_sessions_for_user(user)
         # Fetch folder info from DB for each session
         db = SessionLocal()
@@ -473,9 +506,12 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
         from core.database import ChatMessage as _CM
         try:
             body = await request.json()
-            ids = body.get("ids", [])
-        except Exception:
-            ids = []
+        except (TypeError, UnicodeDecodeError, ValueError) as error:
+            report_exception(logger, "session_bulk_delete_payload_parse_failed", error, outcome="best_effort")
+            raise HTTPException(400, "Invalid bulk-delete payload") from error
+        if not isinstance(body, dict) or not isinstance(body.get("ids", []), list):
+            raise HTTPException(400, "Bulk-delete payload must contain an ids list")
+        ids = body.get("ids", [])
         for sid in ids:
             try:
                 _verify_session_owner(request, sid, session_manager)
@@ -485,12 +521,25 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     db.query(_CM).filter(_CM.session_id == sid).delete()
                     db.query(DbSession).filter(DbSession.id == sid).delete()
                     db.commit()
-                except Exception:
+                except Exception as error:
                     db.rollback()
+                    report_exception(
+                        logger,
+                        "session_bulk_delete_database_cleanup_failed",
+                        error,
+                        outcome="critical",
+                        context={"session_id": sid},
+                    )
                 finally:
                     db.close()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "session_bulk_delete_item_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": sid},
+                )
         return {"deleted": len(ids)}
 
     @router.delete("/session/{sid}")
@@ -606,8 +655,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
                     session_manager.sessions[sid].archived = False
                 else:
                     session_manager._load_session_from_db(sid)
-            except Exception:
-                pass  # Non-fatal — session will load on next access
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "session_unarchive_memory_rehydrate_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": sid},
+                )
             return {"status": "unarchived"}
         except HTTPException:
             raise
@@ -1190,7 +1245,14 @@ def setup_session_routes(session_manager: SessionManager, config: dict, webhook_
             from src.model_context import get_context_length
             ctx = get_context_length(session.endpoint_url, session.model)
             return {"context_length": ctx, "model": session.model}
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "session_context_length_lookup_failed",
+                error,
+                outcome="best_effort",
+                context={"session_id": session_id},
+            )
             return {"context_length": None}
 
     return router
