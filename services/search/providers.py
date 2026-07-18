@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from src.constants import SEARXNG_INSTANCE
+from src.observability import report_exception
 from .analytics import RateLimitError, error_logger
 from .query import build_enhanced_query
 
@@ -36,7 +37,8 @@ def _get_search_settings() -> dict:
     try:
         from src.settings import load_settings
         return load_settings()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "search_settings_load_failed", error, outcome="best_effort")
         return {}
 
 
@@ -78,8 +80,8 @@ def _get_search_instance() -> str:
             rt = get_runtime()
             if rt.installed:
                 return rt.url
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "managed_searxng_runtime_check_failed", error, outcome="best_effort")
     return SEARXNG_INSTANCE
 
 
@@ -410,7 +412,7 @@ def _resolve_ddg_redirect(raw: str) -> str:
             qs = parse_qs(parsed.query)
             if "uddg" in qs:
                 return qs["uddg"][0]
-    except Exception:
+    except (TypeError, ValueError):
         pass
     return resolved
 
