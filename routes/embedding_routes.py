@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Form, Depends
 from core.constants import BASE_DIR
 from core.middleware import require_admin
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -87,8 +88,8 @@ def _load_custom_endpoint() -> dict:
     try:
         if os.path.exists(_ENDPOINT_FILE):
             return json.loads(Path(_ENDPOINT_FILE).read_text(encoding="utf-8"))
-    except Exception:
-        pass
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
     return {}
 
 
@@ -167,9 +168,15 @@ def setup_embedding_routes():
                 lambda: TextEmbedding(model_name=model_name, cache_dir=cache),
             )
             return {"status": "downloaded", "model": model_name}
-        except Exception as e:
-            logger.error(f"Failed to download {model_name}: {e}")
-            raise HTTPException(500, f"Download failed: {str(e)}")
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedding_model_download_failed",
+                error,
+                outcome="critical",
+                context={"model_name": model_name},
+            )
+            raise HTTPException(500, "Download failed")
         finally:
             _downloading.pop(model_name, None)
 
@@ -263,8 +270,14 @@ def setup_embedding_routes():
                 timeout=10,
             )
             resp.raise_for_status()
-        except Exception as e:
-            raise HTTPException(400, f"Endpoint unreachable: {e}")
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedding_endpoint_health_check_failed",
+                error,
+                outcome="degraded",
+            )
+            raise HTTPException(400, "Endpoint unreachable")
 
         # Persist and set in environment for immediate use
         data = {"url": url}
@@ -285,15 +298,25 @@ def setup_embedding_routes():
         try:
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedding_http_state_reset_failed",
+                error,
+                outcome="best_effort",
+            )
 
         # Reset ChromaDB client (collections will be recreated with new embeddings)
         try:
             from src.chroma_client import reset_client
             reset_client()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedding_chroma_client_reset_failed",
+                error,
+                outcome="best_effort",
+            )
 
         logger.info(f"Custom embedding endpoint set: {url}")
         return {"success": True, "url": url, "model": model}
@@ -302,7 +325,16 @@ def setup_embedding_routes():
     def clear_endpoint():
         """Clear the custom endpoint and revert to local fastembed."""
         if os.path.exists(_ENDPOINT_FILE):
-            os.remove(_ENDPOINT_FILE)
+            try:
+                os.remove(_ENDPOINT_FILE)
+            except OSError as error:
+                report_exception(
+                    logger,
+                    "embedding_endpoint_config_delete_failed",
+                    error,
+                    outcome="critical",
+                )
+                raise HTTPException(500, "Could not clear embedding endpoint")
 
         # Remove from environment
         os.environ.pop("EMBEDDING_URL", None)
@@ -315,15 +347,25 @@ def setup_embedding_routes():
         try:
             from src.embeddings import reset_http_embed_state
             reset_http_embed_state()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedding_http_state_clear_reset_failed",
+                error,
+                outcome="best_effort",
+            )
 
         # Reset ChromaDB client
         try:
             from src.chroma_client import reset_client
             reset_client()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedding_chroma_client_clear_reset_failed",
+                error,
+                outcome="best_effort",
+            )
 
         logger.info("Custom embedding endpoint cleared, reverting to local fastembed")
         return {"success": True}
