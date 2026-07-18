@@ -290,7 +290,14 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                     "completed_at": d.get("completed_at", 0),
                     "archived": bool(d.get("archived")),
                 })
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "research_library_record_parse_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": session_id, "owner": user},
+                )
                 continue
 
         # Sort
@@ -380,7 +387,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                         models = _json.loads(ep.cached_models) if ep.cached_models else []
                         if models:
                             ep_model = _first_chat_model(models)
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError):
                         pass
             finally:
                 db.close()
@@ -416,7 +423,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                                 models = _json.loads(ep.cached_models)
                                 if models:
                                     ep_model = _first_chat_model(models)
-                            except Exception:
+                            except (json.JSONDecodeError, TypeError):
                                 pass
                 finally:
                     db.close()
@@ -582,7 +589,7 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
                             models = json.loads(ep.cached_models)
                             if models:
                                 fallback_model = models[0]
-                        except Exception:
+                        except (json.JSONDecodeError, TypeError):
                             pass
                     _merge(fallback_url, fallback_model, fallback_headers)
             finally:
