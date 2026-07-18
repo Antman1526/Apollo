@@ -438,7 +438,7 @@ def setup_mcp_routes(mcp_manager: McpManager):
             code = params.get("code", [None])[0]
             if not code:
                 return HTMLResponse(_oauth_result_page("Error", "No authorization code found in the URL. Make sure you copied the full URL from your browser."), status_code=400)
-        except Exception:
+        except ValueError:
             return HTMLResponse(_oauth_result_page("Error", "Invalid URL format."), status_code=400)
 
         return await _exchange_and_connect(server_id, code, request)

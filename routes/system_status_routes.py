@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from typing import Any
 
@@ -10,6 +11,9 @@ from fastapi import APIRouter, HTTPException, Request
 
 from core.middleware import require_admin
 from services.system_status import build_system_status
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 def setup_system_status_routes(
@@ -131,6 +135,13 @@ async def _reconnect_failed_tool_servers(mcp_manager: Any, action_id: str) -> di
                     "error": status.get("error"),
                 })
             except Exception as exc:
+                report_exception(
+                    logger,
+                    "system_status_mcp_server_check_failed",
+                    exc,
+                    outcome="degraded",
+                    context={"server_id": srv.id},
+                )
                 results.append({
                     "id": srv.id,
                     "name": srv.name,

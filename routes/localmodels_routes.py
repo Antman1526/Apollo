@@ -7,6 +7,7 @@ privileged than the already admin-gated model-endpoint routes.
 from __future__ import annotations
 
 from dataclasses import asdict
+import logging
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -17,6 +18,9 @@ from services.localmodels import lifecycle
 from services.localmodels.scanner import scan_dirs, discover_piper_voices
 from services.localmodels.config import get_local_model_dirs, set_local_model_dirs
 from services.localmodels.server_manager import get_server
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 class DirsBody(BaseModel):
@@ -71,8 +75,15 @@ def setup_localmodels_routes() -> APIRouter:
         try:
             url = get_server().ensure_running(model_id)
             return {"ok": True, "base_url": url}
-        except Exception as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        except Exception as error:
+            report_exception(
+                logger,
+                "local_model_start_failed",
+                error,
+                outcome="critical",
+                context={"model_id": model_id},
+            )
+            return JSONResponse({"ok": False, "error": "Model could not be started"}, status_code=400)
 
     @router.post("/{model_id}/stop")
     def stop(request: Request, model_id: str):

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from core.database import SessionLocal, Webhook
 from src.webhook_manager import WebhookManager, validate_webhook_url, validate_events
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -264,7 +265,13 @@ def setup_webhook_routes(
             try:
                 from src.auth_helpers import get_current_user as _gcu
                 _tok_user = token_owner or getattr(request.state, "user", None) or _gcu(request)
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "webhook_token_owner_resolution_failed",
+                    error,
+                    outcome="best_effort",
+                )
                 _tok_user = None
             # Strict ownership (see _caller_owns_session): fail closed so a
             # null-owner / cross-owner session can't be resumed by an arbitrary
