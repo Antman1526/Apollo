@@ -34,6 +34,7 @@ from fastapi import APIRouter, Query, UploadFile, File, BackgroundTasks, HTTPExc
 from fastapi.responses import FileResponse
 
 from src.llm_core import llm_call_async
+from src.observability import report_exception
 
 
 def _utcnow():
@@ -77,15 +78,16 @@ def _email_tag_owner_aliases(account_id: str | None, owner: str = "") -> list[st
                         cfg.get("smtp_user") or "",
                         cfg.get("from_address") or "",
                     ])
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "email_default_account_config_lookup_failed", error, outcome="best_effort")
                     resolved_account_id = None
             row = db.get(_EA, resolved_account_id) if resolved_account_id else None
             if row:
                 aliases.extend([row.owner or "", row.imap_user or "", row.from_address or ""])
         finally:
             db.close()
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "email_tag_owner_alias_lookup_failed", error, outcome="best_effort", context={"account_id": account_id})
     out = []
     for a in aliases:
         a = (a or "").strip()
@@ -174,14 +176,16 @@ def _list_imap_folders(conn) -> tuple[list, list[str]]:
             return [], []
         names = [name for name in (_folder_name_from_list_line(f) for f in folders) if name]
         return folders, names
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "email_folder_list_failed", error, outcome="best_effort")
         return [], []
 
 
 def _email_imap_configured(account_id: str | None = None, owner: str = "") -> bool:
     try:
         cfg = _get_email_config(account_id, owner=owner, log_missing=False)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "email_account_configuration_check_failed", error, outcome="best_effort", context={"account_id": account_id})
         return False
     return bool(
         (cfg.get("imap_host") or "").strip()
@@ -245,7 +249,8 @@ def _uid_exists(conn, uid: str) -> bool:
             if re.search(rb"\bUID\s+\d+\b", meta_b):
                 return True
         return False
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "email_uid_existence_check_failed", error, outcome="best_effort")
         return False
 
 
@@ -448,7 +453,8 @@ def _sanitize_email_html(raw: str) -> str:
     try:
         p.feed(raw or "")
         p.close()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "email_html_text_parse_failed", error, outcome="best_effort")
         return None
     inner = "".join(p.out).strip()
     if not inner:
@@ -724,7 +730,8 @@ def setup_email_routes():
                                         _tag_message_ids.append(str(r[0]).strip())
                                     elif r[1]:
                                         _tag_seq_fallback.append(str(r[1]).strip())
-                            except Exception:
+                            except Exception as error:
+                                report_exception(logger, "email_tag_filter_cache_parse_failed", error, outcome="best_effort")
                                 continue
                     _ct.close()
                 except Exception as _te:
@@ -791,7 +798,8 @@ def setup_email_routes():
                     for r in rows:
                         try:
                             tg = json.loads(r[1] or "[]")
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "email_tag_preload_parse_failed", error, outcome="best_effort")
                             tg = []
                         if isinstance(tg, list):
                             tg = ["marketing" if str(t).strip().lower().replace("_", "-") == "promo" else t for t in tg]
@@ -855,7 +863,8 @@ def setup_email_routes():
                         for mid, tags_raw, spam_raw in rows_m:
                             try:
                                 tags = json.loads(tags_raw or "[]")
-                            except Exception:
+                            except Exception as error:
+                                report_exception(logger, "email_message_tag_preload_parse_failed", error, outcome="best_effort")
                                 tags = []
                             if isinstance(tags, list):
                                 tags = ["marketing" if str(t).strip().lower().replace("_", "-") == "promo" else t for t in tags]
@@ -970,8 +979,8 @@ def setup_email_routes():
             if conn:
                 try:
                     conn.logout()
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "email_list_imap_logout_failed", error, outcome="best_effort", context={"account_id": account_id})
 
     @router.get("/list")
     async def list_emails(
@@ -1050,7 +1059,8 @@ def setup_email_routes():
             for (s,) in rows:
                 try:
                     name, addr = email.utils.parseaddr(s or "")
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "email_address_parse_failed", error, outcome="best_effort")
                     continue
                 if not addr:
                     continue
@@ -1281,7 +1291,8 @@ def setup_email_routes():
                                 and isinstance(_parsed.get("turns"), list)
                             ):
                                 cached_turns = _parsed["turns"]
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "email_boundary_cache_parse_failed", error, outcome="best_effort")
                             cached_turns = None
                 _c.close()
             except Exception as e:
@@ -1366,13 +1377,15 @@ def setup_email_routes():
                 continue
             try:
                 epoch = float((em or {}).get("date_epoch") or 0)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "email_recent_message_timestamp_parse_failed", error, outcome="best_effort")
                 epoch = 0
             if epoch and now - epoch > _WARM_RECENT_SECONDS:
                 continue
             try:
                 size = int((em or {}).get("size") or 0)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "email_recent_message_size_parse_failed", error, outcome="best_effort")
                 size = 0
             if size > _WARM_MAX_BYTES:
                 continue
@@ -1585,8 +1598,9 @@ def setup_email_routes():
                     return {"error": "python-docx not installed", "filename": base}
                 try:
                     d = _Docx(str(filepath))
-                except Exception as e:
-                    return {"error": f"Failed to read docx: {e}", "filename": base}
+                except Exception as error:
+                    report_exception(logger, "email_attachment_docx_read_failed", error, outcome="degraded")
+                    return {"error": "Failed to read document", "filename": base}
                 # Convert paragraphs to markdown — preserve heading styles as #/##/###,
                 # bullet lists as `- `, numbered lists as `1.`, and keep tables as
                 # simple pipe-delimited rows.
@@ -1639,8 +1653,9 @@ def setup_email_routes():
             if ext in (".txt", ".md", ".markdown"):
                 try:
                     content = filepath.read_text(encoding="utf-8", errors="replace")
-                except Exception as e:
-                    return {"error": f"Failed to read text file: {e}", "filename": base}
+                except Exception as error:
+                    report_exception(logger, "email_attachment_text_read_failed", error, outcome="degraded")
+                    return {"error": "Failed to read text file", "filename": base}
                 from src.database import SessionLocal as _SL, Document as _Doc, DocumentVersion as _DV
                 doc_id = str(uuid.uuid4())
                 ver_id = str(uuid.uuid4())
@@ -2116,9 +2131,11 @@ def setup_email_routes():
                                                 display = part.split("<")[0].strip().strip('"') or addr
                                                 if addr not in matches:
                                                     matches[addr] = display
-                            except Exception:
+                            except Exception as error:
+                                report_exception(logger, "email_recipient_message_parse_failed", error, outcome="best_effort")
                                 continue
-                    except Exception:
+                    except Exception as error:
+                        report_exception(logger, "email_recipient_folder_scan_failed", error, outcome="best_effort")
                         continue
                     if len(matches) >= 10:
                         break
@@ -2139,8 +2156,9 @@ def setup_email_routes():
 
         try:
             cfg = _resolve_send_config(req.account_id, owner=owner)
-        except Exception as e:
-            return {"success": False, "error": str(e) or "No SMTP-capable email account configured"}
+        except Exception as error:
+            report_exception(logger, "email_send_config_resolution_failed", error, outcome="critical", context={"account_id": req.account_id})
+            return {"success": False, "error": "No SMTP-capable email account configured"}
 
         # Use 'mixed' if we have attachments, 'alternative' otherwise
         has_attachments = bool(req.attachments)
@@ -2246,8 +2264,8 @@ def setup_email_routes():
                                     st_uid, uid_data = imap.uid("SEARCH", None, f'HEADER Message-ID "{mid}"')
                                     if st_uid == "OK" and uid_data and uid_data[0]:
                                         sent_uid = uid_data[0].split()[-1].decode("ascii", errors="ignore")
-                            except Exception:
-                                pass
+                            except Exception as error:
+                                report_exception(logger, "email_sent_uid_lookup_failed", error, outcome="best_effort", context={"account_id": req.account_id})
                         # Auto-mark the source email as Answered/done so it
                         # disappears from "undone" filters.
                         if _in_reply_to:
@@ -2275,7 +2293,8 @@ def setup_email_routes():
                                                 imap.store(u, "+FLAGS", "\\Answered")
                                             logger.info(f"Marked source {mid[:60]!r} as \\Answered in {folder_name}")
                                             break
-                                    except Exception:
+                                    except Exception as error:
+                                        report_exception(logger, "email_source_answered_mark_failed", error, outcome="best_effort")
                                         continue
                             except Exception as e:
                                 logger.warning(f"Failed to auto-mark source as answered: {e}")
@@ -2350,8 +2369,9 @@ def setup_email_routes():
                     drafts_folder = _detect_drafts_folder(imap)
                     imap.append(drafts_folder, "\\Draft", None, msg.as_bytes())
                 return None
-            except Exception as e:
-                return str(e)
+            except Exception as error:
+                report_exception(logger, "email_draft_append_failed", error, outcome="degraded", context={"account_id": _draft_acct})
+                return "Could not save draft to the mailbox"
 
         err = await asyncio.to_thread(_do_append)
         if err:
@@ -2402,11 +2422,13 @@ def setup_email_routes():
                                     body = payload.decode(charset, errors="replace")
                             if body.strip() and len(body) > 20:
                                 out.append(body[:1000])
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "email_writing_style_sample_parse_failed", error, outcome="best_effort")
                             continue
                     return out, None
-            except Exception as e:
-                return [], str(e)
+            except Exception as error:
+                report_exception(logger, "email_writing_style_samples_load_failed", error, outcome="degraded")
+                return [], "Could not load sent messages"
 
         try:
             samples, err = await asyncio.to_thread(_gather_samples)
@@ -2652,7 +2674,8 @@ def setup_email_routes():
                             if isinstance(_h, str):
                                 try:
                                     _h = json.loads(_h)
-                                except Exception:
+                                except Exception as error:
+                                    report_exception(logger, "email_session_headers_parse_failed", error, outcome="best_effort")
                                     _h = None
                                     break
                             else:
@@ -2768,14 +2791,14 @@ def setup_email_routes():
             try:
                 _u_url, _u_model, _u_headers = resolve_endpoint("utility", owner=owner)
                 _add(_u_url, _u_model, _u_headers)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_utility_endpoint_resolution_failed", error, outcome="best_effort")
             # Primary default chat endpoint — last working chat config.
             try:
                 _d_url, _d_model, _d_headers = resolve_endpoint("default", owner=owner)
                 _add(_d_url, _d_model, _d_headers)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_default_endpoint_resolution_failed", error, outcome="best_effort")
             # Configured fallback chains last.
             for cand in resolve_utility_fallback_candidates(owner=owner) or []:
                 _add(*cand)
@@ -2792,10 +2815,10 @@ def setup_email_routes():
                     max_tokens=1024 if fast_reply else 6144,
                     timeout=60 if fast_reply else 180,
                 )
-            except Exception as e:
-                detail = getattr(e, "detail", None) or str(e)
+            except Exception as error:
+                report_exception(logger, "email_reply_endpoint_failed", error, outcome="degraded")
                 _attempted = ", ".join(f"{m}@{u.split('/')[2] if '/' in u else u}" for u, m, _ in _candidates) or "no candidates"
-                return {"success": False, "error": f"All endpoints failed ({_attempted}): {detail}. Check your API keys in Settings → Services."}
+                return {"success": False, "error": f"All endpoints failed ({_attempted}). Check your API keys in Settings → Services."}
 
             reply = _apply_email_style_mechanics(_extract_reply(reply or ""))
             if not reply:
@@ -2921,7 +2944,8 @@ def setup_email_routes():
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         try:
             data = _json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "email_urgency_cache_read_failed", error, outcome="best_effort")
             return {"total_unread": 0, "total_urgent": 0, "max_score": 0, "per_uid": {}}
         # Drop `notified_uids` from the payload — it's an internal scheduler
         # debounce, not UI-relevant.
@@ -3100,7 +3124,8 @@ def setup_email_routes():
         no live values."""
         try:
             body = await req.json()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "email_connection_test_request_parse_failed", error, outcome="degraded")
             return {"ok": False, "imap": {"ok": False, "error": "invalid request body"}}
 
         # Saved-account shortcut — hydrate missing credentials from the DB row,
@@ -3175,8 +3200,9 @@ def setup_email_routes():
                         conn.logout()
                     except Exception as e:
                         logger.debug("Failed to close IMAP test connection for host=%s: %s", imap_host, e, exc_info=True)
-            except Exception as e:
-                imap_result = {"ok": False, "error": str(e)[:200]}
+            except Exception as error:
+                report_exception(logger, "email_imap_connection_test_failed", error, outcome="degraded")
+                imap_result = {"ok": False, "error": "Connection failed"}
 
         smtp_host = (body.get("smtp_host") or "").strip()
         if smtp_host:
@@ -3199,8 +3225,9 @@ def setup_email_routes():
                         smtp.quit()
                     except Exception as e:
                         logger.debug("Failed to close SMTP test connection for host=%s: %s", smtp_host, e, exc_info=True)
-            except Exception as e:
-                smtp_result = {"ok": False, "error": str(e)[:200]}
+            except Exception as error:
+                report_exception(logger, "email_smtp_connection_test_failed", error, outcome="degraded")
+                smtp_result = {"ok": False, "error": "Connection failed"}
 
         return {
             "ok": imap_result["ok"] and (smtp_result is None or smtp_result["ok"]),
