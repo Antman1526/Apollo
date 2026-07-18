@@ -96,7 +96,7 @@ def setup_compare_routes(session_manager: SessionManager):
                 endpoint_b=endpoint_b,
                 is_blind=blind,
                 blind_mapping=json.dumps(mapping),
-                owner=user,
+                owner=owner,
             )
             db.add(comp)
             db.commit()
@@ -124,7 +124,7 @@ def setup_compare_routes(session_manager: SessionManager):
         winner: str = Form(...),  # "left", "right", or "tie"
     ):
         """Record the user's vote and reveal model names if blind."""
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()
@@ -166,7 +166,7 @@ def setup_compare_routes(session_manager: SessionManager):
     @router.post("/record")
     def record_comparison(request: Request, body: RecordVoteRequest):
         """Lightweight endpoint to record a comparison vote from the frontend."""
-        user = get_current_user(request)
+        user = require_user(request)
         comp_id = str(uuid.uuid4())
 
         model_a = body.models[0] if len(body.models) > 0 else ""
@@ -203,7 +203,7 @@ def setup_compare_routes(session_manager: SessionManager):
     @router.get("/history")
     def list_comparisons(request: Request):
         """List past comparisons."""
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             q = db.query(Comparison)
@@ -229,7 +229,7 @@ def setup_compare_routes(session_manager: SessionManager):
     @router.delete("/{comp_id}")
     def delete_comparison(request: Request, comp_id: str):
         """Delete a comparison and its ephemeral sessions."""
-        user = get_current_user(request)
+        user = require_user(request)
         db = SessionLocal()
         try:
             comp = db.query(Comparison).filter(Comparison.id == comp_id).first()

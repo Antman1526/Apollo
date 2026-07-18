@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args, _internal_headers
+from src.tools.cookbook import _COOKBOOK_BASE
 from src.research_handler import ResearchRepository
 
 logger = logging.getLogger(__name__)
