@@ -240,6 +240,10 @@ def test_maybe_restart_respawns_dead_proc(tmp_path):
             break
         _t.sleep(0.05)
     assert len(spawned) == 2
+    # The restarted instance is deliberately still booting here. Stop it so
+    # its daemon worker cannot outlive this test and race interpreter teardown
+    # on Windows.
+    rt.stop()
 
 
 def test_maybe_restart_rate_limited(tmp_path):
@@ -248,6 +252,7 @@ def test_maybe_restart_rate_limited(tmp_path):
     rt._last_restart_attempt = None
     assert rt.maybe_restart() is True
     assert rt.maybe_restart() is False  # within the cooldown window
+    rt.stop()
 
 
 def test_spawn_env_is_minimal(tmp_path, monkeypatch):
