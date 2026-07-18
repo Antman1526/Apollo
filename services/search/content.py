@@ -45,13 +45,13 @@ def _is_private_address(addr: ipaddress._BaseAddress) -> bool:
 def _resolve_hostname_ips(hostname: str) -> list[ipaddress._BaseAddress]:
     try:
         infos = socket.getaddrinfo(hostname, None)
-    except Exception:
+    except OSError:
         return []
     out = []
     for info in infos:
         try:
             out.append(ipaddress.ip_address(info[4][0]))
-        except Exception:
+        except (TypeError, ValueError):
             continue
     return out
 
@@ -75,7 +75,7 @@ def _public_http_url(url: str) -> bool:
             pass
         addrs = _resolve_hostname_ips(host)
         return bool(addrs) and not any(_is_private_address(a) for a in addrs)
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return False
 
 
