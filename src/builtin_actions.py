@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
+from src.observability import report_exception
 from src.subproc_env import build_agent_env
 from core.platform_compat import IS_WINDOWS, find_bash
 
@@ -303,8 +304,9 @@ async def _run_subprocess(argv, *, shell: bool = False, timeout: int = 120, labe
         return output or "(no output)", result.returncode == 0
     except subprocess.TimeoutExpired:
         return f"{label} timed out ({timeout}s)", False
-    except Exception as e:
-        return str(e), False
+    except Exception as error:
+        report_exception(logger, "builtin_local_script_execution_failed", error, outcome="critical")
+        return "Local script execution failed", False
 
 
 async def action_ssh_command(owner: str, command: str = "", host: str = "localhost", **kwargs) -> Tuple[str, bool]:
@@ -364,7 +366,8 @@ async def action_tidy_research(owner: str, **kwargs) -> Tuple[str, bool]:
                 if not txt:
                     raise ValueError("empty file")
                 _json.loads(txt)  # valid JSON → keep
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "builtin_stale_research_file_validation_failed", error, outcome="best_effort")
                 p.unlink(missing_ok=True)
                 removed.append(p.stem[:8])
         if not removed:
@@ -398,7 +401,8 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                 saved = json.loads(STATE_FILE.read_text(encoding="utf-8"))
                 if saved.get("last_created_at"):
                     last_watermark = datetime.fromisoformat(saved["last_created_at"])
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "builtin_session_watermark_parse_failed", error, outcome="best_effort")
             last_watermark = None
 
         db = SessionLocal()
@@ -649,8 +653,8 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
             # Persist heuristic results before LLM pass (in case LLM is slow/unavailable)
             try:
                 db.commit()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "builtin_calendar_classification_commit_failed", error, outcome="best_effort")
 
             # Pass 2: batch LLM classification (10 events per call)
             BATCH = 10
@@ -812,11 +816,14 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                             "message_id": (msg.get("Message-ID") or "").strip(),
                             "subject": _decode_header(msg.get("Subject", "")),
                         })
-                    except Exception:
+                    except Exception as error:
+                        report_exception(logger, "builtin_email_boundary_header_parse_failed", error, outcome="best_effort")
                         continue
             finally:
-                try: conn.logout()
-                except Exception: pass
+                try:
+                    conn.logout()
+                except Exception as error:
+                    report_exception(logger, "builtin_email_boundary_imap_logout_failed", error, outcome="best_effort")
             return results
 
         mails = await _aio.to_thread(_pull_recent)
@@ -857,11 +864,14 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                         return ""
                     try:
                         return raw.decode("utf-8", errors="replace")
-                    except Exception:
+                    except Exception as error:
+                        report_exception(logger, "builtin_email_boundary_body_decode_failed", error, outcome="best_effort")
                         return str(raw)
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception as error:
+                        report_exception(logger, "builtin_email_boundary_body_imap_logout_failed", error, outcome="best_effort")
             try:
                 body = (await _aio.to_thread(_fetch_body, str(uid))).strip()
             except Exception as e:
@@ -1009,11 +1019,14 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                             "uid": uid.decode() if isinstance(uid, bytes) else str(uid),
                             "from_address": from_addr,
                         })
-                    except Exception:
+                    except Exception as error:
+                        report_exception(logger, "builtin_signature_header_parse_failed", error, outcome="best_effort")
                         continue
             finally:
-                try: conn.logout()
-                except Exception: pass
+                try:
+                    conn.logout()
+                except Exception as error:
+                    report_exception(logger, "builtin_signature_header_imap_logout_failed", error, outcome="best_effort")
             return results
 
         mails = await _aio.to_thread(_pull_headers)
@@ -1046,7 +1059,8 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                 ).fetchall()
             }
             conn.close()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "builtin_signature_cache_read_failed", error, outcome="best_effort")
             cached = {}
 
         cutoff_iso = (_dt.utcnow() - _td(days=30)).isoformat()
@@ -1086,11 +1100,14 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                                 continue
                             text = raw.decode("utf-8", errors="replace")
                             bodies.append(text[:4000])
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "builtin_signature_body_parse_failed", error, outcome="best_effort")
                             continue
                 finally:
-                    try: conn2.logout()
-                    except Exception: pass
+                    try:
+                        conn2.logout()
+                    except Exception as error:
+                        report_exception(logger, "builtin_signature_body_imap_logout_failed", error, outcome="best_effort")
                 return bodies
 
             try:
@@ -1188,7 +1205,8 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
         try:
             from core.auth import AuthManager
             _allow_null = not AuthManager().is_configured
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "builtin_daily_brief_auth_configuration_lookup_failed", error, outcome="best_effort")
             _allow_null = False
         db = SessionLocal()
         try:
@@ -1240,8 +1258,10 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
                     except Exception as fe:
                         logger.debug(f"daily_brief: header fetch for uid {uid} failed: {fe}")
             finally:
-                try: conn.logout()
-                except Exception: pass
+                try:
+                    conn.logout()
+                except Exception as error:
+                    report_exception(logger, "builtin_daily_brief_imap_logout_failed", error, outcome="best_effort")
         except Exception as ee:
             logger.debug(f"daily_brief: email fetch failed: {ee}")
 
@@ -1255,7 +1275,8 @@ async def action_daily_brief(owner: str, **kwargs) -> Tuple[str, bool]:
                     for t in pending[:3]:
                         if t:
                             todo_lines.append(f"{n.title or 'Checklist'}: {t}")
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "builtin_daily_brief_checklist_parse_failed", error, outcome="best_effort")
                     continue
             elif n.pinned and n.title:
                 todo_lines.append(n.title)
@@ -1444,7 +1465,8 @@ async def action_audit_skills(owner: str, **kwargs) -> Tuple[str, bool]:
         try:
             from src.llm_core import seconds_since_model_activity
             recent = seconds_since_model_activity(url, model)
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "builtin_skill_audit_model_activity_lookup_failed", error, outcome="best_effort")
             recent = None
         if recent is not None and recent < (20 * 60):
             raise TaskDeferred(
@@ -1506,8 +1528,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
         if _legacy.exists() and not STATE.exists():
             try:
                 STATE.write_text(_legacy.read_text(encoding="utf-8"), encoding="utf-8")
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "builtin_note_ping_legacy_state_migration_failed", error, outcome="best_effort")
         # Scanner ticks every 60s in _note_pings_loop. 90s window guarantees
         # every note's due time lands inside at least one tick's window.
         WINDOW_SEC = 90
@@ -1526,12 +1548,14 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                 if d.tzinfo is None:
                     d = d.astimezone().astimezone(_tz.utc)
                 return d.astimezone(_tz.utc)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "builtin_note_ping_due_date_parse_failed", error, outcome="best_effort")
                 return None
 
         try:
             cache = _json.loads(STATE.read_text(encoding="utf-8")) if STATE.exists() else {}
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "builtin_note_ping_state_read_failed", error, outcome="best_effort")
             cache = {}
 
         db = _SL()
@@ -1570,8 +1594,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                             last_dt = last_dt.replace(tzinfo=_tz.utc)
                         if last_dt >= reping_cutoff:
                             continue
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "builtin_note_ping_last_sent_parse_failed", error, outcome="best_effort")
                 # Compose + dispatch.
                 title = (n.title or "Reminder").strip() or "Reminder"
                 body_parts = []
@@ -1588,8 +1612,8 @@ async def action_ping_notes(owner: str, **kwargs) -> Tuple[str, bool]:
                         ]
                         if pending:
                             body_parts.append("Pending:\n" + "\n".join(f"- {t}" for t in pending[:8]))
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "builtin_note_ping_checklist_parse_failed", error, outcome="best_effort")
                 body = "\n\n".join(p for p in body_parts if p) or title
                 try:
                     from routes.note_routes import dispatch_reminder
@@ -1713,7 +1737,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
             cache_file = CACHE_DIR / f"{acc.id}.json"
             try:
                 cache = _json.loads(cache_file.read_text(encoding="utf-8")) if cache_file.exists() else {"uids": {}}
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "builtin_email_urgency_cache_read_failed", error, outcome="best_effort", context={"account_id": acc.id})
                 cache = {"uids": {}}
 
             def _scan_one(account=acc, cache_uids=cache.get("uids", {})):
@@ -1794,7 +1819,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                                             break
                                 else:
                                     body_snippet = (msg.get_payload(decode=True) or b"").decode("utf-8", errors="ignore")[:1600]
-                            except Exception:
+                            except Exception as error:
+                                report_exception(logger, "builtin_email_urgency_body_parse_failed", error, outcome="best_effort", context={"account_id": account.id})
                                 body_snippet = ""
                             results[-1].update({
                                 "subject": subject,
@@ -1806,8 +1832,10 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                         except Exception as _fe:
                             logger.debug(f"urgency: header fetch for uid {uid} failed: {_fe}")
                 finally:
-                    try: conn.logout()
-                    except Exception: pass
+                    try:
+                        conn.logout()
+                    except Exception as error:
+                        report_exception(logger, "builtin_email_urgency_imap_logout_failed", error, outcome="best_effort", context={"account_id": account.id})
                 return results
 
             try:
@@ -1997,7 +2025,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                             _existing = _json.loads(_row[0] or "[]")
                             if not isinstance(_existing, list):
                                 _existing = []
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "builtin_email_urgency_tags_parse_failed", error, outcome="best_effort")
                             _existing = []
                         # Drop previous triage-owned tags so re-classification
                         # can upgrade/downgrade/clear without touching manual tags.
@@ -2040,7 +2069,8 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         # Load prior state to know which urgent UIDs we've already notified.
         try:
             prior = _json.loads(STATE_PATH.read_text(encoding="utf-8")) if STATE_PATH.exists() else {}
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "builtin_email_urgency_state_read_failed", error, outcome="best_effort")
             prior = {}
         notified_uids = set(prior.get("notified_uids", []))
 
