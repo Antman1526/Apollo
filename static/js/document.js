@@ -17,6 +17,10 @@ import { openLibrary, closeLibrary, isLibraryOpen, initLibrary } from './documen
 import signatureModule from './signature.js';
 import * as Modals from './modalManager.js';
 import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './document/diff.js';
+import { getExportMetadata, escapeDocumentHtml, renderExportHtml } from './document/export.js';
+import { appendUniqueSuggestions, parseStoredSuggestions, serializeSuggestions } from './document/suggestions.js';
+import { deriveDocumentTitle, findReusableDocumentId, mergeDocumentUpdate } from './document/state.js';
+import { buildVersionDiffSummary } from './document/versionHistory.js';
 
   let API_BASE = '';
   let isOpen = false;
@@ -1135,7 +1139,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
       if (!res.ok) throw new Error(await _pdfResponseErrorMessage(res));
       data = await res.json();
     } catch (e) {
-      pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${_escHtml(e.message || String(e))}</div>`;
+      pane.innerHTML = `<div style="color:#fbb;padding:40px;text-align:center;">Failed to load PDF view: ${escapeDocumentHtml(e.message || String(e))}</div>`;
       if (savedPill) pane.appendChild(savedPill);
       return;
     }
@@ -2526,7 +2530,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
         for (const att of fields.attachments) {
           const isPdf = (att.filename || '').toLowerCase().endsWith('.pdf');
           const sizeKb = att.size > 0 ? `${Math.round(att.size / 1024)} KB` : '';
-          const chipHtml = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${_escHtml(att.filename)}</span><span class="att-size">${sizeKb}</span>`;
+          const chipHtml = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${escapeDocumentHtml(att.filename)}</span><span class="att-size">${sizeKb}</span>`;
           // Helper: swap chip content for a whirlpool spinner while busy.
           const _withSpinner = async (chip, fn) => {
             if (chip.dataset.loading === '1') return;
@@ -2700,7 +2704,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
       const sizeKb = att.size > 0 ? `${Math.round(att.size / 1024)} KB` : '';
       chip.innerHTML = `
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
-        <span class="compose-chip-name">${_escHtml(att.filename)}</span>
+        <span class="compose-chip-name">${escapeDocumentHtml(att.filename)}</span>
         <span class="att-size">${sizeKb}</span>
         <button class="compose-chip-remove" title="Remove">×</button>
       `;
@@ -2776,7 +2780,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
           if (already.has(em.toLowerCase())) continue;
           const item = document.createElement('div');
           item.className = 'contact-suggestion';
-          item.innerHTML = `<span class="contact-name">${_escHtml(c.name)}</span><span class="contact-email">${_escHtml(em)}</span>`;
+          item.innerHTML = `<span class="contact-name">${escapeDocumentHtml(c.name)}</span><span class="contact-email">${escapeDocumentHtml(em)}</span>`;
           // mousedown fires before blur so the click doesn't get lost
           item.addEventListener('mousedown', (e) => { e.preventDefault(); _commitRecipient(input, sugg, em); });
           item.addEventListener('click', (e) => { e.preventDefault(); _commitRecipient(input, sugg, em); });
@@ -6796,7 +6800,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
   /** Persist suggestions to localStorage for the active doc */
   function _saveSuggestionsToStorage() {
     if (!activeDocId) return;
-    const data = _activeSuggestions.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason }));
+    const data = serializeSuggestions(_activeSuggestions);
     if (data.length) {
       localStorage.setItem('apollo-suggestions-' + activeDocId, JSON.stringify(data));
     } else {
@@ -6806,16 +6810,12 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
 
   /** Restore suggestions from localStorage for a doc */
   function _restoreSuggestionsFromStorage(docId) {
-    try {
-      const raw = localStorage.getItem('apollo-suggestions-' + docId);
-      if (!raw) return;
-      const data = JSON.parse(raw);
-      if (!Array.isArray(data) || !data.length) return;
-      _activeSuggestions = data.map(s => ({ id: s.id, find: s.find, replace: s.replace, reason: s.reason, cardEl: null }));
-      _suggestionTotal = _activeSuggestions.length;
-      _suggestionIndex = 0;
-      _showCurrentSuggestion();
-    } catch {}
+    const restored = parseStoredSuggestions(localStorage.getItem('apollo-suggestions-' + docId));
+    if (!restored.length) return;
+    _activeSuggestions = restored;
+    _suggestionTotal = _activeSuggestions.length;
+    _suggestionIndex = 0;
+    _showCurrentSuggestion();
   }
 
   /** Handle doc_suggestions SSE event — show one suggestion at a time.
@@ -6832,22 +6832,10 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
     if (data.doc_id && data.doc_id !== activeDocId) switchToDoc(data.doc_id);
 
     const hadPending = _activeSuggestions.length > 0;
-    const existingIds = new Set(_activeSuggestions.map(s => s.id));
-
-    // Append new suggestions, skipping any IDs already in the queue so a
-    // re-sent batch doesn't duplicate.
-    let added = 0;
-    for (const sugg of data.suggestions) {
-      if (existingIds.has(sugg.id)) continue;
-      _activeSuggestions.push({
-        id: sugg.id,
-        find: sugg.find,
-        replace: sugg.replace,
-        reason: sugg.reason,
-        cardEl: null,
-      });
-      added++;
-    }
+    // Append new suggestions, skipping re-sent IDs.
+    const additions = appendUniqueSuggestions(_activeSuggestions, data.suggestions);
+    _activeSuggestions.push(...additions);
+    const added = additions.length;
     _suggestionTotal = (_suggestionTotal || 0) + added;
 
     _saveSuggestionsToStorage();
@@ -7942,10 +7930,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
 
   function _getExportBaseName() {
     const doc = docs.get(activeDocId);
-    const title = (doc && doc.title) || 'document';
-    const safeName = title.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'document';
-    const ver = doc && doc.version ? `_v${doc.version}` : '';
-    return safeName + ver;
+    return getExportMetadata(doc).baseName;
   }
 
   function exportDocument() {
@@ -7953,23 +7938,12 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
     const textarea = document.getElementById('doc-editor-textarea');
     if (!textarea) return;
     const doc = docs.get(activeDocId);
-    const title = (doc && doc.title) || 'document';
     const lang = document.getElementById('doc-language-select')?.value || '';
-    const extMap = {
-      javascript: '.js', python: '.py', html: '.html', css: '.css',
-      markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
-      sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
-      typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
-      xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
-    };
-    const ext = extMap[lang] || '.txt';
-    const safeName = title.replace(/[^a-zA-Z0-9_\-. ]/g, '_').trim() || 'document';
-    const ver = doc && doc.version ? `_v${doc.version}` : '';
-    const mime = lang === 'csv' ? 'text/csv' : lang === 'json' ? 'application/json' : 'text/plain';
-    const blob = new Blob([textarea.value], { type: mime });
+    const metadata = getExportMetadata({ ...doc, language: lang });
+    const blob = new Blob([textarea.value], { type: metadata.mime });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = safeName + ver + ext;
+    a.download = metadata.baseName + metadata.extension;
     a.click();
     URL.revokeObjectURL(a.href);
   }
@@ -8077,16 +8051,6 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
       || document.getElementById('doc-language-select')?.getBoundingClientRect();
     if (!rect) return;
 
-    const lang = document.getElementById('doc-language-select')?.value || '';
-    const extMap = {
-      javascript: '.js', python: '.py', html: '.html', css: '.css',
-      markdown: '.md', json: '.json', yaml: '.yml', bash: '.sh',
-      sql: '.sql', rust: '.rs', go: '.go', java: '.java', c: '.c', cpp: '.cpp', csharp: '.cs',
-      typescript: '.ts', ruby: '.rb', php: '.php', text: '.txt',
-      xml: '.xml', toml: '.toml', ini: '.ini', csv: '.csv',
-    };
-    const ext = extMap[lang] || '.txt';
-
     const menu = document.createElement('div');
     menu.id = 'doc-export-menu';
     menu.className = 'doc-overflow-menu open';
@@ -8096,7 +8060,6 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
     menu.style.left = 'auto';
     menu.style.zIndex = '9999';
 
-    const langLabel = lang ? lang.toUpperCase() : 'TXT';
     // Form-backed markdown doc → primary export is the filled PDF, not the
     // markdown source. Promote it to the top of the menu.
     const liveContent = document.getElementById('doc-editor-textarea')?.value
@@ -8165,10 +8128,10 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
       body = markdownModule.mdToHtml(text);
     } else {
       body = '<pre style="white-space:pre-wrap;font-size:12px;font-family:monospace;">' +
-        text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+        escapeDocumentHtml(text) + '</pre>';
     }
     const title = docs.get(activeDocId)?.title || 'document';
-    const html = `<!DOCTYPE html>\n<html><head><meta charset="utf-8"><title>${title.replace(/</g,'&lt;')}</title></head><body style="max-width:800px;margin:40px auto;font-family:sans-serif;line-height:1.6;padding:0 20px;">\n${body}\n</body></html>`;
+    const html = renderExportHtml({ title, body });
     const blob = new Blob([html], { type: 'text/html' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
@@ -8936,30 +8899,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
     // Deduplicate: if a new doc has same title as existing doc in this session, update it instead
     if (!docs.has(docId)) {
       const curSession = sessionModule?.getCurrentSessionId() || '';
-      let reuseId = null;
-
-      // First: match by title
-      if (data.title) {
-        for (const [existingId, existingDoc] of docs) {
-          if (existingDoc.title === data.title && existingDoc.sessionId === curSession) {
-            reuseId = existingId;
-            break;
-          }
-        }
-      }
-
-      // Second: if no title match, reuse an empty untitled doc in this session
-      if (!reuseId) {
-        for (const [existingId, existingDoc] of docs) {
-          if (existingDoc.sessionId === curSession &&
-              (!existingDoc.title || existingDoc.title === 'Untitled') &&
-              (!existingDoc.content || existingDoc.content.trim() === '')) {
-            reuseId = existingId;
-            break;
-          }
-        }
-      }
-
+      const reuseId = findReusableDocumentId(docs, data, curSession);
       if (reuseId) docId = reuseId;
     }
 
@@ -8969,22 +8909,8 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
     const isExistingDoc = docs.has(docId);
 
     // Add or update in docs map
-    if (isExistingDoc) {
-      const doc = docs.get(docId);
-      doc.content = newContent;
-      doc.version = data.version || doc.version;
-      if (data.title) doc.title = data.title;
-      if (data.language) doc.language = data.language;
-    } else {
-      docs.set(docId, {
-        id: docId,
-        title: data.title || '',
-        language: data.language || '',
-        content: newContent,
-        version: data.version || 1,
-        sessionId: sessionModule?.getCurrentSessionId() || '',
-      });
-    }
+    const currentSessionId = sessionModule?.getCurrentSessionId() || '';
+    docs.set(docId, mergeDocumentUpdate(docs.get(docId), { ...data, doc_id: docId }, currentSessionId));
 
     _syncDocIndicator();
 
@@ -9171,35 +9097,6 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
   }
 
   /** Build a short diff summary between two strings */
-  function _buildDiffSummary(oldText, newText) {
-    if (!oldText && !newText) return '';
-    const oldLines = (oldText || '').split('\n');
-    const newLines = (newText || '').split('\n');
-    const added = [], removed = [];
-    // Simple line diff — collect changed lines
-    const maxCheck = Math.max(oldLines.length, newLines.length);
-    for (let i = 0; i < maxCheck; i++) {
-      const ol = oldLines[i], nl = newLines[i];
-      if (ol === nl) continue;
-      if (ol !== undefined && (nl === undefined || ol !== nl)) removed.push(ol.trim());
-      if (nl !== undefined && (ol === undefined || ol !== nl)) added.push(nl.trim());
-    }
-    // Show up to 3 changes
-    const parts = [];
-    for (const line of removed.slice(0, 2)) {
-      if (line) parts.push(`<span class="diff-del">${_escHtml(line.slice(0, 60))}</span>`);
-    }
-    for (const line of added.slice(0, 2)) {
-      if (line) parts.push(`<span class="diff-add">${_escHtml(line.slice(0, 60))}</span>`);
-    }
-    const extra = (added.length + removed.length) - 4;
-    if (extra > 0) parts.push(`<span>+${extra} more changes</span>`);
-    return parts.join('<br>');
-  }
-  function _escHtml(s) {
-    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  }
-
   /** Load version history list */
   async function loadVersionHistory() {
     if (!activeDocId) return;
@@ -9214,7 +9111,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
       const diffs = [];
       for (let i = 0; i < versions.length; i++) {
         if (i < versions.length - 1) {
-          diffs.push(_buildDiffSummary(versions[i + 1].content, versions[i].content));
+          diffs.push(buildVersionDiffSummary(versions[i + 1].content, versions[i].content));
         } else {
           diffs.push('');
         }
@@ -9322,39 +9219,7 @@ import { buildDiffChunks, computeLineDiff, lineDiff, simpleDiff } from './docume
     const doc = docs.get(id);
     if (!doc || (doc.title && doc.title !== '' && doc.title !== 'Untitled')) return;
 
-    const text = (content || '').trimStart();
-    if (!text) return;
-
-    let title = null;
-
-    // Markdown header: # Title
-    const mdMatch = text.match(/^#{1,3}\s+(.+)/m);
-    if (mdMatch) {
-      title = mdMatch[1].trim();
-    }
-
-    // HTML heading: <h1>Title</h1>
-    if (!title) {
-      const htmlMatch = text.match(/<h[1-3][^>]*>([^<]+)<\/h[1-3]>/i);
-      if (htmlMatch) title = htmlMatch[1].trim();
-    }
-
-    // First non-empty line as fallback (only if short enough to be a title)
-    if (!title) {
-      const firstLine = text.split('\n').find(l => l.trim().length > 0);
-      if (firstLine) {
-        const cleaned = firstLine.trim();
-        if (cleaned.length <= 60 && cleaned.length >= 2) {
-          title = cleaned;
-        }
-      }
-    }
-
-    if (!title) return;
-
-    // Clean up: strip trailing punctuation like : or ...
-    title = title.replace(/[:#*`]+$/g, '').trim();
-    if (title.length > 50) title = title.slice(0, 48) + '...';
+    const title = deriveDocumentTitle(content);
     if (!title) return;
 
     updateTitle(id, title);
