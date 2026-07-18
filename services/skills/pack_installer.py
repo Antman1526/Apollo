@@ -6,6 +6,11 @@ run during import. Discover/classify/normalize/install are pure and operate on
 local dirs; only fetch_pack touches the network (SSRF-guarded).
 """
 import os
+import logging
+
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 _CODE_EXTS = (".py", ".js", ".mjs", ".ts", ".sh", ".rb", ".php", ".pl", ".ps1")
 _CODE_DIRS = ("scripts", "hooks", "bin")
@@ -44,8 +49,13 @@ def _parse_frontmatter_robust(text: str):
             fm = yaml.safe_load(m.group(1))
             if isinstance(fm, dict):
                 return fm, m.group(2)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "skill_pack_frontmatter_parse_failed",
+                error,
+                outcome="best_effort",
+            )
     return parse_frontmatter(text)
 
 
@@ -81,8 +91,15 @@ def discover_skills(pack_root: str) -> list:
                 if not (r == skill_dir and f == "SKILL.md")
             ]
             out.append(FoundSkill(name, desc, tier, rel_dir, fm, body, extra))
-        except Exception as e:  # never let one bad skill abort the pack
-            out.append(FoundSkill(slugify(raw_name), "", "prose", rel_dir, {}, "", [], str(e)))
+        except Exception as error:  # never let one bad skill abort the pack
+            report_exception(
+                logger,
+                "skill_pack_discovery_entry_failed",
+                error,
+                outcome="best_effort",
+                context={"skill_name": slugify(raw_name)},
+            )
+            out.append(FoundSkill(slugify(raw_name), "", "prose", rel_dir, {}, "", [], "parse failed"))
     return out
 
 
