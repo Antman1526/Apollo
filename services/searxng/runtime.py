@@ -15,6 +15,7 @@ import urllib.request
 from typing import Callable, Optional
 
 from src.constants import BASE_DIR
+from src.observability import report_exception
 from services.searxng.config import SearxngConfig, load_config
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,8 @@ def _http_ok(url: str, timeout: float = 2.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.read(16).startswith(b"OK")
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "searxng_health_check_failed", error, outcome="best_effort")
         return False
 
 
@@ -128,8 +130,8 @@ class SearxngRuntime:
                 if self._log_fh is not None:
                     try:
                         self._log_fh.close()
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "searxng_stale_log_close_failed", error, outcome="best_effort")
                     self._log_fh = None
                 log_path = _LOG_PATH
                 os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -137,8 +139,8 @@ class SearxngRuntime:
                     open(log_path, "w").close()  # truncate
                 _log_fh = open(log_path, "a")  # noqa: WPS515
                 self._log_fh = _log_fh
-            except Exception as _log_exc:
-                logger.warning("SearXNG log open failed (%s); falling back to DEVNULL", _log_exc)
+            except Exception as error:
+                report_exception(logger, "searxng_log_open_failed", error, outcome="best_effort")
                 _log_fh = subprocess.DEVNULL
                 self._log_fh = None
             try:
@@ -149,16 +151,16 @@ class SearxngRuntime:
                     stdout=_log_fh,
                     stderr=_log_fh,
                 )
-            except Exception as e:
-                logger.warning("SearXNG sidecar failed to spawn: %s", e)
+            except Exception as error:
+                report_exception(logger, "searxng_spawn_failed", error, outcome="critical")
                 self._failed = True
                 _fh = self._log_fh
                 self._log_fh = None
                 try:
                     if _fh is not None:
                         _fh.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    report_exception(logger, "searxng_spawn_failure_log_close_failed", close_error, outcome="best_effort")
                 return False
             proc = self._proc
 
@@ -183,8 +185,8 @@ class SearxngRuntime:
                 try:
                     if _fh is not None:
                         _fh.close()
-                except Exception:
-                    pass
+                except Exception as close_error:
+                    report_exception(logger, "searxng_boot_failure_log_close_failed", close_error, outcome="best_effort")
                 return False
             self._stopping.wait(1)
         self._failed = True
@@ -207,18 +209,19 @@ class SearxngRuntime:
             try:
                 proc.terminate()
                 proc.wait(timeout=10)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "searxng_stop_terminate_failed", error, outcome="best_effort")
                 try:
                     proc.kill()
                     proc.wait(timeout=5)
-                except Exception:
-                    pass
+                except Exception as kill_error:
+                    report_exception(logger, "searxng_stop_kill_failed", kill_error, outcome="best_effort")
         # Close the log file handle after the process is done writing.
         try:
             if log_fh is not None:
                 log_fh.close()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "searxng_stop_log_close_failed", error, outcome="best_effort")
 
 
     def maybe_restart(self) -> bool:
@@ -241,7 +244,8 @@ class SearxngRuntime:
             threading.Thread(target=self.start, name="searxng-restart",
                              daemon=True).start()
             return True
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "searxng_restart_schedule_failed", error, outcome="best_effort")
             return False
 
 
