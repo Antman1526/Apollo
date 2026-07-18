@@ -97,6 +97,17 @@ async def test_run_bw_without_password_does_not_set_env(monkeypatch):
     assert "BW_PASSWORD" not in captured["env"]
 
 
+@pytest.mark.asyncio
+async def test_route_vault_cli_does_not_inherit_host_secrets(monkeypatch):
+    captured = _patch_exec(monkeypatch)
+    monkeypatch.setenv("OPENAI_API_KEY", "provider-secret")
+
+    await vr._run_bw(["status"], session="vault-session")
+
+    assert captured["env"]["BW_SESSION"] == "vault-session"
+    assert "OPENAI_API_KEY" not in captured["env"]
+
+
 def test_unlock_handler_feeds_password_on_stdin_not_argv():
     """Source-level guard: the /unlock route must feed the master password via
     stdin, never as a bare positional argv element."""

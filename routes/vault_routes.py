@@ -17,7 +17,9 @@ from pydantic import BaseModel
 
 from core.middleware import require_admin
 from core.platform_compat import IS_WINDOWS, safe_chmod, which_tool
+from src.observability import report_exception
 from src.runtime_paths import data_path
+from src.subproc_env import build_agent_env
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +66,8 @@ def _load_config() -> dict:
         try:
             data = json.loads(VAULT_FILE.read_text(encoding="utf-8"))
             return data if isinstance(data, dict) else {}
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {}
     return {}
 
 
@@ -79,8 +81,7 @@ def _save_config(cfg: dict):
 
 async def _run_bw(args: list, session: str = None, input_text: str = None,
                   bw_password: str = None) -> tuple:
-    env = {}
-    env.update(os.environ)
+    env = build_agent_env()
     if session:
         env["BW_SESSION"] = session
     # Secrets must never be passed as argv — process arguments are world-readable
@@ -100,12 +101,14 @@ async def _run_bw(args: list, session: str = None, input_text: str = None,
         )
     except FileNotFoundError:
         return "", "bw CLI not installed (install `nodejs-bitwarden-cli` or `bitwarden-cli`)", 127
-    except Exception as e:
-        return "", f"Failed to launch bw: {e}", 1
+    except Exception as error:
+        report_exception(logger, "vault_cli_launch_failed", error, outcome="critical")
+        return "", "Failed to launch bw", 1
     try:
         stdout, stderr = await proc.communicate(input=input_text.encode() if input_text else None)
-    except Exception as e:
-        return "", f"bw subprocess error: {e}", 1
+    except Exception as error:
+        report_exception(logger, "vault_cli_communication_failed", error, outcome="critical")
+        return "", "bw subprocess error", 1
     return stdout.decode(errors="replace").strip(), stderr.decode(errors="replace").strip(), proc.returncode
 
 
@@ -238,5 +241,5 @@ async def _check_bw_installed() -> bool:
         )
         await proc.communicate()
         return proc.returncode == 0
-    except Exception:
+    except (FileNotFoundError, OSError):
         return False
