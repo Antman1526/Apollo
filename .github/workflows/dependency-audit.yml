@@ -21,5 +21,9 @@ jobs:
           node-version: "20"
       - run: python -m pip install --upgrade pip pip-audit
       - run: pip-audit -r requirements.txt
-      - run: npm ci
-      - run: npm audit --omit=dev --audit-level=high
+      # Keep the JavaScript result visible when the Python gate finds an
+      # unresolved advisory; the job still fails overall on the Python step.
+      - if: always()
+        run: npm ci
+      - if: always()
+        run: npm audit --omit=dev --audit-level=high
