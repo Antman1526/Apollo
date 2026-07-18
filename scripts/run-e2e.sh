@@ -15,12 +15,14 @@ if [[ -z "$CHROMIUM" ]]; then
 fi
 [[ -n "$CHROMIUM" ]] || { echo "Chromium is unavailable; run: python -m playwright install chromium"; exit 1; }
 cleanup() {
+  local status=$?
   kill "${SERVER_PID:-}" 2>/dev/null || true
-  if [[ "${APOLLO_E2E_KEEP_ARTIFACTS:-false}" == "true" ]]; then
+  if [[ "${APOLLO_E2E_KEEP_ARTIFACTS:-false}" == "true" || "$status" -ne 0 ]]; then
     echo "E2E artifacts retained at: $TMP_DIR"
   else
     rm -rf "$TMP_DIR"
   fi
+  return "$status"
 }
 trap cleanup EXIT
 AUTH_ENABLED=true \
@@ -38,4 +40,11 @@ PAPERCLIP_PROXY_TOKEN_FILE="$TMP_DIR/paperclip_proxy_token" \
 SERVER_PID=$!
 for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$PORT/" >/dev/null 2>&1 && break; sleep 1; done
 curl -fsS "http://127.0.0.1:$PORT/" >/dev/null || { cat "$TMP_DIR/server.log"; exit 1; }
+set +e
 APOLLO_E2E_BASE_URL="http://127.0.0.1:$PORT/" APOLLO_E2E_CHROMIUM="$CHROMIUM" "$PYTHON" -m pytest -q tests/e2e
+TEST_STATUS=$?
+set -e
+if [[ -n "${APOLLO_E2E_RESULT_FILE:-}" ]]; then
+  printf '%s\n' "$TEST_STATUS" > "$APOLLO_E2E_RESULT_FILE"
+fi
+exit "$TEST_STATUS"
