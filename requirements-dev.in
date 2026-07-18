@@ -1,0 +1,8 @@
+# Development and verification dependencies. Generate requirements-dev.txt.
+-r requirements.in
+pytest
+pytest-asyncio
+httpx2
+pip-tools
+pip-audit
+ruff

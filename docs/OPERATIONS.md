@@ -37,6 +37,15 @@ bash scripts/check.sh
 
 That compiles Python, runs the Python suite, and runs the JavaScript smoke tests.
 
+Dependency inputs live in `requirements.in` and `requirements-dev.in`; their
+fully pinned outputs are `requirements.txt` and `requirements-dev.txt`. Verify
+that locks are current without modifying the checkout:
+
+```bash
+python -m pip install pip-tools
+python scripts/check_dependency_locks.py
+```
+
 ## Logs
 
 List known logs:
