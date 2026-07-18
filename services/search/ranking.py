@@ -30,7 +30,7 @@ _TRUSTED_NEWS_DOMAINS = {
 def _domain(url: str) -> str:
     try:
         return urlparse(url).netloc.lower()
-    except Exception:
+    except ValueError:
         return ""
 
 
@@ -75,7 +75,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             try:
                 dt = datetime.strptime(age_str, fmt)
                 break
-            except Exception:
+            except ValueError:
                 dt = None
         if not dt:
             return 0.0

@@ -32,7 +32,7 @@ def recency_score(age_str: Optional[str], now: Optional[datetime] = None) -> flo
         try:
             dt = datetime.strptime(age_str, fmt)
             break
-        except Exception:
+        except ValueError:
             dt = None
     if not dt:
         return 0.0
@@ -67,7 +67,7 @@ _TRUSTED_NEWS_DOMAINS = {
 def _domain(url: str) -> str:
     try:
         return urlparse(url).netloc.lower()
-    except Exception:
+    except ValueError:
         return ""
 
 

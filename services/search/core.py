@@ -41,6 +41,7 @@ from .content import (
     extract_quotes,
     extract_statistics,
 )
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,13 @@ def _searxng_definitely_down() -> bool:
         if down:
             rt.maybe_restart()
         return down
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "search_managed_runtime_status_failed",
+            error,
+            outcome="best_effort",
+        )
         return False  # fail open — let the HTTP call decide
 
 
@@ -357,7 +364,7 @@ def comprehensive_web_search(
     def url_passes_filters(url: str) -> bool:
         try:
             netloc = urlparse(url).netloc.lower()
-        except Exception:
+        except ValueError:
             return False
         if domain_whitelist is not None and netloc not in domain_whitelist:
             return False
