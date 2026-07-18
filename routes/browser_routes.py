@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any, Callable, Optional
 
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from services.browser import embedded_browser
 from src.auth_helpers import require_privilege
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +52,10 @@ class _FrameForwarder:
         try:
             await self._send_text(message)
             self.sent += 1
-        except Exception:
+        except Exception as error:
             # Connection went away mid-send; the WS read loop will notice and
             # tear down. Just stop counting this as in-flight.
-            pass
+            report_exception(logger, "browser_live_frame_send_failed", error, outcome="best_effort")
         finally:
             self._inflight = False
 
@@ -70,8 +72,6 @@ class _LiveViewer:
     def _on_frame(self, data_b64: str, metadata: dict) -> None:
         # Runs on Playwright's event loop. Non-blocking: build the JSON and hand
         # it to the backpressure-aware forwarder, dropping if one is in flight.
-        import json
-
         payload = json.dumps(
             {
                 "type": "frame",
@@ -83,8 +83,6 @@ class _LiveViewer:
         self._forwarder.offer(payload)
 
     def _on_url(self, url: str) -> None:
-        import json
-
         # title() is async; the address bar only needs the url here, so send it
         # immediately and let the client fetch title lazily if it wants.
         asyncio.ensure_future(
@@ -94,8 +92,8 @@ class _LiveViewer:
     async def _safe_send(self, message: str) -> None:
         try:
             await self._ws.send_text(message)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "browser_live_url_send_failed", error, outcome="best_effort")
 
     async def start(self) -> None:
         self._url_cb = self._on_url
@@ -105,8 +103,8 @@ class _LiveViewer:
     async def stop(self) -> None:
         try:
             await self._session.stop_screencast()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "browser_live_screencast_stop_failed", error, outcome="best_effort")
         if self._url_cb is not None:
             self._session.remove_url_listener(self._url_cb)
             self._url_cb = None
@@ -151,7 +149,8 @@ def _handle_browser_error(exc: Exception) -> HTTPException:
         return HTTPException(503, str(exc))
     if isinstance(exc, TimeoutError) or exc.__class__.__name__ == "TimeoutError":
         return HTTPException(504, "Browser operation timed out")
-    return HTTPException(500, f"Browser operation failed: {str(exc)[:240]}")
+    report_exception(logger, "browser_route_operation_failed", exc, outcome="critical")
+    return HTTPException(500, "Browser operation failed")
 
 
 def setup_browser_routes(
@@ -316,10 +315,11 @@ def setup_browser_routes(
             await _ws_send(websocket, {"type": "error", "message": str(exc)})
             await websocket.close()
             return
-        except Exception as exc:
+        except Exception as error:
+            report_exception(logger, "browser_ws_accept_failed", error, outcome="degraded")
             await _ws_send(
                 websocket,
-                {"type": "error", "message": f"browser unavailable: {str(exc)[:200]}"},
+                {"type": "error", "message": "browser unavailable"},
             )
             await websocket.close()
             return
@@ -334,10 +334,11 @@ def setup_browser_routes(
         _current_viewer = viewer
         try:
             await viewer.start()
-        except Exception as exc:
+        except Exception as error:
+            report_exception(logger, "browser_ws_screencast_start_failed", error, outcome="degraded")
             await _ws_send(
                 websocket,
-                {"type": "error", "message": f"screencast failed: {str(exc)[:200]}"},
+                {"type": "error", "message": "screencast failed"},
             )
             await viewer.stop()
             if _current_viewer is viewer:
@@ -350,7 +351,7 @@ def setup_browser_routes(
                 raw = await websocket.receive_text()
                 try:
                     msg = json.loads(raw)
-                except Exception:
+                except (TypeError, ValueError):
                     await _ws_send(websocket, {"type": "error", "message": "invalid JSON"})
                     continue
                 try:
@@ -379,8 +380,8 @@ async def _ws_send(websocket, obj: dict) -> None:
 
     try:
         await websocket.send_text(json.dumps(obj))
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "browser_ws_send_failed", error, outcome="best_effort")
 
 
 async def _dispatch_ws_message(websocket, msg: dict) -> None:
