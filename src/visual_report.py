@@ -1774,7 +1774,7 @@ def generate_visual_report(
                 domain = urlparse(url).hostname or ""
                 if domain.startswith("www."):
                     domain = domain[4:]
-            except Exception:
+            except (AttributeError, TypeError, ValueError):
                 domain = url
             items.append(
                 f'<a href="{html.escape(url)}" target="_blank" rel="noopener noreferrer">'

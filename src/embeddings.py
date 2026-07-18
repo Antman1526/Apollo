@@ -29,6 +29,8 @@ import numpy as np
 import httpx
 from typing import List, Optional
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL = "all-minilm:l6-v2"
@@ -195,8 +197,14 @@ def _load_persisted_endpoint() -> dict:
             data = json.loads(open(endpoint_file, encoding="utf-8").read())
             if data.get("url"):
                 return data
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "embedding_endpoint_config_load_failed",
+            error,
+            outcome="best_effort",
+            context={"config": "embedding_endpoint"},
+        )
     return {}
 
 

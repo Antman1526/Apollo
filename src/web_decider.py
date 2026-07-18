@@ -146,7 +146,7 @@ def _extract_reply_text(data: dict) -> str:
         if isinstance(content, list):  # Anthropic /v1/messages
             return "".join(b.get("text", "") for b in content
                            if isinstance(b, dict) and b.get("type") == "text")
-    except Exception:
+    except (AttributeError, IndexError, KeyError, TypeError):
         pass
     return ""
 

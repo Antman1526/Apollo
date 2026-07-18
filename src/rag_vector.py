@@ -285,8 +285,8 @@ class VectorRAG:
             client = get_chroma_client()
             try:
                 client.delete_collection(COLLECTION_NAME)
-            except Exception:
-                pass
+            except Exception as error:
+                logger.debug("RAG collection cleanup skipped: %s", type(error).__name__)
             self._collection = client.get_or_create_collection(
                 name=COLLECTION_NAME,
                 metadata={"hnsw:space": "cosine"},

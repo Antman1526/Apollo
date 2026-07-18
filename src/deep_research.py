@@ -783,8 +783,8 @@ class DeepResearcher:
         if self._progress:
             try:
                 self._progress(kwargs)
-            except Exception:
-                pass
+            except Exception as error:
+                logger.debug("Deep research progress callback failed: %s", type(error).__name__)
 
     def _time_exceeded(self) -> bool:
         return (time.time() - self._start_time) > self.max_time
