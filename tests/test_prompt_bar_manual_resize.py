@@ -16,3 +16,9 @@ def test_auto_resize_preserves_a_manually_chosen_height():
     assert "textarea._manualResizeHeight = height;" in UI_JS
     assert "const manualHeight = textarea._manualResizeHeight || 0;" in UI_JS
     assert "const maxHeight = Math.max(autoMaxHeight, manualHeight);" in UI_JS
+
+
+def test_auto_resize_measurement_clone_has_no_interactive_identity():
+    assert "clone.removeAttribute('id');" in UI_JS
+    assert "clone.setAttribute('aria-hidden', 'true');" in UI_JS
+    assert "clone.tabIndex = -1;" in UI_JS

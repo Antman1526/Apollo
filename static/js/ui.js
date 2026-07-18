@@ -538,6 +538,14 @@ export function autoResize(textarea) {
   let clone = textarea._resizeClone;
   if (!clone) {
     clone = textarea.cloneNode(false);
+    // The clone is a measurement helper, not an interactive control. Keeping
+    // the source id creates duplicate DOM ids and confuses labels, assistive
+    // technology, and selector-based integrations.
+    clone.removeAttribute('id');
+    clone.removeAttribute('name');
+    clone.removeAttribute('aria-label');
+    clone.setAttribute('aria-hidden', 'true');
+    clone.tabIndex = -1;
     clone.style.cssText = getComputedStyle(textarea).cssText;
     clone.style.position = 'absolute';
     clone.style.visibility = 'hidden';

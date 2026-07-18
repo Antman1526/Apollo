@@ -33,6 +33,16 @@ The runner exercises authenticated workspace rendering at desktop and mobile
 sizes, document persistence, browser-panel scheme blocking, agent-browser DOM
 access and console piping, and preview/live agent-floor rendering.
 
+## Latest Local Evidence
+
+Verified on 2026-07-18 from this branch:
+
+- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,908 passed, 3 skipped;
+  134 JavaScript tests passed; startup smoke passed.
+- `bash scripts/run-e2e.sh`: 4 browser journeys passed in an isolated runtime.
+- Dependency locks, `pip check`, and the production dependency audit completed
+  without reported issues.
+
 ## Operational Contract
 
 - `/api/health` proves the process is alive. `/api/ready` checks critical local

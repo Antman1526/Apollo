@@ -39,13 +39,28 @@ def _authenticated_session(base_url):
         return token
 
 
-def _authenticated_page(browser, viewport):
+def _authenticated_page(browser, viewport, console_errors=None):
+    """Open an authenticated workspace and wait for its startup contract."""
+
     base_url = os.environ["APOLLO_E2E_BASE_URL"]
     context = browser.new_context(viewport=viewport)
     context.add_cookies([{"name": "apollo_session", "value": _authenticated_session(base_url), "url": base_url}])
     page = context.new_page()
+    if console_errors is not None:
+        page.on(
+            "console",
+            lambda message: console_errors.append(f"console: {message.text}")
+            if message.type == "error"
+            else None,
+        )
+        page.on("pageerror", lambda error: console_errors.append(f"pageerror: {error}"))
     page.goto(base_url, wait_until="commit", timeout=30_000)
-    page.locator("#rail-browser").wait_for(state="visible")
+    try:
+        page.locator("#app-loader").wait_for(state="detached", timeout=30_000)
+    except Exception as error:
+        detail = "\n".join(console_errors or []) or "no browser error was emitted"
+        raise AssertionError(f"workspace did not become ready: {detail}") from error
+    page.locator("#message").wait_for(state="visible")
     return context, page
 
 
@@ -102,12 +117,8 @@ def test_landing_page_renders_without_console_errors():
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True, executable_path=os.getenv("APOLLO_E2E_CHROMIUM"))
         for viewport in ({"width": 1440, "height": 900}, {"width": 390, "height": 844}):
-            context, page = _authenticated_page(browser, viewport)
             errors = []
-            page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
-            errors.clear()
-            page.reload(wait_until="domcontentloaded")
-            page.locator("#rail-browser").wait_for(state="visible")
+            context, page = _authenticated_page(browser, viewport, errors)
             assert page.title() == "Apollo Chat"
             assert not errors
             context.close()
@@ -151,7 +162,7 @@ def test_browser_panel_and_agent_browser_local_fixture():
         page.evaluate("""() => {
             window.WebSocket = class { constructor() { throw new Error('disabled for E2E'); } };
         }""")
-        page.locator("#rail-browser").click()
+        page.locator("#tool-browser-btn").click()
         page.locator("#browser-modal").wait_for(state="visible")
         page.locator("#browser-address").fill("file:///tmp/e2e-blocked.html")
         page.locator("#browser-go").click()
@@ -208,9 +219,9 @@ def test_paperclip_floor_renders_preview_and_live_agent_activity():
         browser = p.chromium.launch(headless=True, executable_path=os.environ["APOLLO_E2E_CHROMIUM"])
         context, page = _authenticated_page(browser, {"width": 1440, "height": 900})
 
-        rail = page.locator("#rail-paperclip")
-        rail.wait_for(state="visible")
-        rail.click()
+        tool = page.locator("#tool-paperclip-btn")
+        tool.wait_for(state="visible")
+        tool.click()
         modal = page.locator("#paperclip-modal")
         modal.wait_for(state="visible")
         page.locator("g.paperclip-roaming-agent").first.wait_for(state="visible")
@@ -237,7 +248,7 @@ def test_paperclip_floor_renders_preview_and_live_agent_activity():
         assert ingested["status"] == 200, ingested
         assert ingested["body"]["accepted"] == 2, ingested
         page.locator('g[data-agent-id="e2e-architect"]').wait_for(state="visible")
-        page.get_by_text("Live workspace handoff verified").wait_for(state="visible")
+        page.get_by_text("Live workspace handoff verified", exact=True).wait_for(state="visible")
         assert page.locator("g.paperclip-roaming-agent.talking").count() >= 1
 
         page.set_viewport_size({"width": 390, "height": 844})

@@ -187,6 +187,7 @@ DEFAULT_FEATURES = {
     "web_search": True,
     "web_fetch": True,
     "deep_research": False,
+    "browser": True,
     "memory": True,
     "document_editor": True,
     "rag": True,

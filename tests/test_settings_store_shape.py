@@ -18,3 +18,7 @@ def test_load_features_falls_back_for_non_object_json(tmp_path, monkeypatch):
     settings._invalidate_caches()
 
     assert settings.load_features() == settings.DEFAULT_FEATURES
+
+
+def test_default_features_include_browser_visibility():
+    assert settings.DEFAULT_FEATURES["browser"] is True
