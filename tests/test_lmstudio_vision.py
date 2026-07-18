@@ -1,5 +1,6 @@
 """Tests for LM Studio vision-capability passthrough: reading capabilities.vision
 from the native /api/v1/models endpoint, with no probing of cloud providers."""
+import httpx
 import pytest
 
 from src import chat_helpers
@@ -76,6 +77,22 @@ class TestLmStudioSupportsVision:
         assert chat_helpers.lmstudio_supports_vision(
             "https://api.openai.com/v1/chat/completions", "gpt-4o") is None
         assert calls["n"] == 0
+
+    def test_probe_failure_is_observable_and_uses_name_fallback(self, monkeypatch):
+        events = []
+        monkeypatch.setattr(
+            chat_helpers.httpx,
+            "get",
+            lambda _url, timeout=None: (_ for _ in ()).throw(httpx.ConnectError("offline")),
+        )
+        monkeypatch.setattr(
+            chat_helpers,
+            "report_exception",
+            lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+        )
+
+        assert chat_helpers.model_supports_vision("llava", self.URL) is True
+        assert events == [("chat_lmstudio_model_probe_failed", {"outcome": "best_effort"})]
 
 
 # ════════════════════════════════════════════════════════════

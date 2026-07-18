@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from fastapi import UploadFile
 from typing import List, Optional
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,11 +104,23 @@ def _probe_lmstudio_models(url: str) -> Optional[list]:
     probe_url = f"{parsed.scheme or 'http'}://{authority}/api/v1/models"
     try:
         r = httpx.get(probe_url, timeout=1.0)
-    except Exception:
+    except httpx.HTTPError as error:
+        report_exception(
+            logger,
+            "chat_lmstudio_model_probe_failed",
+            error,
+            outcome="best_effort",
+        )
         return None
     try:
         data = r.json() if r.is_success else {}
-    except Exception:
+    except ValueError as error:
+        report_exception(
+            logger,
+            "chat_lmstudio_model_response_parse_failed",
+            error,
+            outcome="best_effort",
+        )
         data = {}
     models = data.get("models")
     valid = (
@@ -150,7 +164,13 @@ def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
     if endpoint_url:
         try:
             advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_vision_capability_lookup_failed",
+                error,
+                outcome="best_effort",
+            )
             advertised = None
         if advertised is not None:
             return advertised

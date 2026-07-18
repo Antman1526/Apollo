@@ -16,6 +16,7 @@ from src.constants import (
 from core.models import ChatMessage
 from src.chat_helpers import extract_urls, model_supports_vision
 from src.document_processor import build_user_content, analyze_image_with_vl_result
+from src.observability import report_exception
 from src.youtube_handler import (
     is_youtube_url,
     extract_youtube_id,
@@ -200,8 +201,14 @@ class ChatHandler:
                                     _m = meta_by_id.get(att_id)
                                     if _m is not None:
                                         _m["vision"] = _vtext
-                            except Exception:
-                                pass
+                            except OSError as error:
+                                report_exception(
+                                    logger,
+                                    "chat_vision_caption_read_failed",
+                                    error,
+                                    outcome="best_effort",
+                                    context={"attachment_id": att_id},
+                                )
                     else:
                         # Main model is text-only — use VL model for description.
                         # Prefer the cached/user-edited text in UPLOAD_DIR/.vision/{id}.txt
@@ -216,7 +223,14 @@ class ChatHandler:
                                     cached_desc = _vf.read().strip()
                                 if cached_desc and not cached_desc.startswith("["):
                                     vl_desc = cached_desc
-                            except Exception:
+                            except OSError as error:
+                                report_exception(
+                                    logger,
+                                    "chat_vision_cache_read_failed",
+                                    error,
+                                    outcome="best_effort",
+                                    context={"attachment_id": att_id},
+                                )
                                 vl_desc = None
                         if not vl_desc:
                             vl_result = analyze_image_with_vl_result(file_info["path"])
@@ -227,8 +241,14 @@ class ChatHandler:
                                     os.makedirs(os.path.join(UPLOAD_DIR, ".vision"), exist_ok=True)
                                     with open(_vcache, "w", encoding="utf-8") as _vf:
                                         _vf.write(vl_desc)
-                                except Exception:
-                                    pass
+                                except OSError as error:
+                                    report_exception(
+                                        logger,
+                                        "chat_vision_cache_write_failed",
+                                        error,
+                                        outcome="best_effort",
+                                        context={"attachment_id": att_id},
+                                    )
                         enhanced_message = f"{enhanced_message}\n\n[Image: {file_info['name']}]\n{vl_desc}"
                         # Surface the description to the client live so it renders as a
                         # collapsible "image description" on the user bubble (not just
