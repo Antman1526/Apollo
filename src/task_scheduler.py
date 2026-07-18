@@ -89,7 +89,8 @@ def compute_next_run(schedule: str, scheduled_time: str,
     if tz_name and ZoneInfo is not None:
         try:
             tz = ZoneInfo(tz_name)
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_task_timezone_load_failed", error, outcome="best_effort")
             tz = None
 
     # "now" used for comparisons. When tz is set we work entirely in local tz
@@ -550,7 +551,8 @@ class TaskScheduler:
                 if r[0]:
                     owners.add(r[0])
             return sorted(owners)
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_task_owner_list_failed", error, outcome="best_effort")
             return []
         finally:
             db.close()
@@ -1093,7 +1095,8 @@ class TaskScheduler:
                 from datetime import timedelta
                 now = _utcnow()
             time_str = now.strftime("%A, %B %d %Y, %H:%M")
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_task_digest_time_format_failed", error, outcome="best_effort", context={"task_id": task.id})
             from datetime import timedelta
             now = _utcnow()
             time_str = now.strftime("%H:%M UTC")
@@ -1137,15 +1140,17 @@ class TaskScheduler:
                         raw[f"calendar_{label}"] = "\n".join(lines)
             finally:
                 _db.close()
-        except Exception as e:
-            raw["calendar"] = f"Error: {e}"
+        except Exception as error:
+            report_exception(logger, "scheduled_task_calendar_digest_failed", error, outcome="degraded", context={"task_id": task.id, "owner": task.owner})
+            raw["calendar"] = "Calendar data unavailable"
 
         # Notes/Tasks
         try:
             r = await do_manage_notes(json.dumps({"action": "list"}), owner=task.owner)
             raw["notes_tasks"] = r.get("results") or r.get("response") or "No notes"
-        except Exception as e:
-            raw["notes_tasks"] = f"Error: {e}"
+        except Exception as error:
+            report_exception(logger, "scheduled_task_notes_digest_failed", error, outcome="degraded", context={"task_id": task.id, "owner": task.owner})
+            raw["notes_tasks"] = "Notes data unavailable"
 
         # Auto-discover API integrations (Miniflux RSS, etc.).
         try:
@@ -1232,8 +1237,8 @@ class TaskScheduler:
                         content = result.get("stdout") or result.get("output") or ""
                         if content.strip():
                             raw[label] = content[:3000]
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "scheduled_task_integration_digest_failed", error, outcome="best_effort", context={"task_id": task.id})
 
         # Build the data dump and hand it to the LLM
         data_dump = f"Current time: {time_str}\n\n"
@@ -1270,7 +1275,8 @@ class TaskScheduler:
         if getattr(task, "crew_member_id", None):
             try:
                 crew = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "scheduled_task_crew_lookup_failed", error, outcome="best_effort", context={"task_id": task.id})
                 crew = None
 
         # Determine endpoint + model
@@ -1307,8 +1313,8 @@ class TaskScheduler:
             if self._session_manager:
                 try:
                     self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "scheduled_task_session_cache_hydration_failed", error, outcome="best_effort", context={"task_id": task.id, "session_id": session_id})
 
         # For assistant check-ins: call each tool directly and post results
         # as separate messages. More reliable than hoping the model calls tools.
@@ -1332,7 +1338,8 @@ class TaskScheduler:
                 time_str = now_local.strftime("%A, %B %d %Y, %H:%M %Z")
             else:
                 time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_task_local_time_format_failed", error, outcome="best_effort", context={"task_id": task.id})
             time_str = _utcnow().strftime("%A, %B %d %Y, %H:%M UTC")
         system_prompt = f"Current time: {time_str}\n\n{system_prompt}"
 
@@ -1345,8 +1352,8 @@ class TaskScheduler:
                     from src.tool_index import BUILTIN_TOOL_DESCRIPTIONS
                     all_tools = set(BUILTIN_TOOL_DESCRIPTIONS.keys())
                     disabled_tools = all_tools - set(enabled)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "scheduled_task_enabled_tools_parse_failed", error, outcome="best_effort", context={"task_id": task.id})
 
         # RAG-select relevant tools for this prompt + always-available assistant tools.
         # Without this, all 40+ tools get sent and models hit their tool limit.
@@ -1386,8 +1393,8 @@ class TaskScheduler:
         try:
             from src.text_helpers import strip_think
             result = strip_think(result or "", prose=True, prompt_echo=True).strip() or result
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "scheduled_task_response_strip_failed", error, outcome="best_effort", context={"task_id": task.id})
 
         return result
 
@@ -1418,7 +1425,8 @@ class TaskScheduler:
         if getattr(task, "crew_member_id", None):
             try:
                 crew = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "scheduled_task_delivery_crew_lookup_failed", error, outcome="best_effort", context={"task_id": task.id})
                 crew = None
         if (not endpoint_url or not model_name) and crew:
             endpoint_url = endpoint_url or crew.endpoint_url
@@ -1428,8 +1436,8 @@ class TaskScheduler:
                 resolved_url, resolved_model = self._resolve_defaults(db, task.owner)
                 endpoint_url = endpoint_url or resolved_url
                 model_name = model_name or resolved_model
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "scheduled_task_delivery_default_resolution_failed", error, outcome="best_effort", context={"task_id": task.id})
 
         session_id = task.session_id
         if not session_id:
@@ -1449,8 +1457,8 @@ class TaskScheduler:
             if self._session_manager:
                 try:
                     self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "scheduled_task_delivery_session_cache_hydration_failed", error, outcome="best_effort", context={"task_id": task.id, "session_id": session_id})
 
         meta = {}
         if model_name:
@@ -1485,8 +1493,8 @@ class TaskScheduler:
                 sess_obj = self._session_manager.get_session(session_id)
                 sess_obj.history.append(MemMsg(role="user", content=user_msg.content, metadata=meta))
                 sess_obj.history.append(MemMsg(role="assistant", content=assistant_msg.content, metadata=meta))
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "scheduled_task_memory_history_update_failed", error, outcome="best_effort", context={"task_id": task.id, "session_id": session_id})
 
     @staticmethod
     def _is_email_output_target(output: str) -> bool:
@@ -1664,8 +1672,8 @@ class TaskScheduler:
                 )
                 endpoint_url = ep_url or endpoint_url
                 model = ep_model or model
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "scheduled_research_endpoint_resolution_failed", error, outcome="best_effort", context={"task_id": task.id})
 
         if not endpoint_url or not model:
             endpoint_url, model = self._resolve_defaults(db, task.owner)
@@ -1685,8 +1693,8 @@ class TaskScheduler:
                 if normalize_base(ep.base_url) in endpoint_url or endpoint_url in normalize_base(ep.base_url):
                     headers = build_headers(ep.api_key, normalize_base(ep.base_url))
                     break
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "scheduled_research_headers_resolution_failed", error, outcome="best_effort", context={"task_id": task.id})
 
         max_tokens = int(get_setting("research_max_tokens", 8192))
         extraction_timeout = int(get_setting("research_extraction_timeout_seconds", 90) or 90)
@@ -1708,7 +1716,8 @@ class TaskScheduler:
         completed_ts = time.time()
         try:
             stats = researcher.get_stats() or {}
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_research_stats_read_failed", error, outcome="best_effort", context={"task_id": task.id})
             stats = {}
 
         # Ensure a session exists for output
@@ -1730,8 +1739,8 @@ class TaskScheduler:
             if self._session_manager:
                 try:
                     self._session_manager.sessions[session_id] = self._session_manager._db_to_session(sess)
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "scheduled_research_session_cache_hydration_failed", error, outcome="best_effort", context={"task_id": task.id, "session_id": session_id})
 
         # Persist scheduled research in the same on-disk shape used by the
         # Research panel. Without this, task research had Markdown output but
@@ -1801,8 +1810,8 @@ class TaskScheduler:
             ).order_by(DbSession.created_at.desc()).first()
             if recent:
                 return recent.endpoint_url, recent.model
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "scheduled_task_session_default_resolution_failed", error, outcome="best_effort")
         return None, None
 
     async def _deliver_via_mcp(self, tool_name: str, task, result: str):
@@ -1911,7 +1920,8 @@ class TaskScheduler:
         try:
             from routes.prefs_routes import _load_for_user
             _prefs = _load_for_user(owner) or {}
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_task_preferences_load_failed", error, outcome="best_effort", context={"owner": owner})
             _prefs = {}
         tasks_enabled = bool(_prefs.get("tasks_enabled"))
         tasks_opened = bool(_prefs.get("tasks_opened"))
@@ -2241,7 +2251,7 @@ class TaskScheduler:
             logger.exception(f"ensure_assistant_defaults({owner}) failed: {e}")
             try:
                 db.rollback()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "scheduled_task_seed_rollback_failed", error, outcome="best_effort", context={"owner": owner})
         finally:
             db.close()
