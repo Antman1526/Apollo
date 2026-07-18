@@ -9,11 +9,13 @@ import subprocess
 import tempfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 from services.localmodels.scanner import LocalModel, scan_dirs
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +161,14 @@ class LocalModelServer:
         try:
             from src.model_context import _lookup_known
             known = _lookup_known(m.name or m.id)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "local_model_context_lookup_failed",
+                error,
+                outcome="best_effort",
+                context={"model_id": m.id},
+            )
             known = None
         if known:
             return max(self._context, min(known, cap))
@@ -193,11 +202,24 @@ class LocalModelServer:
         try:
             self._wait_health(base_url, proc, log_path,
                               timeout=self._health_timeout_for(m))
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "local_model_health_wait_failed",
+                error,
+                outcome="critical",
+                context={"model_id": m.id},
+            )
             try:
                 proc.terminate()
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                report_exception(
+                    logger,
+                    "local_model_startup_cleanup_failed",
+                    cleanup_error,
+                    outcome="best_effort",
+                    context={"model_id": m.id},
+                )
             raise
         return _Proc(m.id, m.name, m.kind, port, proc, base_url, log_path)
 
@@ -223,7 +245,7 @@ class LocalModelServer:
                 with urllib.request.urlopen(url, timeout=2) as r:
                     if r.status == 200:
                         return
-            except Exception:
+            except (urllib.error.URLError, OSError, TimeoutError):
                 time.sleep(0.5)
         raise TimeoutError("llama-server did not become healthy in time")
 
@@ -231,11 +253,24 @@ class LocalModelServer:
         try:
             slot.proc.terminate()
             slot.proc.wait(timeout=10)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "local_model_terminate_failed",
+                error,
+                outcome="degraded",
+                context={"model_id": slot.model_id},
+            )
             try:
                 slot.proc.kill()
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                report_exception(
+                    logger,
+                    "local_model_kill_failed",
+                    cleanup_error,
+                    outcome="best_effort",
+                    context={"model_id": slot.model_id},
+                )
         if slot is self._chat:
             self._chat = None
         if slot is self._embed:

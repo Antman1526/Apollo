@@ -69,6 +69,34 @@ def test_embedding_does_not_evict_chat():
     assert len(launched) == 2
 
 
+def test_stop_falls_back_to_kill_when_terminate_fails(caplog):
+    class FailingProcess:
+        killed = False
+
+        def terminate(self):
+            raise OSError("terminate failed")
+
+        def wait(self, timeout=None):
+            raise AssertionError("wait should not run after terminate failure")
+
+        def kill(self):
+            self.killed = True
+
+        def poll(self):
+            return None
+
+    srv = LocalModelServer(dirs_provider=lambda: [])
+    process = FailingProcess()
+    slot = _Proc("a", "ModelA", "chat", 9000, process, "http://127.0.0.1:9000")
+    srv._chat = slot
+
+    srv._stop_proc(slot)
+
+    assert process.killed is True
+    assert srv._chat is None
+    assert "local_model_terminate_failed" in caplog.text
+
+
 def test_unknown_model_raises():
     srv = _server_with([_model("a", "ModelA")], [])
     srv._dirs_provider = lambda: []  # refresh finds nothing
