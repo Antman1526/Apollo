@@ -1,6 +1,7 @@
 """Regression tests for the real resolve_endpoint() fallback chain."""
 
 import json
+import logging
 from types import SimpleNamespace
 
 import src.endpoint_resolver as endpoint_resolver
@@ -167,6 +168,26 @@ def test_returns_explicit_fallback_when_no_endpoint_id_configured(monkeypatch):
         fallback_model=fallback[1],
         fallback_headers=fallback[2],
     ) == fallback
+
+
+def test_returns_explicit_fallback_when_settings_load_fails(monkeypatch, caplog):
+    import src.settings as settings_mod
+
+    caplog.set_level(logging.DEBUG, logger=endpoint_resolver.__name__)
+
+    def unavailable():
+        raise OSError("settings unavailable")
+
+    monkeypatch.setattr(settings_mod, "load_settings", unavailable)
+    fallback = ("https://fallback.example/chat", "fallback-chat", {"X-Test": "fallback"})
+
+    assert resolve_endpoint(
+        "task",
+        fallback_url=fallback[0],
+        fallback_model=fallback[1],
+        fallback_headers=fallback[2],
+    ) == fallback
+    assert "endpoint_settings_load_failed" in caplog.text
 
 
 def test_hidden_configured_model_selects_first_enabled_chat_model(monkeypatch):

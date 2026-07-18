@@ -164,6 +164,13 @@ def test_first_chat_model_falls_back_to_first_when_all_non_chat():
     assert er._first_chat_model(models) == "text-embedding-3-large"
 
 
+def test_cached_model_helpers_ignore_corrupt_json():
+    endpoint = types.SimpleNamespace(cached_models="{", models=None, hidden_models="{")
+
+    assert er._endpoint_cached_models(endpoint) == []
+    assert er._endpoint_hidden_models(endpoint) == set()
+
+
 @pytest.mark.parametrize("models", [[], None])
 def test_first_chat_model_empty(models):
     assert er._first_chat_model(models) is None

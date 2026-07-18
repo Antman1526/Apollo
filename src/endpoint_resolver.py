@@ -13,6 +13,7 @@ from urllib.parse import urlparse, urlunparse
 
 from src.database import SessionLocal, ModelEndpoint
 from src.llm_core import _detect_provider, _host_match
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ def _endpoint_cached_models(ep) -> list:
         return []
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return []
     return models if isinstance(models, list) else []
 
@@ -54,7 +55,7 @@ def _endpoint_hidden_models(ep) -> set:
         return set()
     try:
         hidden = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return set()
     return set(hidden) if isinstance(hidden, list) else set()
 
@@ -107,8 +108,14 @@ def _resolve_tailscale_host(hostname: str) -> Optional[str]:
                         logger.info(f"Resolved '{hostname}' via Tailscale → {ip}")
                         _tailscale_cache[hostname] = ip
                         return ip
-    except Exception as e:
-        logger.debug(f"Tailscale resolution failed for '{hostname}': {e}")
+    except Exception as error:
+        report_exception(
+            logger,
+            "tailscale_hostname_resolution_failed",
+            error,
+            outcome="best_effort",
+            context={"hostname": hostname},
+        )
 
     _tailscale_cache[hostname] = None
     return None
@@ -224,7 +231,14 @@ def resolve_endpoint(
     try:
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "endpoint_settings_load_failed",
+            error,
+            outcome="best_effort",
+            context={"setting_prefix": setting_prefix},
+        )
         return fallback_url, fallback_model, fallback_headers
 
     owner_str = owner or ""
@@ -287,8 +301,14 @@ def resolve_endpoint(
             model = _first_chat_model(_endpoint_enabled_models(ep)) or ""
 
         return chat_url, model or fallback_model, headers
-    except Exception as e:
-        logger.debug(f"Could not resolve {setting_prefix} endpoint: {e}")
+    except Exception as error:
+        report_exception(
+            logger,
+            "endpoint_resolution_failed",
+            error,
+            outcome="degraded",
+            context={"setting_prefix": setting_prefix},
+        )
         return fallback_url, fallback_model, fallback_headers
     finally:
         db.close()
@@ -329,8 +349,14 @@ def resolve_endpoint_by_id(
         if not m:
             return None
         return chat_url, m, headers
-    except Exception as e:
-        logger.debug(f"Could not resolve endpoint {ep_id}: {e}")
+    except Exception as error:
+        report_exception(
+            logger,
+            "endpoint_resolution_by_id_failed",
+            error,
+            outcome="degraded",
+            context={"endpoint_id": ep_id},
+        )
         return None
     finally:
         db.close()
@@ -354,8 +380,13 @@ def resolve_utility_fallback_candidates(owner: Optional[str] = None) -> list:
         utility_ep = (get_user_setting("utility_endpoint_id", owner or "", settings.get("utility_endpoint_id", "")) or "").strip()
         if not utility_ep:
             return _resolve_fallback_candidates("default_model_fallbacks", owner=owner)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "utility_fallback_settings_load_failed",
+            error,
+            outcome="best_effort",
+        )
     return _resolve_fallback_candidates("utility_model_fallbacks", owner=owner)
 
 
@@ -370,7 +401,14 @@ def _resolve_fallback_candidates(setting_key: str, owner: Optional[str] = None) 
         from src.settings import get_user_setting, load_settings
         settings = load_settings()
         chain = get_user_setting(setting_key, owner or "", settings.get(setting_key) or []) or []
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "endpoint_fallback_chain_load_failed",
+            error,
+            outcome="best_effort",
+            context={"setting_key": setting_key},
+        )
         return out
     for entry in chain:
         if not isinstance(entry, dict):
