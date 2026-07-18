@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 from services.paperclip import runtime
 from services.paperclip.config import PaperclipConfig
@@ -109,3 +110,52 @@ def test_runtime_reuses_already_running_paperclip():
     assert rt.start() is True
     assert spawned["called"] is False
     assert rt.status()["reused"] is True
+
+
+def test_health_probe_failure_is_safe_and_observable(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        runtime.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("offline")),
+    )
+    monkeypatch.setattr(
+        runtime,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+
+    assert runtime._http_ok("http://localhost:3100/api/health") is False
+    assert events == [("paperclip_runtime_health_check_failed", {"outcome": "best_effort"})]
+
+
+def test_stop_reports_failed_terminate_and_kill(monkeypatch):
+    class StuckProcess:
+        def poll(self):
+            return None
+
+        def terminate(self):
+            raise subprocess.TimeoutExpired("paperclip", 10)
+
+        def kill(self):
+            raise subprocess.TimeoutExpired("paperclip", 5)
+
+    events = []
+    monkeypatch.setattr(
+        runtime,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+    rt = runtime.PaperclipRuntime(
+        _cfg(),
+        proxy_token_provider=lambda: "tok",
+        proxy_base_provider=lambda: "http://localhost:7000/lmproxy/v1",
+    )
+    rt._proc = StuckProcess()
+
+    rt.stop()
+
+    assert [event for event, _kwargs in events] == [
+        "paperclip_runtime_terminate_failed",
+        "paperclip_runtime_kill_failed",
+    ]

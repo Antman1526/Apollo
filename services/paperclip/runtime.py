@@ -19,6 +19,7 @@ import urllib.request
 from typing import Callable, Dict, List, Optional
 
 from services.paperclip.config import PaperclipConfig
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,13 @@ def _http_ok(url: str, timeout: float = 2.0) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.status < 500
-    except Exception:
+    except (OSError, ValueError) as error:
+        report_exception(
+            logger,
+            "paperclip_runtime_health_check_failed",
+            error,
+            outcome="best_effort",
+        )
         return False
 
 
@@ -176,13 +183,24 @@ class PaperclipRuntime:
         try:
             proc.terminate()
             proc.wait(timeout=10)
-        except Exception:
+        except (OSError, subprocess.TimeoutExpired) as error:
+            report_exception(
+                logger,
+                "paperclip_runtime_terminate_failed",
+                error,
+                outcome="best_effort",
+            )
             try:
                 proc.kill()
                 # Reap the killed child so it doesn't linger as a zombie.
                 proc.wait(timeout=5)
-            except Exception:
-                pass
+            except (OSError, subprocess.TimeoutExpired) as kill_error:
+                report_exception(
+                    logger,
+                    "paperclip_runtime_kill_failed",
+                    kill_error,
+                    outcome="best_effort",
+                )
 
     def status(self) -> dict:
         running = (self._proc is not None and self._proc.poll() is None) or self._reused
