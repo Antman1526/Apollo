@@ -15,6 +15,7 @@ import json
 import logging
 
 from src import bg_jobs
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,14 @@ async def _run_followup(rec: dict) -> bool:
         if agent_runs.is_active(sess.id):
             logger.info("bg-followup: session %s busy (live turn) — deferring job %s", sess.id, rec.get("id"))
             return False
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "background_followup_activity_check_failed",
+            error,
+            outcome="best_effort",
+            context={"session_id": getattr(sess, "id", None), "job_id": rec.get("id")},
+        )
 
     inject = (
         f"[Background job {rec['id']} finished]\n\n"

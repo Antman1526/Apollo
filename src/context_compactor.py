@@ -368,7 +368,7 @@ def _update_session_history(session, split_point: int, summary: str,
     try:
         from core import models as _core_models
         manager = getattr(_core_models, "_session_manager", None)
-    except Exception:
+    except ImportError:
         manager = None
     if manager and getattr(session, "id", None):
         if manager.replace_messages(session.id, new_history):

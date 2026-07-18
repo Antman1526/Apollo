@@ -187,8 +187,10 @@ class PaperclipCollector:
         task.cancel()
         try:
             await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001 - shutdown path
+        except asyncio.CancelledError:
             pass
+        except Exception as error:
+            logger.debug("Paperclip collector shutdown wait failed: %s", type(error).__name__)
 
     def status(self) -> dict:
         return {

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,9 @@ from services.paperclip import browser_use_verifier
 from services.browser import embedded_browser
 from services.research import crawl4ai_adapter
 from src import ralph_loop
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 def _ok(value: Any) -> bool:
@@ -35,12 +39,19 @@ def _ralph_status(root: str | os.PathLike[str] = ralph_loop.DEFAULT_RALPH_DIR) -
     try:
         summary = ralph_loop.status_summary(ralph_loop.load_prd(paths.prd))
     except Exception as exc:
+        report_exception(
+            logger,
+            "agent_workbench_ralph_status_failed",
+            exc,
+            outcome="degraded",
+            context={"ralph_root": str(paths.root)},
+        )
         return {
             "state": "degraded",
             "ready": False,
             "root": str(paths.root),
             "summary": None,
-            "error": str(exc),
+            "error": "Unable to read Ralph status",
             "next_step": "Fix .apollo/ralph/prd.json, then run scripts/apollo-ralph status",
         }
     return {

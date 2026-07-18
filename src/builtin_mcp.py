@@ -216,7 +216,7 @@ async def _is_npx_package_cached(npx_path, package_spec, timeout_s=5):
         try:
             proc.kill()
             await proc.wait()
-        except Exception:
+        except ProcessLookupError:
             pass
         return False
     return proc.returncode == 0 and bool(stdout.strip())
