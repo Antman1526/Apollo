@@ -7,7 +7,7 @@ def read_if_exists(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return f.read().strip()
-    except Exception:
+    except (OSError, UnicodeDecodeError):
         return ""
 
 def file_to_data_url(path: str, mime: str) -> str:
@@ -28,5 +28,5 @@ def inside_base_dir(base_dir: str, path: str) -> bool:
     p = os.path.realpath(path)
     try:
         return os.path.commonpath([base, p]) == base
-    except Exception:
+    except (TypeError, ValueError):
         return False
