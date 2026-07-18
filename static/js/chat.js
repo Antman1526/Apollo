@@ -22,6 +22,7 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
+import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLifecycle.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -2734,7 +2735,7 @@ import createResearchSynapse from './researchSynapse.js';
           // cap. Only auto-recover from connection-class failures; deterministic
           // errors (unsupported tools, 4xx/5xx, parse failures) surface right away
           // instead of burning the nudge budget on a guaranteed-to-fail retry.
-          if (!(_isRecoverableStreamErr(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
+          if (!(isRecoverableStreamError(err) && _tryAutoRecover(holder, accumulated, streamSessionId))) {
             const errorHolder = document.querySelector('.msg-ai:last-of-type .body');
             if (errorHolder) {
               let errMsg = `Error: ${err.message}`;
@@ -2880,14 +2881,6 @@ import createResearchSynapse from './researchSynapse.js';
   // died" case). Deterministic errors — unsupported tools, HTTP 4xx/5xx, JSON
   // parse failures — will fail identically on retry, so surfacing them
   // immediately is both more honest and avoids wasting the nudge budget.
-  function _isRecoverableStreamErr(err) {
-    if (!err) return false;
-    if (err.name === 'TypeError') return true;   // fetch/reader network failure
-    const m = (err.message || '').toLowerCase();
-    if (/\btool\b|unsupported|json|parse|\b4\d\d\b|\b5\d\d\b/.test(m)) return false;
-    return /network|fetch|connection|reset|closed|aborted|stream|tim(?:e|ed)\s?out|econn|eof/.test(m);
-  }
-
   function _tryAutoRecover(holder, accumulated, sessionId) {
     if (_autoNudges >= _AUTO_NUDGE_CAP) return false;
     _autoNudges++;
@@ -2915,10 +2908,7 @@ import createResearchSynapse from './researchSynapse.js';
       const msgInput = uiModule.el('message');
       const sb = document.querySelector('.send-btn');
       if (!msgInput || !sb) { _abandon(); return; }
-      const tail = (accumulated || '').slice(-400);
-      msgInput.value = tail
-        ? `The stream dropped before you finished. It ended with:\n\n${tail}\n\nIf the task is fully complete, reply with just: DONE. Otherwise continue exactly where you left off and finish it — do not repeat what you already wrote.`
-        : `The stream dropped before you produced anything. If the task is already done, reply with just: DONE. Otherwise complete it now.`;
+      msgInput.value = buildRecoveryPrompt(accumulated);
       sb.click();
     }, 200);
     return true;
