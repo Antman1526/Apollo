@@ -25,10 +25,13 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +61,7 @@ def is_self_hosted(endpoint_url: str) -> bool:
         return True
     try:
         host = (urlparse(endpoint_url).hostname or "").lower()
-    except Exception:
+    except (AttributeError, TypeError, ValueError):
         return True
     if not host:
         return True
@@ -372,7 +375,6 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
     """
     if not isinstance(teacher_response, str) or not teacher_response:
         return None
-    import json
     m = re.search(r"```(?:json)?\s*\n(\{[\s\S]*?\})\s*\n```", teacher_response)
     if not m:
         return None
@@ -381,7 +383,7 @@ def _extract_skill_json(teacher_response: str) -> Optional[Dict[str, Any]]:
         if not isinstance(data, dict):
             return None
         return data
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return None
 
 
@@ -496,7 +498,13 @@ def maybe_escalate(
             return None
         if not (get_setting("teacher_model", "") or "").strip():
             return None
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "teacher_escalation_settings_load_failed",
+            error,
+            outcome="best_effort",
+        )
         return None
 
     # Gate 3: regex eval — only escalate on detected failure.
@@ -540,7 +548,13 @@ async def run_teacher_inline(
         teacher_spec = (get_setting("teacher_model", "") or "").strip()
         if not teacher_spec:
             return
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "teacher_inline_settings_load_failed",
+            error,
+            outcome="best_effort",
+        )
         return
 
     status, reason = evaluate_turn_regex(student_tool_events, student_reply)
@@ -622,7 +636,7 @@ async def run_teacher_inline(
         if evt_str.startswith("data: "):
             try:
                 payload = json.loads(evt_str[6:].strip())
-            except Exception:
+            except json.JSONDecodeError:
                 yield evt_str
                 continue
             if isinstance(payload, dict):
