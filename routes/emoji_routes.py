@@ -17,6 +17,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -59,8 +60,8 @@ def setup_emoji_routes() -> APIRouter:
             if r.status_code == 200 and b"<svg" in r.content[:256]:
                 try:
                     fp.write_bytes(r.content)
-                except Exception:
-                    pass  # cache write is best-effort
+                except OSError as error:
+                    report_exception(logger, "emoji_cache_write_failed", error, outcome="best_effort")
                 return Response(r.content, media_type="image/svg+xml", headers=_SVG_HEADERS)
         except Exception as e:
             logger.warning("emoji fetch %s failed: %s", code, e)

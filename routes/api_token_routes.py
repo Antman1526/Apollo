@@ -2,6 +2,7 @@
 
 import secrets
 import uuid
+import logging
 
 import bcrypt
 from fastapi import APIRouter, HTTPException, Request, Form
@@ -9,6 +10,9 @@ from fastapi import APIRouter, HTTPException, Request, Form
 from core.database import get_db_session, ApiToken
 from core.middleware import require_admin
 from src.auth_helpers import get_current_user
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 MAX_NAME_LEN = 100
 DEFAULT_SCOPES = "chat"
@@ -42,8 +46,8 @@ def setup_api_token_routes() -> APIRouter:
             invalidator = getattr(request.app.state, "invalidate_token_cache", None)
             if invalidator:
                 invalidator()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "api_token_cache_invalidation_failed", error, outcome="best_effort")
 
     @router.post("/tokens")
     def create_token(request: Request, name: str = Form("")):

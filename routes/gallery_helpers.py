@@ -11,6 +11,7 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel
 
 from core.database import GalleryImage
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +70,8 @@ def _extract_exif(content: bytes) -> dict:
                     if gps_info.get(3) == 'W': lng = -lng
                     result["gps_lat"] = f"{lat:.6f}"
                     result["gps_lng"] = f"{lng:.6f}"
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "gallery_exif_gps_extract_failed", error, outcome="best_effort")
     except Exception as e:
         # User-visible failure (photo loses metadata): surface at WARNING
         # and record on the result so the upload endpoint can pass it back.

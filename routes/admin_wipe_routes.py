@@ -16,6 +16,7 @@ import shutil
 from fastapi import APIRouter, HTTPException, Request
 
 from core.middleware import require_admin
+from src.observability import report_exception
 from core.database import (
     SessionLocal,
     Session as DbSession,
@@ -82,8 +83,8 @@ def setup_admin_wipe_routes(session_manager):
                 db.commit()
                 try:
                     session_manager.sessions.clear()
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "admin_wipe_session_cache_clear_failed", error, outcome="best_effort")
                 return {"status": "deleted", "kind": kind, "count": count}
 
             if kind == "memory":

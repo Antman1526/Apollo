@@ -95,7 +95,7 @@ def setup_editor_draft_routes() -> APIRouter:
                 raise HTTPException(404, "Draft not found")
             try:
                 payload = json.loads(d.payload) if d.payload else {}
-            except Exception:
+            except (json.JSONDecodeError, TypeError):
                 payload = {}
             return {
                 **_summary(d),

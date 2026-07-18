@@ -134,7 +134,7 @@ def _upload_path_inside(upload_dir: str, path: str) -> bool:
     p = os.path.realpath(path)
     try:
         return os.path.commonpath([base, p]) == base
-    except Exception:
+    except (TypeError, ValueError):
         return False
 
 
