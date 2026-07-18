@@ -9,6 +9,7 @@ import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 import { wireSystemStatusActions } from './systemStatusActions.js';
+import { endpointLabel, selectableModels } from './settings/models.js';
 
 let initialized = false;
 let modalEl = null;
@@ -190,10 +191,6 @@ async function _fetchModelEndpoints() {
   return Array.isArray(endpoints) ? endpoints : [];
 }
 
-function _endpointLabel(ep) {
-  return ep.name + (ep.online ? '' : ' (offline)');
-}
-
 function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
   if (!selectEl) return;
   const previous = selected !== undefined ? selected : selectEl.value;
@@ -211,7 +208,7 @@ function _fillEndpointSelect(selectEl, endpoints, selected, keepBlank) {
     if (!ep.is_enabled) return;
     const opt = document.createElement('option');
     opt.value = ep.id;
-    opt.textContent = _endpointLabel(ep);
+    opt.textContent = endpointLabel(ep);
     selectEl.appendChild(opt);
   });
   if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
@@ -246,24 +243,12 @@ function _fillModelSelect(selectEl, models, selected, keepBlank, opts) {
     blank.textContent = blankText;
     selectEl.appendChild(blank);
   }
-  sortModelIds(models).forEach(function(m) {
-    var kind = modelMeta && modelMeta[m] ? modelMeta[m].kind : '';
-    // For chat-only selects: silently skip embedding models; disable unsupported ones.
-    if (chatOnly) {
-      if (kind === 'embedding') return;
-      if (kind === 'unsupported') {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = String(m).split('/').pop() + ' (not chat-capable)';
-        opt.disabled = true;
-        opt.style.opacity = '0.5';
-        selectEl.appendChild(opt);
-        return;
-      }
-    }
+  selectableModels(sortModelIds(models), modelMeta || {}, { chatOnly }).forEach(function(model) {
     const opt = document.createElement('option');
-    opt.value = m;
-    opt.textContent = String(m).split('/').pop();
+    opt.value = model.disabled ? '' : model.id;
+    opt.textContent = model.disabled ? model.label + ' (not chat-capable)' : model.label;
+    opt.disabled = model.disabled;
+    if (model.disabled) opt.style.opacity = '0.5';
     selectEl.appendChild(opt);
   });
   if (previous && Array.from(selectEl.options).some(function(o) { return o.value === previous; })) {
