@@ -1,9 +1,15 @@
 import os
+import logging
 import platform
 import re
 import shutil
 import subprocess
 import time
+
+from src.observability import report_exception
+
+
+logger = logging.getLogger(__name__)
 
 CACHE_TTL = 1800  # 30 min — hardware rarely changes; use the Rescan button to force a re-probe
 
@@ -34,8 +40,8 @@ def _run(cmd):
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
         if r.returncode == 0:
             return r.stdout.strip()
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "hardware_command_probe_failed", error, outcome="best_effort")
     return None
 
 
@@ -194,7 +200,8 @@ def _detect_amd():
         try:
             with open(path, encoding="utf-8", errors="replace") as f:
                 return f.read().strip()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "hardware_linux_sysfs_read_failed", error, outcome="best_effort")
             return None
 
     def _list_drm_cards():
@@ -205,7 +212,8 @@ def _detect_amd():
             return [e for e in out.split() if e.startswith("card") and "-" not in e]
         try:
             return [e for e in os.listdir("/sys/class/drm") if e.startswith("card") and "-" not in e]
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "hardware_linux_drm_list_failed", error, outcome="best_effort")
             return []
 
     def _amd_arch():
@@ -273,7 +281,8 @@ def _detect_amd():
             "gpu_arch": gfx,
             "gpu_family": family,
         }
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "hardware_amd_detect_failed", error, outcome="best_effort")
         return None
 
 
@@ -360,7 +369,8 @@ def _read_file(path):
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "hardware_text_file_read_failed", error, outcome="best_effort")
         return None
 
 
@@ -395,8 +405,8 @@ def _get_ram_gb():
             page_size = os.sysconf("SC_PAGE_SIZE")
             if pages and page_size:
                 return (pages * page_size) / (1024**3)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "hardware_linux_memory_probe_failed", error, outcome="best_effort")
 
     # macOS has no /proc/meminfo — fall back to sysctl (works locally and over
     # SSH to a remote Mac, where the sysconf path above isn't taken).
@@ -556,7 +566,8 @@ def _detect_windows():
             }]
             result["homogeneous"] = True
         return result
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "hardware_aggregate_detect_failed", error, outcome="best_effort")
         return None
 
 
