@@ -46,6 +46,32 @@ python -m pip install pip-tools
 python scripts/check_dependency_locks.py
 ```
 
+Run browser-level journeys in an isolated temporary runtime:
+
+```bash
+bash scripts/run-e2e.sh
+```
+
+The runner creates its own data root, database, Paperclip secrets, and
+loopback port. It does not use a developer's existing account or documents.
+For failure investigation, preserve its temporary server log with
+`APOLLO_E2E_KEEP_ARTIFACTS=true bash scripts/run-e2e.sh`.
+
+## Data and Recovery
+
+Apollo resolves persistent state from `APOLLO_DATA_DIR`, then `DATA_DIR`, then
+its migration-compatible default. Confirm the active location before moving a
+deployment or restoring data:
+
+```bash
+python scripts/check_runtime_paths.py --root .
+scripts/apollo-data-migrate --status
+```
+
+Use `scripts/apollo-backup snapshot` before upgrade or migration. The backup
+tool has a separate verification command; restoration overwrites current
+runtime data and should only be performed with Apollo stopped.
+
 ## Logs
 
 List known logs:

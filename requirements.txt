@@ -111,7 +111,7 @@ fastembed==0.8.0
     # via -r requirements.in
 fastuuid==0.14.0
     # via unclecode-litellm
-filelock==3.30.3
+filelock==3.31.0
     # via huggingface-hub
 flatbuffers==25.12.19
     # via onnxruntime

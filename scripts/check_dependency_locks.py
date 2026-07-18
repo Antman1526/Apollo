@@ -18,7 +18,18 @@ LOCKS = (("requirements.in", "requirements.txt"), ("requirements-dev.in", "requi
 
 def compile_lock(python: str, source: Path, output: Path, cwd: Path) -> None:
     subprocess.run(
-        [python, "-m", "piptools", "compile", "--quiet", "--resolver=backtracking", "--strip-extras", "--output-file", str(output), str(source)],
+        [
+            python,
+            "-m",
+            "piptools",
+            "compile",
+            "--quiet",
+            "--resolver=backtracking",
+            "--strip-extras",
+            "--output-file",
+            output.name,
+            source.name,
+        ],
         cwd=cwd,
         check=True,
     )
@@ -31,7 +42,14 @@ def lock_matches(committed: Path, generated: Path) -> bool:
         # check target lives in a temporary directory, so normalize only that
         # non-semantic path before comparing the resolved package graph.
         text = re.sub(r"--output-file=\S+", f"--output-file={committed.name}", text)
-        return re.sub(r"(?:\S*/)+(requirements(?:-dev)?\.in)", r"\1", text)
+        # The resolver also writes copied input paths into ``# via -r``
+        # comments. They are non-semantic, but previous normalization missed
+        # them because the leading comment text was part of the match.
+        return re.sub(
+            r"(?<=-r )\S*/(requirements(?:-dev)?\.in)",
+            r"\1",
+            text,
+        )
 
     return normalize(committed) == normalize(generated)
 
