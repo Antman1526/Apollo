@@ -12,7 +12,9 @@ EXEMPT_RELATIVE_PATHS = {
     Path("src/runtime_paths.py"),
     Path("src/data_migration.py"),
 }
-EXCLUDED_TOP_LEVEL = {"tests", "venv", ".venv", ".git", "node_modules", ".worktrees"}
+EXCLUDED_TOP_LEVEL = {
+    "tests", "venv", ".venv", ".git", "node_modules", ".worktrees", "build", "dist"
+}
 
 
 def _is_data_literal(node: ast.AST) -> bool:
