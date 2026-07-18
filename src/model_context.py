@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1", "host.docker.internal"}
@@ -26,7 +28,7 @@ def _is_local_endpoint(url: str) -> bool:
     try:
         host = urlparse(url).hostname or ""
         return host in _LOCAL_HOSTS or host.startswith(_PRIVATE_PREFIXES)
-    except Exception:
+    except ValueError:
         return False
 
 # ---------------------------------------------------------------------------
@@ -219,8 +221,13 @@ def _query_context_length(endpoint_url: str, model: str) -> int:
                     if n_ctx and isinstance(n_ctx, int) and n_ctx > 0:
                         logger.info(f"llama.cpp /slots reports n_ctx={n_ctx} for {model}")
                         return n_ctx
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "model_context_local_slots_probe_failed",
+                error,
+                outcome="best_effort",
+            )
 
     models_url = endpoint_url.replace("/chat/completions", "/models")
     try:

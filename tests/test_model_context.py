@@ -164,3 +164,26 @@ class TestGetContextLength:
         assert first == 200000
         assert second == 200000
         assert len(calls) == 1
+
+    def test_failed_local_slots_probe_falls_back_and_is_observable(self, monkeypatch):
+        class ModelsResponse:
+            is_success = False
+
+        events = []
+
+        def fake_get(url, timeout):
+            if url.endswith("/slots"):
+                raise RuntimeError("local runtime unavailable")
+            return ModelsResponse()
+
+        monkeypatch.setattr(model_context.httpx, "get", fake_get)
+        monkeypatch.setattr(
+            model_context,
+            "report_exception",
+            lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+        )
+
+        assert model_context._query_context_length(
+            "http://127.0.0.1:8080/v1/chat/completions", "qwen3:8b"
+        ) == 131072
+        assert events == [("model_context_local_slots_probe_failed", {"outcome": "best_effort"})]
