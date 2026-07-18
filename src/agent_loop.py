@@ -381,7 +381,8 @@ def get_builtin_overrides() -> dict:
         from src.settings import get_setting
         ov = get_setting("builtin_tool_overrides", {})
         return ov if isinstance(ov, dict) else {}
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "agent_builtin_overrides_load_failed", error, outcome="best_effort")
         return {}
 
 
@@ -570,7 +571,8 @@ def _build_system_prompt(
     try:
         import hashlib as _hl, json as _json
         _ov_sig = _hl.sha256(_json.dumps(get_builtin_overrides() or {}, sort_keys=True).encode()).hexdigest()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "agent_builtin_overrides_signature_failed", error, outcome="best_effort")
         _ov_sig = ""
     cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
@@ -1705,14 +1707,16 @@ async def stream_agent_loop(
                                 _doc_opened = True
                                 try:
                                     title = json.loads('"' + tm.group(1) + '"')
-                                except Exception:
+                                except (json.JSONDecodeError, TypeError) as error:
+                                    report_exception(logger, "agent_document_stream_title_parse_failed", error, outcome="best_effort")
                                     title = tm.group(1)
                                 lm = re.search(r'"language"\s*:\s*"((?:[^"\\]|\\.)*)"', _doc_acc)
                                 lang = ""
                                 if lm:
                                     try:
                                         lang = json.loads('"' + lm.group(1) + '"')
-                                    except Exception:
+                                    except (json.JSONDecodeError, TypeError) as error:
+                                        report_exception(logger, "agent_document_stream_language_parse_failed", error, outcome="best_effort")
                                         lang = lm.group(1)
                                 logger.info(f"Doc streaming: open title={title!r} lang={lang!r}")
                                 yield f'data: {json.dumps({"type": "doc_stream_open", "title": title, "language": lang})}\n\n'
@@ -1723,10 +1727,12 @@ async def stream_agent_loop(
                                 raw = re.sub(r'"\s*\}\s*$', '', raw)
                                 try:
                                     decoded = json.loads('"' + raw + '"')
-                                except Exception:
+                                except (json.JSONDecodeError, TypeError) as error:
+                                    report_exception(logger, "agent_document_stream_content_parse_failed", error, outcome="best_effort")
                                     try:
                                         decoded = json.loads('"' + raw.rstrip('\\') + '"')
-                                    except Exception:
+                                    except (json.JSONDecodeError, TypeError) as fallback_error:
+                                        report_exception(logger, "agent_document_stream_content_fallback_parse_failed", fallback_error, outcome="best_effort")
                                         decoded = raw.replace('\\n', '\n').replace('\\t', '\t').replace('\\"', '"').replace('\\\\', '\\')
                                 if len(decoded) > _doc_last_len:
                                     _doc_last_len = len(decoded)
@@ -2117,8 +2123,8 @@ async def stream_agent_loop(
                                 result["results"] = _clean
                             elif "stdout" in result:
                                 result["stdout"] = _clean
-                        except (json.JSONDecodeError, Exception):
-                            pass
+                        except (json.JSONDecodeError, TypeError) as error:
+                            report_exception(logger, "agent_tool_result_redaction_parse_failed", error, outcome="best_effort")
 
             # Emit doc-specific event for document tools — the frontend
             # document panel handles this; no need to show content in chat.
