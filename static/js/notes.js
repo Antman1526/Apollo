@@ -4,6 +4,7 @@
  */
 
 import uiModule from './ui.js';
+import { clearDraft, draftKey, isDraftEmpty as _isDraftEmpty, loadDraft, scheduleDraftSave } from './notes/drafts.js';
 import { spawnConfetti } from './compare/vote.js';
 import * as Modals from './modalManager.js';
 import { attachColorPicker } from './colorPicker.js';
@@ -2692,11 +2693,9 @@ function _bindCardEvents(body) {
 // restores the unsaved text. Drafts are cleared on an explicit Save or
 // Cancel. Survives offline because it never touches the network.
 const _DRAFT_PREFIX = 'apollo-note-draft-';
-function _draftKey(id) { return _DRAFT_PREFIX + (id || '__new__'); }
-function _loadDraft(id) {
-  try { return JSON.parse(localStorage.getItem(_draftKey(id)) || 'null'); } catch { return null; }
-}
-function _clearDraft(id) { try { localStorage.removeItem(_draftKey(id)); } catch {} }
+const _draftKey = (id) => draftKey(id, _DRAFT_PREFIX);
+const _loadDraft = (id) => loadDraft(localStorage, id, _DRAFT_PREFIX);
+const _clearDraft = (id) => clearDraft(localStorage, id, _DRAFT_PREFIX);
 function _collectFormDraft(form) {
   if (!form) return null;
   const type = form.querySelector('.note-form-type-pill.active')?.dataset.type || 'note';
@@ -2713,13 +2712,6 @@ function _collectFormDraft(form) {
   else d.items = _collectItems(form);
   return d;
 }
-function _isDraftEmpty(d) {
-  if (!d) return true;
-  if ((d.title || '').trim()) return false;
-  if ((d.content || '').trim()) return false;
-  if (Array.isArray(d.items) && d.items.some(it => (it.text || '').trim())) return false;
-  return true;
-}
 function _wireDraftAutosave(form, id) {
   let t = null;
   const save = () => {
@@ -2728,7 +2720,7 @@ function _wireDraftAutosave(form, id) {
     try { localStorage.setItem(_draftKey(id), JSON.stringify(d)); } catch {}
   };
   form._flushDraft = () => { clearTimeout(t); save(); };
-  const sched = () => { clearTimeout(t); t = setTimeout(save, 600); };
+  const sched = () => { t = scheduleDraftSave({ timer: t, setTimer: setTimeout, clearTimer: clearTimeout, save }); };
   form.addEventListener('input', sched);
   form.addEventListener('change', sched);
 }
