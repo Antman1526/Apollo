@@ -3,6 +3,7 @@
 A stub resolver is injected so the tests never touch real DNS.
 """
 
+from src import url_safety
 from src.url_safety import check_outbound_url
 
 
@@ -68,3 +69,32 @@ def test_unresolvable_host_blocked():
     ok, reason = check_outbound_url("http://does-not-resolve.invalid", resolver=PUBLIC)
     assert ok is False
     assert "resolve" in reason
+
+
+def test_malformed_url_fails_closed_without_reflecting_parser_detail():
+    ok, reason = check_outbound_url("http://[invalid")
+
+    assert ok is False
+    assert reason == "unparseable URL"
+
+
+def test_resolution_failure_is_observable_without_reflecting_error(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        url_safety,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+
+    ok, reason = check_outbound_url(
+        "https://example.test",
+        resolver=lambda _host: (_ for _ in ()).throw(OSError("resolver details")),
+    )
+
+    assert (ok, reason) == (False, "host does not resolve")
+    assert events == [
+        (
+            "outbound_url_resolution_failed",
+            {"outcome": "best_effort", "context": {"host": "example.test"}},
+        )
+    ]

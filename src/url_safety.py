@@ -19,11 +19,15 @@ additionally reject all private and loopback targets (full SSRF lockdown).
 """
 
 import ipaddress
+import logging
 import socket
 from typing import Callable, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from src.observability import report_exception
+
 ALLOWED_SCHEMES = ("http", "https")
+logger = logging.getLogger(__name__)
 
 
 def _default_resolver(host: str) -> List[str]:
@@ -62,20 +66,33 @@ def check_outbound_url(
         return False, "URL is required"
     try:
         parsed = urlparse(url.strip())
-    except Exception as e:  # pragma: no cover - urlparse is very tolerant
-        return False, f"unparseable URL: {e}"
+        host = parsed.hostname
+    except ValueError as error:  # pragma: no cover - urlparse is very tolerant
+        report_exception(
+            logger,
+            "outbound_url_parse_failed",
+            error,
+            outcome="best_effort",
+        )
+        return False, "unparseable URL"
 
     if parsed.scheme.lower() not in ALLOWED_SCHEMES:
         return False, f"scheme must be http or https, got '{parsed.scheme or '(none)'}'"
-    host = parsed.hostname
     if not host:
         return False, "URL has no host"
 
     resolve = resolver or _default_resolver
     try:
         raw_ips = resolve(host)
-    except Exception as e:
-        return False, f"host does not resolve: {e}"
+    except (OSError, ValueError) as error:
+        report_exception(
+            logger,
+            "outbound_url_resolution_failed",
+            error,
+            outcome="best_effort",
+            context={"host": host},
+        )
+        return False, "host does not resolve"
     if not raw_ips:
         return False, "host does not resolve"
 
