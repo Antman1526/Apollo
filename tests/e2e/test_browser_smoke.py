@@ -9,6 +9,13 @@ import httpx
 import pytest
 
 
+if not os.environ.get("APOLLO_E2E_BASE_URL"):
+    pytest.skip(
+        "E2E browser tests require the isolated server from scripts/run-e2e.sh",
+        allow_module_level=True,
+    )
+
+
 def _authenticated_session(base_url):
     """Create the isolated first-run account and return its session cookie."""
 
