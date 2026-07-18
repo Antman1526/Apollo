@@ -11,12 +11,18 @@ from __future__ import annotations
 import asyncio
 import base64
 import importlib.util
+import logging
 import os
 import re
 from collections import deque
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
+
+from src.observability import report_exception
+
+
+logger = logging.getLogger(__name__)
 
 
 BLOCKED_SCHEMES = {
@@ -271,8 +277,13 @@ class EmbeddedBrowserSession:
             for cb in list(self._url_listeners):
                 try:
                     cb(frame.url)
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "embedded_browser_url_listener_failed",
+                        error,
+                        outcome="best_effort",
+                    )
 
         page.on("framenavigated", _on_nav)
         self._listener_page = page
@@ -298,8 +309,9 @@ class EmbeddedBrowserSession:
             return
         try:
             await self._start_screencast_on(page)
-        except Exception as exc:  # never crash page creation
-            self._record("screencast-error", f"re-arm failed: {exc}", page.url)
+        except Exception as error:  # never crash page creation
+            report_exception(logger, "embedded_browser_screencast_rearm_failed", error, outcome="best_effort")
+            self._record("screencast-error", "re-arm failed", page.url)
 
     async def _start_screencast_on(self, page) -> None:
         """Attach a CDP session to `page` and start a JPEG screencast. The
@@ -321,8 +333,8 @@ class EmbeddedBrowserSession:
             metadata = params.get("metadata") or {}
             try:
                 on_frame(params.get("data", ""), metadata)
-            except Exception:
-                pass  # a viewer-side error must never break the stream
+            except Exception as error:
+                report_exception(logger, "embedded_browser_screencast_viewer_callback_failed", error, outcome="best_effort")
 
         cdp.on("Page.screencastFrame", _on_screencast_frame)
         await cdp.send(
@@ -341,8 +353,8 @@ class EmbeddedBrowserSession:
     async def _ack_frame(self, cdp, session_id) -> None:
         try:
             await cdp.send("Page.screencastFrameAck", {"sessionId": session_id})
-        except Exception:
-            pass  # session may have been detached between frame and ack
+        except Exception as error:
+            report_exception(logger, "embedded_browser_screencast_ack_failed", error, outcome="best_effort")
 
     async def _detach_cdp(self) -> None:
         cdp, self._cdp, self._screencast_page = self._cdp, None, None
@@ -350,12 +362,12 @@ class EmbeddedBrowserSession:
             return
         try:
             await cdp.send("Page.stopScreencast")
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "embedded_browser_screencast_stop_failed", error, outcome="best_effort")
         try:
             await cdp.detach()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "embedded_browser_cdp_detach_failed", error, outcome="best_effort")
 
     async def start_screencast(self, on_frame) -> None:
         """Begin streaming JPEG frames. `on_frame(data_b64, metadata)` is
@@ -457,8 +469,9 @@ class EmbeddedBrowserSession:
             page = await self._ensure_page()
             try:
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
-            except Exception as exc:
-                self._record("navigation-error", str(exc), url)
+            except Exception as error:
+                report_exception(logger, "embedded_browser_navigation_failed", error, outcome="critical")
+                self._record("navigation-error", "navigation failed", url)
                 raise
             current = page.url
             warning = security_warning(current)
@@ -469,10 +482,12 @@ class EmbeddedBrowserSession:
                 # network stack's extra-info; response.headers (the
                 # preliminary set) misses e.g. yahoo's CSP entirely.
                 headers = (await response.all_headers()) if response else {}
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "embedded_browser_response_headers_read_failed", error, outcome="best_effort")
                 try:
                     headers = response.headers if response else {}
-                except Exception:
+                except Exception as fallback_error:
+                    report_exception(logger, "embedded_browser_response_headers_fallback_failed", fallback_error, outcome="best_effort")
                     headers = {}
             return {
                 "ok": True,
