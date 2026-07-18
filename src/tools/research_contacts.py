@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from src.tools._common import _parse_tool_args, _internal_headers
 from src.tools.cookbook import _COOKBOOK_BASE
 from src.research_handler import ResearchRepository
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,7 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
             resp = await client.post(f"{_COOKBOOK_BASE}/api/research/start",
                                      json=payload, headers=_internal_headers(owner))
         if resp.status_code >= 400:
-            return {"error": f"research/start returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
+            return {"error": f"Research start request failed (HTTP {resp.status_code})", "exit_code": 1}
         data = resp.json()
         sid = data.get("session_id", "?")
         return {
@@ -123,8 +124,9 @@ async def do_trigger_research(content: str, owner: Optional[str] = None) -> Dict
             "research_session_id": sid,
             "exit_code": 0,
         }
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "research_trigger_failed", error, outcome="critical")
+        return {"error": "Research could not be started", "exit_code": 1}
 
 
 
@@ -160,8 +162,8 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
                 email = (email or "").strip().lower()
                 if email and "@" in email:
                     contacts[email] = {"name": c.get("name") or email, "source": "contacts"}
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "contact_carddav_lookup_failed", error, outcome="best_effort")
 
     async with httpx.AsyncClient(timeout=30) as client:
         # 2. Email history (sent/received)
@@ -172,8 +174,8 @@ async def do_resolve_contact(content: str, owner: Optional[str] = None) -> Dict:
                     email = (c.get("email") or "").strip().lower()
                     if email and email not in contacts:
                         contacts[email] = {"name": c.get("name") or email, "source": "email history"}
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "contact_email_history_lookup_failed", error, outcome="best_effort")
 
     if not contacts:
         return {"output": f"No contacts found matching '{name}'.", "exit_code": 0}
@@ -198,8 +200,9 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
     action = (args.get("action") or "").strip().lower()
     try:
         from routes import contacts_routes as cc
-    except Exception as e:
-        return {"error": f"Contacts module unavailable: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "contact_module_load_failed", error, outcome="critical")
+        return {"error": "Contacts module unavailable", "exit_code": 1}
     # The contacts helpers are sync (httpx blocking calls to CardDAV) — run
     # them in a thread so we don't block the event loop.
     import asyncio
@@ -252,5 +255,12 @@ async def do_manage_contact(content: str, owner: Optional[str] = None) -> Dict:
             return {"output": "Contact deleted." if ok else "Delete failed.", "exit_code": 0 if ok else 1}
 
         return {"error": f"Unknown action '{action}'. Use list, add, update, or delete.", "exit_code": 1}
-    except Exception as e:
-        return {"error": f"Contact operation failed: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(
+            logger,
+            "contact_operation_failed",
+            error,
+            outcome="critical",
+            context={"action": action},
+        )
+        return {"error": "Contact operation failed", "exit_code": 1}
