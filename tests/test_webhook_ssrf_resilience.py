@@ -1,3 +1,4 @@
+import asyncio
 import sys
 
 # conftest.py stubs src.database with a fake module; webhook_manager imports
@@ -17,6 +18,7 @@ _drop_module("src.database")
 _drop_module("core.database")
 
 import pytest
+from src import webhook_manager
 from src.webhook_manager import validate_webhook_url
 
 
@@ -38,3 +40,23 @@ def test_webhook_url_ssrf_mitigation():
     # A clearly public IP literal must still be accepted.
     public_url = "http://93.184.216.34/"
     assert validate_webhook_url(public_url) == public_url
+
+
+def test_legacy_secret_fallback_is_observable(monkeypatch):
+    class FailingKeyManager:
+        def decrypt_api_key(self, _value):
+            raise ValueError("invalid legacy value")
+
+    events = []
+    monkeypatch.setattr(
+        webhook_manager,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+    manager = webhook_manager.WebhookManager(api_key_manager=FailingKeyManager())
+    try:
+        assert manager._decrypt_secret("legacy-secret") == "legacy-secret"
+    finally:
+        asyncio.run(manager.close())
+
+    assert events == [("webhook_secret_decryption_failed", {"outcome": "best_effort"})]

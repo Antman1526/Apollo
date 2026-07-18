@@ -12,8 +12,10 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import httpx
+from cryptography.fernet import InvalidToken
 
 from src.database import SessionLocal, Webhook
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -60,14 +62,14 @@ def _resolve_hostname_ips(hostname: str) -> list:
     import socket
     try:
         infos = socket.getaddrinfo(hostname, None)
-    except Exception:
+    except OSError:
         return []
     out = []
     for info in infos:
         sockaddr = info[4]
         try:
             out.append(ipaddress.ip_address(sockaddr[0]))
-        except ValueError:
+        except (TypeError, ValueError):
             continue
     return out
 
@@ -101,7 +103,7 @@ def _is_private_url(url: str) -> bool:
             # Couldn't resolve → fail closed; let validation reject the URL.
             return True
         return any(_ip_is_private(a) for a in addrs)
-    except ValueError:
+    except (TypeError, ValueError):
         return True
 
 
@@ -157,8 +159,14 @@ class WebhookManager:
         if self._api_key_manager:
             try:
                 return self._api_key_manager.decrypt_api_key(encrypted)
-            except Exception:
+            except (InvalidToken, ValueError) as error:
                 # If decryption fails, assume it's stored in plaintext (legacy)
+                report_exception(
+                    logger,
+                    "webhook_secret_decryption_failed",
+                    error,
+                    outcome="best_effort",
+                )
                 return encrypted
         return encrypted
 
@@ -223,15 +231,28 @@ class WebhookManager:
             })
             db.commit()
         except Exception as e:
-            logger.warning(f"Webhook delivery failed for {webhook_id}")
+            report_exception(
+                logger,
+                "webhook_delivery_failed",
+                e,
+                outcome="critical",
+                context={"webhook_id": webhook_id, "event": event},
+            )
             try:
                 db.query(Webhook).filter(Webhook.id == webhook_id).update({
                     "last_triggered_at": datetime.utcnow(),
                     "last_status_code": None,
-                    "last_error": sanitize_error(str(e)),
+                    "last_error": f"Delivery failed ({type(e).__name__})",
                 })
                 db.commit()
-            except Exception:
+            except Exception as update_error:
+                report_exception(
+                    logger,
+                    "webhook_delivery_failure_record_failed",
+                    update_error,
+                    outcome="best_effort",
+                    context={"webhook_id": webhook_id, "event": event},
+                )
                 db.rollback()
         finally:
             db.close()
