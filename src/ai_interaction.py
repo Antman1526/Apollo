@@ -13,6 +13,7 @@ import logging
 import uuid
 import time
 from typing import Dict, Optional, Tuple
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,8 @@ def _resolve_model(spec: str) -> Tuple[str, str, Dict]:
                             for m in (data.get("models") or [])
                             if m.get("name") or m.get("model")
                         ]
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "ai_interaction_endpoint_models_parse_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
                     model_ids = []
 
                 # Exact match first
@@ -483,7 +485,8 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
                 if ts.tzinfo is not None:
                     now = datetime.now(timezone.utc)
                 diff = (now - ts).total_seconds()
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "ai_interaction_timestamp_format_failed", error, outcome="best_effort")
                 return 'unknown'
             if diff < 60: return 'just now'
             if diff < 3600: return f'{int(diff / 60)}m ago'
@@ -721,7 +724,8 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
     if _raw.startswith("{"):
         try:
             _parsed = json.loads(_raw)
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "ai_interaction_session_action_payload_parse_failed", error, outcome="best_effort")
             _parsed = None
     if isinstance(_parsed, dict):
         action = str(_parsed.get("action") or "").strip().lower()
@@ -832,8 +836,9 @@ async def do_manage_session(content: str, session_id: Optional[str] = None, owne
                     return {"error": f"Session '{target_sid}' was not deleted because it no longer exists."}
                 return {"action": "delete", "session_id": target_sid,
                         "results": f"Session '{db_sess.name or target_sid}' deleted"}
-            except Exception as e:
-                return {"error": f"Failed to delete session: {e}"}
+            except Exception as error:
+                report_exception(logger, "ai_interaction_session_delete_failed", error, outcome="critical", context={"session_id": target_sid})
+                return {"error": "Failed to delete session"}
 
         elif action in ("important", "unimportant"):
             is_important = action == "important"
@@ -979,8 +984,8 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
             try:
                 _memory_vector.add(entry["id"], text)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "ai_interaction_memory_vector_add_failed", error, outcome="best_effort", context={"memory_id": entry["id"]})
         try:
             from src.event_bus import fire_event
             fire_event("memory_added", owner)
@@ -1018,8 +1023,8 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if _memory_vector and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
             try:
                 _memory_vector.add(full_id, new_text)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "ai_interaction_memory_vector_edit_failed", error, outcome="best_effort", context={"memory_id": full_id})
 
         return {"action": "edit", "memory_id": memory_id,
                 "results": f"Memory updated: {new_text}"}
@@ -1050,8 +1055,8 @@ async def do_manage_memory(content: str, session_id: Optional[str] = None, owner
         if _memory_vector and full_id and hasattr(_memory_vector, 'healthy') and _memory_vector.healthy:
             try:
                 _memory_vector.remove(full_id)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "ai_interaction_memory_vector_remove_failed", error, outcome="best_effort", context={"memory_id": full_id})
 
         return {"action": "delete", "memory_id": memory_id,
                 "results": f"Memory '{memory_id}' deleted"}
@@ -1127,7 +1132,8 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
                             for m in (data.get("models") or [])
                             if m.get("name") or m.get("model")
                         ]
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "ai_interaction_model_list_probe_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
                     model_ids = ["(endpoint offline)"]
 
             if keyword:
@@ -1144,9 +1150,9 @@ async def do_list_models(content: str, session_id: Optional[str] = None) -> Dict
 
         header = f"Available models ({total_models} total):"
         return {"results": header + "\n".join(result_lines)}
-    except Exception as e:
-        logger.error(f"list_models failed: {e}")
-        return {"error": str(e)}
+    except Exception as error:
+        report_exception(logger, "ai_interaction_model_listing_failed", error, outcome="degraded")
+        return {"error": "Could not list models"}
     finally:
         db.close()
 
@@ -1194,8 +1200,9 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
             if not result_lines:
                 return {"results": "No files or directories indexed in RAG."}
             return {"results": "\n".join(result_lines)}
-        except Exception as e:
-            return {"error": str(e)}
+        except Exception as error:
+            report_exception(logger, "ai_interaction_rag_list_failed", error, outcome="degraded")
+            return {"error": "Could not list indexed documents"}
 
     elif action == "add_directory":
         if len(lines) < 2:
@@ -1215,8 +1222,9 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
             indexed = result.get("indexed", 0) if isinstance(result, dict) else 0
             return {"action": "add_directory", "directory": directory,
                     "results": f"Directory '{directory}' added to RAG index ({indexed} files indexed)"}
-        except Exception as e:
-            return {"error": f"Failed to index directory: {e}"}
+        except Exception as error:
+            report_exception(logger, "ai_interaction_rag_index_failed", error, outcome="critical")
+            return {"error": "Failed to index directory"}
 
     elif action == "remove_directory":
         if len(lines) < 2:
@@ -1233,8 +1241,9 @@ async def do_manage_rag(content: str, session_id: Optional[str] = None) -> Dict:
                 _rag_manager.rebuild_index()
             return {"action": "remove_directory", "directory": directory,
                     "results": f"Directory '{directory}' removed from RAG index"}
-        except Exception as e:
-            return {"error": f"Failed to remove directory: {e}"}
+        except Exception as error:
+            report_exception(logger, "ai_interaction_rag_remove_failed", error, outcome="critical")
+            return {"error": "Failed to remove directory"}
 
     else:
         return {"error": f"Unknown action '{action}'. Use: list, add_directory, remove_directory"}
@@ -1365,8 +1374,8 @@ async def do_ui_control(content: str, session_id: Optional[str] = None) -> Dict:
         try:
             from routes.prefs_routes import _load as _load_prefs
             custom_themes = _load_prefs().get("custom-themes", {}) or {}
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "ai_interaction_custom_theme_load_failed", error, outcome="best_effort")
         all_known = set(known_presets) | set(custom_themes.keys())
         if theme_name not in all_known:
             custom_label = f" | Custom: {', '.join(sorted(custom_themes.keys()))}" if custom_themes else ""
@@ -1564,7 +1573,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
     try:
         from src.settings import load_settings
         _settings = load_settings()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "ai_interaction_image_settings_load_failed", error, outcome="best_effort")
         _settings = {}
 
     # Use admin-configured model/quality if not specified by the tool call
@@ -1604,12 +1614,13 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                             if _mids:
                                 model_spec = _mids[0]
                                 break
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "ai_interaction_image_endpoint_model_probe_failed", error, outcome="best_effort", context={"endpoint_id": _iep.id})
                             continue
                 finally:
                     _idb.close()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "ai_interaction_image_endpoint_discovery_failed", error, outcome="best_effort")
         if not model_spec:
             return {"error": "No image model found. Configure one in Admin → Image Generation."}
 
@@ -1663,8 +1674,8 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
                 try:
                     err_json = resp.json()
                     error_text = err_json.get("error", {}).get("message", error_text) if isinstance(err_json.get("error"), dict) else str(err_json.get("error", error_text))
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "ai_interaction_image_error_response_parse_failed", error, outcome="best_effort")
                 return {"error": f"Image generation failed ({resp.status_code}): {error_text}"}
 
             data = resp.json()
@@ -1742,8 +1753,9 @@ async def do_generate_image(content: str, session_id: Optional[str] = None, owne
 
     except httpx.TimeoutException:
         return {"error": "Image generation timed out (300s). The model may be overloaded — try again or use quality=low."}
-    except Exception as e:
-        return {"error": f"Image generation error: {str(e)}"}
+    except Exception as error:
+        report_exception(logger, "ai_interaction_image_generation_failed", error, outcome="critical")
+        return {"error": "Image generation failed"}
 
 
 # ---------------------------------------------------------------------------
