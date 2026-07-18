@@ -2,6 +2,7 @@
 
 import uuid
 import logging
+import binascii
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
@@ -11,6 +12,7 @@ from sqlalchemy import func
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +187,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         title = os.path.splitext(meta.get("original_name") or meta.get("name") or upload_id)[0]
         try:
             body_text = strip_pdf_content_marker(_process_pdf(pdf_path))
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "document_pdf_text_extract_failed", error, outcome="best_effort")
             body_text = None
 
         is_form = False
@@ -460,8 +463,11 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         user = get_current_user(request)
         try:
             data = await request.json()
-        except Exception:
-            data = {}
+        except (TypeError, UnicodeDecodeError, ValueError) as error:
+            report_exception(logger, "document_bulk_delete_payload_parse_failed", error, outcome="best_effort")
+            raise HTTPException(400, "Invalid bulk-delete payload") from error
+        if not isinstance(data, dict):
+            raise HTTPException(400, "Bulk-delete payload must be an object")
         ids = data.get("ids") or []
         if not ids:
             raise HTTPException(400, "No documents specified")
@@ -600,8 +606,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     try:
                         from src.tool_implementations import clear_active_document
                         clear_active_document(doc_id)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(
+                            logger,
+                            "document_active_pointer_clear_failed",
+                            error,
+                            outcome="best_effort",
+                            context={"document_id": doc_id},
+                        )
             db.commit()
             db.refresh(doc)
             return _doc_to_dict(doc)
@@ -629,8 +641,14 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             try:
                 from src.tool_implementations import clear_active_document
                 clear_active_document(doc_id)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "document_active_pointer_clear_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"document_id": doc_id},
+                )
             db.commit()
             return {"status": "deleted", "id": doc_id}
         except HTTPException:
@@ -1220,7 +1238,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         w = float(item.get("w", 0))
                         h = float(item.get("h", 0))
                         value = str(item.get("value", "") or "")
-                    except Exception:
+                    except (TypeError, ValueError):
                         continue
                     # Clamp + reject zero-size entries
                     if w <= 0.5 or h <= 0.3:
@@ -1553,8 +1571,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                         continue
                     try:
                         stamps[fname] = base64.b64decode(s.data_png)
-                    except Exception:
-                        pass
+                    except (binascii.Error, TypeError, ValueError) as error:
+                        report_exception(
+                            logger,
+                            "document_export_signature_decode_failed",
+                            error,
+                            outcome="best_effort",
+                        )
 
             import os
             _to_unlink: list[str] = []
@@ -1592,8 +1615,13 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                     for s in sig_rows:
                         try:
                             ann_signature_pngs[s.id] = base64.b64decode(s.data_png)
-                        except Exception:
-                            pass
+                        except (binascii.Error, TypeError, ValueError) as error:
+                            report_exception(
+                                logger,
+                                "document_export_annotation_signature_decode_failed",
+                                error,
+                                outcome="best_effort",
+                            )
                 annotated_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
                 _to_unlink.append(annotated_path)
                 try:
@@ -1622,7 +1650,8 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
             #    context (To/Subject/In-Reply-To/References).
             try:
                 from routes.email_routes import _imap, _decode_header
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "document_email_export_helpers_load_failed", error, outcome="best_effort")
                 _imap = None
                 _decode_header = lambda x: x or ""
 
