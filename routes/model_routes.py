@@ -25,6 +25,7 @@ from src.endpoint_resolver import (
     build_headers,
 )
 from src.auth_helpers import _auth_disabled, owner_filter
+from src.observability import report_exception
 from services.localmodels.registry import is_local_endpoint as _is_local_endpoint
 
 logger = logging.getLogger(__name__)
@@ -160,7 +161,8 @@ def _container_loopback_reachable(base_url: str, timeout: float = 0.2) -> bool:
     """
     try:
         parsed = urlparse(base_url)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "model_endpoint_url_parse_failed", error, outcome="best_effort")
         return False
     host = (parsed.hostname or "").lower()
     port = parsed.port
@@ -191,7 +193,8 @@ def _rewrite_loopback_for_docker(base_url: str, *, container_local: bool = False
     """
     try:
         parsed = urlparse(base_url)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "model_endpoint_url_normalization_failed", error, outcome="best_effort")
         return base_url
     host = (parsed.hostname or "").lower()
     if host not in _LOOPBACK_HOSTS:
@@ -423,13 +426,14 @@ def _probe_single_model(base: str, api_key: str, model_id: str, timeout: int = 1
                         error_msg = err.get("message", error_msg)[:120]
                     elif isinstance(err, str):
                         error_msg = err[:120]
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "model_endpoint_error_response_parse_failed", error, outcome="best_effort")
             return {"status": "fail", "latency_ms": latency, "error": error_msg}
     except httpx.TimeoutException:
         return {"status": "timeout", "latency_ms": timeout * 1000, "error": f"Timed out ({timeout}s)"}
-    except Exception as e:
-        return {"status": "fail", "error": str(e)[:80]}
+    except Exception as error:
+        report_exception(logger, "model_endpoint_health_probe_failed", error, outcome="degraded")
+        return {"status": "fail", "error": str(error)[:80]}
 
 
 # Hostnames / IP prefixes that indicate a local endpoint
@@ -463,8 +467,8 @@ def _classify_endpoint(base_url: str) -> str:
             return "local"
         if _TAILSCALE_RE.match(host):
             return "local"
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "model_endpoint_network_classification_failed", error, outcome="best_effort")
     return "api"
 
 
@@ -596,8 +600,9 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
         if r.status_code < 500 and not looks_like_ollama:
             return {"reachable": False, "status_code": r.status_code, "error": f"HTTP {r.status_code}"}
         last_error = f"HTTP {r.status_code}"
-    except Exception as e:
-        last_error = str(e)[:120]
+    except Exception as error:
+        report_exception(logger, "model_endpoint_reachability_probe_failed", error, outcome="degraded")
+        last_error = str(error)[:120]
 
     try:
         if looks_like_ollama:
@@ -612,10 +617,11 @@ def _ping_endpoint(base_url: str, api_key: str = None, timeout: float = 1.5) -> 
                     if r.status_code < 400:
                         return {"reachable": True, "status_code": r.status_code, "error": None}
                     last_error = f"HTTP {r.status_code}"
-                except Exception as e:
-                    last_error = str(e)[:120]
-    except Exception:
-        pass
+                except Exception as error:
+                    report_exception(logger, "model_endpoint_fallback_probe_failed", error, outcome="best_effort")
+                    last_error = "Endpoint unavailable"
+    except Exception as error:
+        report_exception(logger, "model_endpoint_fallback_probe_setup_failed", error, outcome="best_effort")
 
     return {"reachable": False, "status_code": None, "error": last_error}
 
@@ -710,8 +716,9 @@ def setup_model_routes(model_discovery):
                         try:
                             ids = _probe_endpoint(base, ep.api_key, timeout=2)
                             return ep, ids, None
-                        except Exception as e:
-                            return ep, None, e
+                        except Exception as error:
+                            report_exception(logger, "model_background_refresh_probe_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
+                            return ep, None, error
 
                     if to_probe:
                         # Bounded parallelism — 8 concurrent probes is plenty
@@ -729,8 +736,8 @@ def setup_model_routes(model_discovery):
                 finally:
                     db.close()
                 _invalidate_models_cache()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "model_refresh_cache_persist_failed", error, outcome="best_effort")
             finally:
                 _refresh_inflight["v"] = False
         threading.Thread(target=_do, daemon=True).start()
@@ -767,16 +774,16 @@ def setup_model_routes(model_discovery):
             if ep.cached_models:
                 try:
                     model_ids = json.loads(ep.cached_models)
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "model_cached_model_list_parse_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
             ep_model_type = getattr(ep, "model_type", None) or "llm"
             # Filter out hidden (probe-failed) models
             hidden = set()
             if ep.hidden_models:
                 try:
                     hidden = set(json.loads(ep.hidden_models))
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "model_hidden_model_list_parse_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
             model_ids = [m for m in model_ids if m not in hidden]
             # Build correct URL based on provider
             chat_url = build_chat_url(base)
@@ -817,8 +824,8 @@ def setup_model_routes(model_discovery):
                             for name in (curated + extra)
                             if name in catalog_by_name
                         }
-                    except Exception:
-                        pass  # catalog unavailable — UI treats absent meta as chat
+                    except Exception as error:
+                        report_exception(logger, "model_catalog_metadata_lookup_failed", error, outcome="best_effort")
                 items.append(item)
             else:
                 # Endpoint unreachable but still show it greyed out
@@ -848,7 +855,8 @@ def setup_model_routes(model_discovery):
         try:
             from src.auth_helpers import get_current_user as _gcu
             owner = _gcu(request) or ""
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_list_identity_lookup_failed", error, outcome="best_effort")
             owner = ""
         # Reject anonymous in configured deployments — no leaking the model
         # list to unauthenticated callers.
@@ -858,8 +866,8 @@ def setup_model_routes(model_discovery):
                 raise HTTPException(401, "Not authenticated")
         except HTTPException:
             raise
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "model_list_privilege_check_failed", error, outcome="best_effort")
         # Admins see every endpoint (they manage the global pool); regular
         # users get the owner-scoped view.
         _is_admin = False
@@ -867,7 +875,8 @@ def setup_model_routes(model_discovery):
             auth_mgr = getattr(request.app.state, "auth_manager", None)
             if owner and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
                 _is_admin = bool(auth_mgr.is_admin(owner))
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_list_admin_check_failed", error, outcome="best_effort")
             _is_admin = False
         now = _time.time()
         # Cache key includes the admin flag so a demotion / promotion doesn't
@@ -925,8 +934,9 @@ def setup_model_routes(model_discovery):
                     "status_code": 200 if models else None,
                     "error": None if models else "No models found",
                 }
-            except Exception as e:
-                return {"alive": False, "latency_ms": None, "status_code": None, "error": str(e)[:120]}
+            except Exception as error:
+                report_exception(logger, "model_local_endpoint_probe_failed", error, outcome="degraded", context={"endpoint_id": ep_id})
+                return {"alive": False, "latency_ms": None, "status_code": None, "error": "Endpoint unavailable"}
 
         import asyncio as _asyncio
         results_list = await _asyncio.gather(
@@ -982,10 +992,11 @@ def setup_model_routes(model_discovery):
                     entry["latency_ms"] = round((_time.time() - t0) * 1000)
                     entry["status"] = "online"
                     entry["model_count"] = len(ANTHROPIC_MODELS)
-                except Exception as e:
+                except Exception as error:
+                    report_exception(logger, "model_anthropic_endpoint_probe_failed", error, outcome="degraded", context={"endpoint_id": ep.id})
                     entry["latency_ms"] = None
                     entry["status"] = "offline"
-                    entry["error"] = str(e)
+                    entry["error"] = "Endpoint unavailable"
                     entry["model_count"] = 0
             else:
                 url = build_models_url(base)
@@ -1005,11 +1016,12 @@ def setup_model_routes(model_discovery):
                         ]
                     entry["status"] = "online"
                     entry["model_count"] = len(models)
-                except Exception as e:
+                except Exception as error:
+                    report_exception(logger, "model_endpoint_probe_failed", error, outcome="degraded", context={"endpoint_id": ep.id})
                     if "latency_ms" not in entry:
                         entry["latency_ms"] = None
                     entry["status"] = "offline"
-                    entry["error"] = str(e)
+                    entry["error"] = "Endpoint unavailable"
                     entry["model_count"] = 0
             results.append(entry)
 
@@ -1172,14 +1184,14 @@ def setup_model_routes(model_discovery):
                 if r.cached_models:
                     try:
                         all_models = json.loads(r.cached_models)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "model_endpoint_cached_models_parse_failed", error, outcome="best_effort", context={"endpoint_id": r.id})
                 hidden = set()
                 if r.hidden_models:
                     try:
                         hidden = set(json.loads(r.hidden_models))
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "model_endpoint_hidden_models_parse_failed", error, outcome="best_effort", context={"endpoint_id": r.id})
                 visible = [m for m in all_models if m not in hidden]
                 status = "online" if all_models else "offline"
                 ping = None
@@ -1431,16 +1443,16 @@ def setup_model_routes(model_discovery):
             if ep.hidden_models:
                 try:
                     hidden = set(json.loads(ep.hidden_models))
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "model_endpoint_hidden_models_list_parse_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
             if _is_local_managed(ep.base_url):
                 # local:// model list is owned by the filesystem scanner — never probe
                 all_models = []
                 if ep.cached_models:
                     try:
                         all_models = json.loads(ep.cached_models)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "model_local_endpoint_cached_models_parse_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
             else:
                 # Try live probe, fall back to cached
                 all_models = _probe_endpoint(ep.base_url, ep.api_key, timeout=3)
@@ -1450,8 +1462,8 @@ def setup_model_routes(model_discovery):
                 elif ep.cached_models:
                     try:
                         all_models = json.loads(ep.cached_models)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "model_endpoint_fallback_cached_models_parse_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
             return [
                 {"id": m, "display": m.split("/")[-1], "is_hidden": m in hidden}
                 for m in all_models
@@ -1496,7 +1508,8 @@ def setup_model_routes(model_discovery):
         from src.auth_helpers import get_current_user as _gcu
         try:
             _user = _gcu(request) or ""
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_picker_identity_lookup_failed", error, outcome="best_effort")
             _user = ""
         # Admins resolve via the global defaults (they own them, and the
         # scoped resolution was making the picker disappear for them).
@@ -1509,7 +1522,8 @@ def setup_model_routes(model_discovery):
             auth_mgr = getattr(request.app.state, "auth_manager", None)
             if _user and auth_mgr is not None and getattr(auth_mgr, "is_admin", None):
                 _is_admin = bool(auth_mgr.is_admin(_user))
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_picker_admin_check_failed", error, outcome="best_effort")
             _is_admin = False
         if _user and not _is_admin:
             from routes.prefs_routes import _load_for_user
@@ -1581,8 +1595,8 @@ def setup_model_routes(model_discovery):
                     visible = _visible_models(ep.cached_models, getattr(ep, "hidden_models", None))
                     if visible:
                         model = visible[0]
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "model_default_visible_models_lookup_failed", error, outcome="best_effort", context={"endpoint_id": ep.id})
             return {"endpoint_id": ep.id, "endpoint_url": chat_url, "model": model}
         finally:
             db.close()
@@ -1597,7 +1611,8 @@ def setup_model_routes(model_discovery):
                 body = await request.json()
                 if not isinstance(body, dict):
                     body = {}
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_endpoint_update_request_parse_failed", error, outcome="degraded", context={"endpoint_id": ep_id})
             body = {}
         db = SessionLocal()
         try:
@@ -1705,7 +1720,8 @@ def setup_model_routes(model_discovery):
         try:
             from src.ai_interaction import get_session_manager
             manager = get_session_manager()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_session_manager_lookup_failed", error, outcome="best_effort")
             manager = None
         if not manager:
             return 0
@@ -1715,7 +1731,8 @@ def setup_model_routes(model_discovery):
                 if _session_uses_endpoint_url(getattr(sess, "endpoint_url", "") or "", base_url):
                     sess.headers = {}
                     cleared += 1
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "model_session_header_clear_failed", error, outcome="best_effort")
             return cleared
         return cleared
 
