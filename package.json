@@ -6,7 +6,7 @@
   "scripts": {
     "check": "bash scripts/check.sh",
     "test": "npm run test:js",
-    "test:js": "node --test tests/test_paperclip_floor_ui.mjs tests/test_system_status_card.mjs tests/test_system_status_actions.mjs tests/test_theme_presets.mjs tests/test_voice_vad.mjs tests/test_voice_call_machine.mjs tests/test_graph_layout.mjs tests/test_model_meta.mjs tests/test_command_parse.mjs tests/test_censor_detect.mjs tests/test_module_boundaries.mjs"
+    "test:js": "node --test tests/test_paperclip_floor_ui.mjs tests/test_system_status_card.mjs tests/test_system_status_actions.mjs tests/test_theme_presets.mjs tests/test_voice_vad.mjs tests/test_voice_call_machine.mjs tests/test_graph_layout.mjs tests/test_model_meta.mjs tests/test_command_parse.mjs tests/test_censor_detect.mjs tests/test_module_boundaries.mjs tests/test_document_modules.mjs"
   },
   "devDependencies": {
     "@antithesishq/bombadil": "^0.3.2"
