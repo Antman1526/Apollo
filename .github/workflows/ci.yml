@@ -37,3 +37,20 @@ jobs:
         run: npm ci
       - name: Run JavaScript tests
         run: npm run test:js
+
+  e2e:
+    name: Ubuntu / browser journeys
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Python dependencies and Chromium
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m playwright install --with-deps chromium
+      - name: Run browser journeys
+        run: bash scripts/run-e2e.sh

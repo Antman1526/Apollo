@@ -10,6 +10,9 @@ s = socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1]); s.clos
 PY
 )"
 CHROMIUM="${APOLLO_E2E_CHROMIUM:-$(find "$HOME/Library/Caches/ms-playwright" -type f -name 'Google Chrome for Testing' -print -quit 2>/dev/null || true)}"
+if [[ -z "$CHROMIUM" ]]; then
+  CHROMIUM="$($PYTHON -c 'from playwright.sync_api import sync_playwright; p=sync_playwright().start(); print(p.chromium.executable_path); p.stop()' 2>/dev/null || true)"
+fi
 [[ -n "$CHROMIUM" ]] || { echo "Chromium is unavailable; run: python -m playwright install chromium"; exit 1; }
 cleanup() { kill "${SERVER_PID:-}" 2>/dev/null || true; rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
