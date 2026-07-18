@@ -5,6 +5,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from src.observability import report_exception
 from src.tools._common import _parse_tool_args, get_mcp_manager
 
 logger = logging.getLogger(__name__)
@@ -161,8 +162,14 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
             if mcp:
                 try:
                     await mcp.disconnect_server(sid)
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "admin_mcp_disconnect_before_delete_failed",
+                        error,
+                        outcome="best_effort",
+                        context={"server_id": sid},
+                    )
             db.delete(srv)
             db.commit()
             return {"response": f"Deleted MCP server '{name}'", "exit_code": 0}
@@ -197,8 +204,15 @@ async def do_manage_mcp(content: str, owner: Optional[str] = None) -> Dict:
                 return {"error": f"Server {sid} not found", "exit_code": 1}
             finally:
                 db2.close()
-        except Exception as e:
-            return {"error": str(e), "exit_code": 1}
+        except Exception as error:
+            report_exception(
+                logger,
+                "admin_mcp_reconnect_failed",
+                error,
+                outcome="critical",
+                context={"server_id": sid},
+            )
+            return {"error": "MCP server reconnect failed", "exit_code": 1}
 
     elif action in ("enable", "disable"):
         sid = args.get("server_id", "")
@@ -461,8 +475,9 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             for ep in db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True).all():
                 raw_models = []
                 try:
-                    raw_models = _json.loads(ep.cached_models or "[]") or []
-                except Exception:
+                    parsed_models = _json.loads(ep.cached_models or "[]")
+                    raw_models = parsed_models if isinstance(parsed_models, list) else []
+                except (_json.JSONDecodeError, TypeError):
                     raw_models = []
                 # If cache is empty, still allow matching against endpoint name
                 # for callers using model@endpoint elsewhere later.

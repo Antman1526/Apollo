@@ -44,3 +44,33 @@ def test_reconnect_passes_full_server_config():
         env={"KEY": "val"},
         url=None,
     )
+
+
+def test_reconnect_failure_is_redacted_and_observable():
+    """A failing MCP connection must not expose backend detail to the agent."""
+    from src.tool_implementations import do_manage_mcp
+
+    fake_mcp = MagicMock()
+    fake_mcp.disconnect_server = AsyncMock(
+        side_effect=RuntimeError("endpoint included a credential")
+    )
+    events = []
+
+    with patch("src.tools.admin.get_mcp_manager", return_value=fake_mcp), patch(
+        "src.tools.admin.report_exception",
+        side_effect=lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    ):
+        result = asyncio.run(
+            do_manage_mcp(json.dumps({"action": "reconnect", "server_id": "srv-123"}))
+        )
+
+    assert result == {"error": "MCP server reconnect failed", "exit_code": 1}
+    assert events == [
+        (
+            "admin_mcp_reconnect_failed",
+            {
+                "outcome": "critical",
+                "context": {"server_id": "srv-123"},
+            },
+        )
+    ]
