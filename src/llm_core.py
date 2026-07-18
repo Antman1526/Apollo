@@ -9,6 +9,7 @@ import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from src.model_context import get_context_length, DEFAULT_CONTEXT
+from src.observability import report_exception
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -160,13 +161,14 @@ def _is_ollama_native_url(url: str) -> bool:
     """Return True for native Ollama API URLs, including Ollama Cloud."""
     try:
         parsed = urlparse(url or "")
-    except Exception:
+        port = parsed.port
+    except ValueError:
         return False
     host = parsed.hostname or ""
     path = (parsed.path or "").rstrip("/")
     if _host_match(url, "ollama.com"):
         return True
-    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or parsed.port == 11434
+    local_ollama_host = host in {"localhost", "127.0.0.1", "0.0.0.0", "::1"} or port == 11434
     return local_ollama_host and (path == "/api" or path.startswith("/api/"))
 
 
@@ -290,7 +292,7 @@ def _host_match(url: str, *domains: str) -> bool:
         # rstrip(".") so a fully-qualified host with a trailing dot
         # ("api.anthropic.com.") still matches "anthropic.com".
         host = (urlparse(url).hostname or "").lower().rstrip(".")
-    except Exception:
+    except ValueError:
         return False
     if not host:
         return False
@@ -361,7 +363,7 @@ def _provider_label(url: str) -> str:
     if _is_ollama_native_url(url): return "Ollama"
     try:
         host = (urlparse(url).hostname or "").lower()
-    except Exception:
+    except ValueError:
         return "provider"
     if host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
         return "local endpoint"
@@ -377,7 +379,7 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
     if isinstance(body, bytes):
         try:
             body = body.decode("utf-8", errors="replace")
-        except Exception:
+        except (AttributeError, TypeError, UnicodeError):
             body = str(body)
     provider = _provider_label(url)
     # Try to pull a message out of the body
@@ -390,7 +392,7 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
                 detail = (err.get("message") or err.get("detail") or "").strip()
             elif isinstance(err, str):
                 detail = err.strip()
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         detail = (body or "").strip()[:240]
 
     if status in (401, 403):
@@ -777,15 +779,16 @@ def list_model_ids(base_chat_url: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT,
                 if m.get("name") or m.get("model")
             ]
         return model_ids
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "llm_model_list_primary_request_failed", error, outcome="best_effort")
         try:
             if ":11434" in base_chat_url or "ollama" in base_chat_url.lower():
                 root = base_chat_url.replace("/v1/chat/completions", "").replace("/chat/completions", "").rstrip("/")
                 r = httpx.get(root + "/api/tags", timeout=timeout)
                 r.raise_for_status()
                 return [m.get("name") or m.get("model") for m in (r.json().get("models") or []) if m.get("name") or m.get("model")]
-        except Exception:
-            pass
+        except Exception as fallback_error:
+            report_exception(logger, "llm_model_list_ollama_fallback_failed", fallback_error, outcome="best_effort")
         return []
 
 def normalize_model_id(endpoint_url: str, requested: str, timeout: int = LLMConfig.DEFAULT_TIMEOUT) -> Optional[str]:
@@ -814,7 +817,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     if isinstance(headers, str):
         try:
             headers = json.loads(headers)
-        except Exception:
+        except (json.JSONDecodeError, TypeError) as error:
+            report_exception(logger, "llm_headers_parse_failed", error, outcome="best_effort")
             headers = None
     if isinstance(headers, dict):
         h.update(headers)
@@ -1398,8 +1402,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                             else:
                                 if data.strip():
                                     yield f'data: {json.dumps({"delta": data})}\n\n'
-                    except Exception as e:
-                        logger.error(f"Error parsing stream data: {e}")
+                    except Exception as error:
+                        report_exception(logger, "llm_stream_event_parse_failed", error, outcome="best_effort")
                         continue
 
             # End of stream (no explicit [DONE] received)
@@ -1417,9 +1421,9 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         yield f'event: error\ndata: {json.dumps({"error": "Read timeout", "status": 504})}\n\n'
     except httpx.NetworkError:
         yield f'event: error\ndata: {json.dumps({"error": "Network error", "status": 502})}\n\n'
-    except Exception as e:
-        logger.error(f"Stream error: {e}")
-        yield f'event: error\ndata: {json.dumps({"error": str(e), "status": 502})}\n\n'
+    except Exception as error:
+        report_exception(logger, "llm_stream_failed", error, outcome="critical")
+        yield f'event: error\ndata: {json.dumps({"error": "Provider stream failed", "status": 502})}\n\n'
 
 
 def _summarize_stream_error(err_chunk: Optional[str]) -> str:
@@ -1435,8 +1439,8 @@ def _summarize_stream_error(err_chunk: Optional[str]) -> str:
                 status = j.get("status")
                 msg = (f"HTTP {status}: " if status else "") + str(txt)
                 return msg[:200].strip() or "primary model failed"
-    except Exception:
-        pass
+    except (AttributeError, TypeError, json.JSONDecodeError):
+        return "primary model failed"
     return "primary model failed"
 
 
