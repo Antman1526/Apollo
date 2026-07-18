@@ -88,6 +88,36 @@ def test_sync_caldav_decrypts_stored_password_and_validates_url(monkeypatch):
     }
 
 
+def test_sync_caldav_fails_closed_when_secret_decryption_raises(monkeypatch, caplog):
+    prefs_mod = types.ModuleType("routes.prefs_routes")
+    prefs_mod._load_for_user = lambda owner: {
+        "caldav": {
+            "url": "https://calendar.example.com/dav",
+            "username": owner,
+            "password": "enc:stored",
+        }
+    }
+    monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
+
+    secret_mod = types.ModuleType("src.secret_storage")
+
+    def decrypt(_value):
+        raise RuntimeError("key unavailable")
+
+    secret_mod.decrypt = decrypt
+    monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
+
+    async def unexpected_sync(*_args, **_kwargs):
+        raise AssertionError("sync should not run with an unreadable secret")
+
+    monkeypatch.setattr(caldav_sync, "_sync_blocking", unexpected_sync)
+
+    result = asyncio.run(caldav_sync.sync_caldav("alice"))
+
+    assert result["errors"] == ["CalDAV is not configured"]
+    assert "caldav_secret_decrypt_failed" in caplog.text
+
+
 def test_calendar_routes_use_hardened_caldav_client_and_secret_storage():
     text = Path("routes/calendar_routes.py").read_text(encoding="utf-8")
 

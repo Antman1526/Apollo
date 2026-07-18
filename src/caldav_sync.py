@@ -31,6 +31,8 @@ import uuid
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlparse, urlunparse
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 # Pull window: 90 days back, 1 year forward. Keeps the REPORT cheap and
@@ -128,19 +130,39 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     except (AuthorizationError, NotFoundError) as e:
         result["errors"].append(f"Discovery failed: {e}")
         return result
-    except Exception as e:
-        logger.info(f"CalDAV principal discovery failed, trying URL as calendar: {e}")
+    except Exception as error:
+        report_exception(
+            logger,
+            "caldav_calendar_discovery_failed",
+            error,
+            outcome="degraded",
+            context={"owner": owner},
+        )
         try:
             calendars = [client.calendar(url=url)]
-        except Exception as e2:
-            result["errors"].append(f"Could not open URL as calendar: {e2}")
+        except Exception as fallback_error:
+            report_exception(
+                logger,
+                "caldav_calendar_fallback_failed",
+                fallback_error,
+                outcome="degraded",
+                context={"owner": owner},
+            )
+            result["errors"].append("Could not open URL as calendar")
             return result
 
     if not calendars:
         try:
             calendars = [client.calendar(url=url)]
-        except Exception as e:
-            result["errors"].append(f"No calendars and URL fallback failed: {e}")
+        except Exception as error:
+            report_exception(
+                logger,
+                "caldav_empty_discovery_fallback_failed",
+                error,
+                outcome="degraded",
+                context={"owner": owner},
+            )
+            result["errors"].append("No calendars found and URL fallback failed")
             return result
 
     start = datetime.utcnow() - timedelta(days=_LOOKBACK_DAYS)
@@ -149,6 +171,7 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
     db = SessionLocal()
     try:
         for remote_cal in calendars:
+            cal_id = "unknown"
             try:
                 remote_url = str(remote_cal.url)
                 cal_id = _stable_cal_id(remote_url)
@@ -188,15 +211,29 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                 pending: dict = {}
                 try:
                     objs = remote_cal.date_search(start=start, end=end, expand=False)
-                except Exception as e:
-                    result["errors"].append(f"{display_name}: date_search failed ({e})")
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "caldav_date_search_failed",
+                        error,
+                        outcome="degraded",
+                        context={"calendar_id": cal_id},
+                    )
+                    result["errors"].append(f"{display_name}: date search failed")
                     continue
 
                 for obj in objs:
                     try:
                         ical = iCal.from_ical(obj.data)
-                    except Exception as e:
-                        result["errors"].append(f"{display_name}: parse failed ({e})")
+                    except Exception as error:
+                        report_exception(
+                            logger,
+                            "caldav_event_parse_failed",
+                            error,
+                            outcome="best_effort",
+                            context={"calendar_id": cal_id},
+                        )
+                        result["errors"].append(f"{display_name}: event parse failed")
                         continue
 
                     for comp in ical.walk():
@@ -279,9 +316,15 @@ def _sync_blocking(owner: str, url: str, username: str, password: str) -> dict:
                     db.delete(ev)
                 result["deleted"] += len(stale)
                 db.commit()
-            except Exception as e:
-                logger.exception("CalDAV sync failed for one calendar")
-                result["errors"].append(str(e)[:200])
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "caldav_calendar_sync_failed",
+                    error,
+                    outcome="degraded",
+                    context={"calendar_id": cal_id},
+                )
+                result["errors"].append("Calendar sync failed")
                 db.rollback()
     finally:
         db.close()
@@ -302,8 +345,15 @@ async def sync_caldav(owner: str) -> dict:
     try:
         from src.secret_storage import decrypt
         pw = decrypt(pw)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "caldav_secret_decrypt_failed",
+            error,
+            outcome="degraded",
+            context={"owner": owner},
+        )
+        pw = ""
     if not (url and user and pw):
         return {
             "calendars": 0, "events": 0, "deleted": 0,
@@ -314,6 +364,12 @@ async def sync_caldav(owner: str) -> dict:
         return await asyncio.to_thread(_sync_blocking, owner, url, user, pw)
     except ValueError as e:
         return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)]}
-    except Exception as e:
-        logger.exception("CalDAV sync raised")
-        return {"calendars": 0, "events": 0, "deleted": 0, "errors": [str(e)[:200]]}
+    except Exception as error:
+        report_exception(
+            logger,
+            "caldav_sync_failed",
+            error,
+            outcome="degraded",
+            context={"owner": owner},
+        )
+        return {"calendars": 0, "events": 0, "deleted": 0, "errors": ["CalDAV sync failed"]}
