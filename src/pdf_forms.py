@@ -131,7 +131,7 @@ def _infer_label(page: "fitz.Page", rect: "fitz.Rect", page_words: list) -> str:
 def _widget_on_state(w) -> str:
     try:
         return w.on_state() or ""
-    except Exception:
+    except RuntimeError:
         return ""
 
 

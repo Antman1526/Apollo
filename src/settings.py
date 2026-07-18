@@ -11,6 +11,7 @@ import logging
 from typing import Any
 
 from src.constants import SETTINGS_FILE, FEATURES_FILE
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -273,8 +274,8 @@ def get_user_setting(key: str, owner: str = "", default: Any = None) -> Any:
             prefs = _load_for_user(owner) or {}
             if key in prefs and prefs[key] not in (None, ""):
                 return prefs[key]
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "settings_user_preference_lookup_failed", error, outcome="best_effort", context={"owner": owner, "setting": key})
     return get_setting(key, default)
 
 

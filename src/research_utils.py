@@ -59,5 +59,5 @@ def is_low_quality(summary: str) -> bool:
             return True
         low = summary.lower()
         return any(marker in low for marker in LOW_QUALITY_MARKERS)
-    except Exception:
+    except (AttributeError, TypeError):
         return False  # fail open

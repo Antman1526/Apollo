@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -37,5 +38,6 @@ async def do_edit_image(content: str, owner: Optional[str] = None) -> Dict:
         if data.get("success") or data.get("id"):
             return {"output": f"Image edited ({action}). New image ID: {data.get('id', '?')}", "exit_code": 0}
         return {"error": data.get("error", f"{action} failed"), "exit_code": 1}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "media_edit_request_failed", error, outcome="critical", context={"owner": owner})
+        return {"error": "Image edit failed", "exit_code": 1}

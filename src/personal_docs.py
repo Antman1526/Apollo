@@ -63,7 +63,7 @@ def read_text_file(path: str) -> str:
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
-    except Exception:
+    except OSError:
         return ""
 
 def split_chunks(text: str, size: int = config.CHUNK_SIZE, overlap: int = config.CHUNK_OVERLAP) -> List[str]:
