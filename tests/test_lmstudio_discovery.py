@@ -120,6 +120,16 @@ class TestFingerprintProvider:
         assert result["provider"] == "lmstudio"
         assert result["models"] == ["qwen3.6-27b"]
 
+    def test_check_port_ignores_unreachable_host(self, monkeypatch):
+        discovery = ModelDiscovery(default_host="localhost")
+
+        def unavailable(_url, timeout=None):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr("src.model_discovery.httpx.get", unavailable)
+
+        assert discovery._check_port("localhost", 1234) is None
+
 
 # ════════════════════════════════════════════════════════════
 # _get_hosts — LM_STUDIO_URL env var
@@ -181,4 +191,17 @@ class TestGetHostsLmStudioUrl:
         discovery = ModelDiscovery(default_host="localhost")
         hosts = discovery._get_hosts()
         # Only localhost + host.docker.internal expected
+        assert "my-lm-box" not in hosts
+
+    def test_malformed_provider_url_is_ignored(self, monkeypatch):
+        monkeypatch.delenv("LLM_HOSTS", raising=False)
+        monkeypatch.setenv("LM_STUDIO_URL", "http://my-lm-box:invalid")
+        monkeypatch.setattr(
+            "src.model_discovery.discover_tailscale_hosts",
+            lambda: [],
+        )
+        discovery = ModelDiscovery(default_host="localhost")
+
+        hosts = discovery._get_hosts()
+
         assert "my-lm-box" not in hosts

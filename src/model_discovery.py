@@ -95,11 +95,14 @@ class ModelDiscovery:
                     continue
                 try:
                     parsed = urlparse(raw if "://" in raw else "http://" + raw)
-                    _append_host(out, parsed.hostname or "")
-                    if parsed.port:
-                        self._extra_ports.add(parsed.port)
-                except Exception:
+                    host = parsed.hostname or ""
+                    port = parsed.port
+                except (TypeError, ValueError):
                     pass
+                else:
+                    _append_host(out, host)
+                    if port:
+                        self._extra_ports.add(port)
 
         # Manual override takes priority
         extra = os.getenv("LLM_HOSTS", "").strip()
@@ -139,7 +142,7 @@ class ModelDiscovery:
                         and isinstance(models[0], dict)
                         and "key" in models[0] and "architecture" in models[0]):
                     return "lmstudio"
-        except Exception:
+        except (httpx.HTTPError, OSError, TypeError, ValueError):
             pass
         return None
 
@@ -161,7 +164,7 @@ class ModelDiscovery:
                     "models_display": [i.lstrip("/") for i in ids],
                     "provider": self._fingerprint_provider(host, port),
                 }
-        except Exception:
+        except (httpx.HTTPError, OSError, TypeError, ValueError):
             pass
         return None
 
