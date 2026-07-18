@@ -20,6 +20,7 @@ from src.model_context import estimate_tokens
 from src.chat_helpers import coerce_message_and_session
 from src.endpoint_resolver import normalize_base as _normalize_base, build_chat_url
 from src.prompt_security import untrusted_context_message
+from src.observability import report_exception
 from core.exceptions import SessionNotFoundError
 from src.auth_helpers import get_current_user
 from routes.session_routes import _verify_session_owner
@@ -96,8 +97,15 @@ def _clear_orphaned_session_endpoint(sess, owner: str | None = None) -> bool:
         sess.model = ""
         sess.headers = {}
         return True
-    except Exception:
+    except Exception as error:
         db.rollback()
+        report_exception(
+            logger,
+            "chat_orphaned_endpoint_clear_failed",
+            error,
+            outcome="best_effort",
+            context={"session_id": getattr(sess, "id", None), "owner": owner},
+        )
         return False
     finally:
         db.close()
@@ -114,7 +122,14 @@ def _endpoint_cache_contains_model(endpoint, model: str) -> bool:
         return True
     try:
         models = json.loads(raw) if isinstance(raw, str) else raw
-    except Exception:
+    except (json.JSONDecodeError, TypeError) as error:
+        report_exception(
+            logger,
+            "chat_endpoint_cached_models_parse_failed",
+            error,
+            outcome="best_effort",
+            context={"endpoint_id": getattr(endpoint, "id", None)},
+        )
         return True
     if not isinstance(models, list) or not models:
         return True
@@ -153,7 +168,14 @@ def _is_image_generation_session(sess, owner: str | None = None) -> bool:
                 continue
             if _endpoint_cache_contains_model(endpoint, model):
                 return True
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "chat_image_session_endpoint_lookup_failed",
+            error,
+            outcome="best_effort",
+            context={"owner": owner},
+        )
         return False
     finally:
         db.close()
@@ -193,13 +215,27 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             return False
         try:
             cached = json.loads(ep.cached_models) if isinstance(ep.cached_models, str) else (ep.cached_models or [])
-        except Exception:
+        except (json.JSONDecodeError, TypeError) as error:
+            report_exception(
+                logger,
+                "chat_session_model_cache_parse_failed",
+                error,
+                outcome="best_effort",
+                context={"endpoint_id": getattr(ep, "id", None), "session_id": session_id},
+            )
             cached = []
         if not cached:
             return False
         try:
             visible = _visible_models(cached, getattr(ep, "hidden_models", None))
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_session_model_visibility_filter_failed",
+                error,
+                outcome="best_effort",
+                context={"endpoint_id": getattr(ep, "id", None), "session_id": session_id},
+            )
             visible = cached
         if not visible:
             return False
@@ -221,9 +257,15 @@ def _recover_empty_session_model(sess, session_id: str, owner: str | None = None
             session_id, model, ep.id,
         )
         return True
-    except Exception as e:
+    except Exception as error:
         db.rollback()
-        logger.warning("Failed to recover empty session model for %s: %s", session_id, e)
+        report_exception(
+            logger,
+            "chat_session_model_recovery_failed",
+            error,
+            outcome="best_effort",
+            context={"session_id": session_id, "owner": owner},
+        )
         return False
     finally:
         db.close()
@@ -304,8 +346,14 @@ def setup_chat_routes(
                                    if isinstance(i, dict) and i.get("type") == "text"), "")
                     _prev_user_msg_ns = str(_c)[:500]
                     break
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_previous_message_extract_failed",
+                error,
+                outcome="best_effort",
+                context={"session_id": session, "owner": owner},
+            )
         use_web, _ignored_allow_ws, _web_decision = await resolve_web_access(
             chat_request.web_access, "chat", message, use_web, None,
             prev_message=_prev_user_msg_ns,
@@ -375,12 +423,14 @@ def setup_chat_routes(
             if request.headers.get("content-type", "").startswith("application/json"):
                 try:
                     body = await request.json()
-                except json.JSONDecodeError as e:
-                    raise HTTPException(400, f"Invalid JSON: {e}")
+                except json.JSONDecodeError as error:
+                    report_exception(logger, "chat_stream_json_payload_parse_failed", error, outcome="best_effort")
+                    raise HTTPException(400, "Invalid JSON payload") from error
         except HTTPException:
             raise
-        except Exception as e:
-            raise HTTPException(400, f"Request parsing error: {e}")
+        except Exception as error:
+            report_exception(logger, "chat_stream_request_parse_failed", error, outcome="best_effort")
+            raise HTTPException(400, "Request parsing failed") from error
 
         # Stash the user's UTC offset (in minutes east of UTC) from the
         # frontend so tools like manage_notes interpret natural-language
@@ -390,8 +440,8 @@ def setup_chat_routes(
             if _tz_hdr is not None:
                 from routes.calendar_routes import set_user_tz_offset
                 set_user_tz_offset(_tz_hdr)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "chat_timezone_header_apply_failed", error, outcome="best_effort")
 
         form_data = await request.form()
         message = form_data.get("message")
@@ -493,8 +543,14 @@ def setup_chat_routes(
         elif attachments:
             try:
                 att_ids = [str(x) for x in json.loads(attachments)]
-            except Exception:
-                pass
+            except (json.JSONDecodeError, TypeError) as error:
+                report_exception(
+                    logger,
+                    "chat_stream_attachment_ids_parse_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": session},
+                )
 
         no_memory = str(form_data.get("no_memory", "")).lower() == "true"
 
@@ -517,8 +573,14 @@ def setup_chat_routes(
                                    if isinstance(i, dict) and i.get("type") == "text"), "")
                     _prev_user_msg = str(_c)[:500]
                     break
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_stream_previous_message_extract_failed",
+                error,
+                outcome="best_effort",
+                context={"session_id": session, "owner": owner},
+            )
         from src.web_decider import resolve_web_access, apply_incognito
         use_web, allow_web_search, _web_decision = await resolve_web_access(
             web_access, chat_mode, message if isinstance(message, str) else "",
@@ -851,7 +913,14 @@ def setup_chat_routes(
             try:
                 from src.endpoint_resolver import resolve_chat_fallback_candidates
                 _fallback_candidates = resolve_chat_fallback_candidates(owner=_user)
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "chat_stream_fallback_candidates_resolve_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"owner": _user},
+                )
                 _fallback_candidates = []
 
             # Send model name early so the frontend can show it during streaming
