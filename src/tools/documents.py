@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from src.tools import _state
 from src.tools._common import _parse_tool_args, MAX_READ_CHARS
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ def _sniff_doc_language(text: str) -> str:
         try:
             _json.loads(s)
             return "json"
-        except Exception:
+        except _json.JSONDecodeError:
             pass
     # Shebang
     first = s.split("\n", 1)[0].strip().lower()
@@ -238,9 +239,16 @@ async def do_create_document(content_block: str, session_id: Optional[str] = Non
             "content": content,
             "version": 1,
         }
-    except Exception as e:
+    except Exception as error:
         db.rollback()
-        return {"error": f"Failed to create document: {e}"}
+        report_exception(
+            logger,
+            "document_create_failed",
+            error,
+            outcome="critical",
+            context={"session_id": session_id},
+        )
+        return {"error": "Failed to create document"}
     finally:
         db.close()
 
@@ -294,9 +302,16 @@ async def do_update_document(content: str, doc_id: Optional[str] = None, owner: 
             "content": new_content,
             "version": new_ver,
         }
-    except Exception as e:
+    except Exception as error:
         db.rollback()
-        return {"error": f"Failed to update document: {e}"}
+        report_exception(
+            logger,
+            "document_update_failed",
+            error,
+            outcome="critical",
+            context={"document_id": target_id or "unknown"},
+        )
+        return {"error": "Failed to update document"}
     finally:
         db.close()
 
@@ -390,9 +405,16 @@ async def do_edit_document(content: str, doc_id: Optional[str] = None, owner: Op
             "applied": applied,
             "skipped": skipped,
         }
-    except Exception as e:
+    except Exception as error:
         db.rollback()
-        return {"error": f"Failed to edit document: {e}"}
+        report_exception(
+            logger,
+            "document_edit_failed",
+            error,
+            outcome="critical",
+            context={"document_id": target_id or "unknown"},
+        )
+        return {"error": "Failed to edit document"}
     finally:
         db.close()
 
@@ -490,7 +512,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
         try:
             now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.utcnow()
             diff = (now - ts).total_seconds()
-        except Exception:
+        except (AttributeError, TypeError, ValueError):
             return 'unknown'
         if diff < 60: return 'just now'
         if diff < 3600: return f'{int(diff / 60)}m ago'
@@ -577,8 +599,14 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
 
         else:
             return {"error": f"Unknown action: {action}", "exit_code": 1}
-    except Exception as e:
-        logger.error(f"manage_documents error: {e}")
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(
+            logger,
+            "document_manage_failed",
+            error,
+            outcome="critical",
+            context={"action": action},
+        )
+        return {"error": "Document operation failed", "exit_code": 1}
     finally:
         db.close()
