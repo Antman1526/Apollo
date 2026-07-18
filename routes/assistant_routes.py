@@ -8,6 +8,7 @@ enabled tools, timezone, and the three check-in times/prompts/enabled flags.
 """
 
 import json
+import logging
 from datetime import datetime
 from typing import Optional
 
@@ -17,6 +18,9 @@ from pydantic import BaseModel
 from core.database import SessionLocal, CrewMember, ScheduledTask
 from src.auth_helpers import get_current_user
 from src.task_scheduler import compute_next_run
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 class CheckInUpdate(BaseModel):
@@ -44,8 +48,9 @@ _EMAIL_TOOLS = {"send_email", "reply_to_email"}
 
 def _crew_to_dict(c: CrewMember) -> dict:
     try:
-        tools = json.loads(c.enabled_tools) if c.enabled_tools else []
-    except Exception:
+        parsed_tools = json.loads(c.enabled_tools) if c.enabled_tools else []
+        tools = parsed_tools if isinstance(parsed_tools, list) else []
+    except (TypeError, json.JSONDecodeError):
         tools = []
     return {
         "id": c.id,
@@ -185,8 +190,9 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
                 crew_db.enabled_tools = json.dumps(payload.enabled_tools)
             if payload.allow_autonomous_email is not None:
                 try:
-                    existing = json.loads(crew_db.enabled_tools) if crew_db.enabled_tools else []
-                except Exception:
+                    parsed_tools = json.loads(crew_db.enabled_tools) if crew_db.enabled_tools else []
+                    existing = parsed_tools if isinstance(parsed_tools, list) else []
+                except (TypeError, json.JSONDecodeError):
                     existing = []
                 if payload.allow_autonomous_email:
                     for t in ("send_email", "reply_to_email"):
@@ -318,7 +324,13 @@ def setup_assistant_routes(task_scheduler) -> APIRouter:
         try:
             from zoneinfo import available_timezones
             zones = sorted(available_timezones())
-        except Exception:
+        except (ImportError, OSError) as error:
+            report_exception(
+                logger,
+                "assistant_timezone_list_failed",
+                error,
+                outcome="best_effort",
+            )
             zones = ["UTC"]
         return {"timezones": zones}
 
