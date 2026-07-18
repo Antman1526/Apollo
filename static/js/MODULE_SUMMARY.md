@@ -3,6 +3,20 @@
 ## Purpose
 This document describes what each JavaScript module is responsible for.
 
+## Extraction Rules
+
+Feature entry modules own initialization, event wiring, and cross-feature
+orchestration. Extracted modules own one of: pure state, API adapters, DOM
+rendering, or a focused interaction. Extracted modules may import sibling
+helpers but must not import an entry module; entry modules import feature
+modules. State has one named owner per feature and API calls remain at the
+feature boundary rather than being repeated in render helpers.
+
+The `document/`, `emailLibrary/`, `settings/`, `notes/`, and `chat/` folders
+are reserved for these extractions. Every new module must stay below 1,500
+lines. Existing entry modules have temporary measured baselines enforced by
+`scripts/check_module_sizes.py`; an extraction may only lower that baseline.
+
 ---
 
 ## Core Modules (in static/js/)

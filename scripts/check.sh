@@ -15,6 +15,7 @@ fi
 
 "$PYTHON" -m compileall -q app.py companion core routes services src scripts/apollo-ralph scripts/check-paperclip-browser
 "$PYTHON" scripts/check_runtime_paths.py --root "$ROOT_DIR"
+"$PYTHON" scripts/check_module_sizes.py
 "$PYTHON" -m pytest -q
 npm run test:js
 if [[ "${APOLLO_STARTUP_SMOKE:-0}" == "1" ]]; then

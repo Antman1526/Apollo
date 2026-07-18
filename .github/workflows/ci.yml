@@ -27,6 +27,7 @@ jobs:
         run: |
           python -m compileall -q app.py companion core routes services src scripts
           python scripts/check_runtime_paths.py --root .
+          python scripts/check_module_sizes.py
           python -m pytest -q
       - uses: actions/setup-node@v4
         with:
