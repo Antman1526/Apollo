@@ -20,18 +20,26 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+      - name: Install runtime and packaging dependencies
+        run: python -m pip install --upgrade pip -r requirements.txt pyinstaller
 
       - name: Build Apollo.exe (launcher)
         # --console keeps the window open so the first-run admin password and
         # server logs are visible. --onefile produces a single Apollo.exe.
         run: pyinstaller --onefile --console --name Apollo scripts/windows_launcher.py
 
+      - name: Smoke the packaged launcher
+        run: dist/Apollo.exe --help
+
+      - name: Write artifact checksum
+        run: Get-FileHash dist/Apollo.exe -Algorithm SHA256 | Select-Object Hash, Path | ConvertTo-Json | Set-Content dist/Apollo.exe.sha256.json
+
       - name: Upload Apollo.exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: Apollo-windows-exe
-          path: dist/Apollo.exe
+          path: |
+            dist/Apollo.exe
+            dist/Apollo.exe.sha256.json
           if-no-files-found: error
           retention-days: 90

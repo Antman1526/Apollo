@@ -3,42 +3,36 @@ name: CI
 on:
   pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
-
+    name: ${{ matrix.os }} / Python 3.12 / Node 20
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-
-      - name: Compile Python modules
-        run: python -m compileall -q app.py companion core routes services src scripts/apollo-ralph scripts/check-paperclip-browser
-
-      - name: Run Python tests
-        run: python -m pytest -q
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Verify Python sources and tests
+        run: |
+          python -m compileall -q app.py companion core routes services src scripts
+          python scripts/check_runtime_paths.py --root .
+          python -m pytest -q
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: npm
-
       - name: Install Node dependencies
         run: npm ci
-
       - name: Run JavaScript tests
         run: npm run test:js
