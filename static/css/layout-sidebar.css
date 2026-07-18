@@ -371,6 +371,7 @@
       align-items: center;
       flex-shrink: 0;
       min-height: 24px;
+      position:relative;
     }
     .sidebar-brand-title {
       font-size: 1rem;
@@ -382,6 +383,15 @@
       position: relative;
       top: 0;
       left: -10px;
+    }
+    .sidebar-brand::after {
+      content:'';
+      position:absolute;
+      bottom:-5px;
+      left:8px;
+      width:22px;
+      height:1px;
+      background:color-mix(in srgb, var(--brand-color, var(--red)) 65%, transparent);
     }
     .sidebar-sep {
       display: none;

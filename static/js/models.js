@@ -576,7 +576,13 @@ export async function refreshModels(force = false) {
       box.appendChild(noModels);
       // No endpoints yet: keep the welcome screen focused on first setup.
       const welcomeSub = document.getElementById('welcome-sub');
-      if (welcomeSub) welcomeSub.innerHTML = 'Type <span class="setup-trigger-link" style="color:var(--accent,var(--red));font-weight:600;cursor:pointer;text-decoration:underline;" title="Click to launch setup">/setup</span> to get started.';
+      if (welcomeSub) {
+        welcomeSub.innerHTML = `<button type="button" class="welcome-setup-action setup-trigger-link" title="Connect a model">
+          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8"/><path d="M8 6h8"/><path d="M5 10h14v9a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3z"/><path d="M9 15h.01M15 15h.01"/></svg>
+          <span>Connect a model</span>
+          <span class="welcome-setup-action-arrow" aria-hidden="true">→</span>
+        </button>`;
+      }
       const welcomeTip = document.getElementById('welcome-tip');
       if (welcomeTip) welcomeTip.textContent = 'Type /setup, then choose Local models or API.';
     } else {

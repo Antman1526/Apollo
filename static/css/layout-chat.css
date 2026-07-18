@@ -121,6 +121,9 @@
     #welcome-screen .welcome-name {
       font-size:2.2rem;
       font-weight:700;
+      display:inline-flex;
+      align-items:center;
+      position:relative;
       background: linear-gradient(135deg, var(--brand-color, var(--red)), color-mix(in srgb, var(--brand-color, var(--red)) 60%, var(--fg)));
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -128,12 +131,27 @@
       letter-spacing:0.03em;
       margin-bottom:10px;
     }
+    #welcome-screen .welcome-name::after {
+      content:'';
+      position:absolute;
+      right:0;
+      bottom:-4px;
+      left:2.2rem;
+      height:1px;
+      background:color-mix(in srgb, var(--brand-color, var(--red)) 58%, transparent);
+      opacity:0.72;
+    }
     .welcome-boat {
       width: 1.8rem;
       height: 1.8rem;
       margin-right: 0.4rem;
       vertical-align: -0.15em;
       color: var(--brand-color, var(--red));
+      animation: welcome-boat-drift 3.6s ease-in-out infinite;
+    }
+    @keyframes welcome-boat-drift {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-2px); }
     }
     #welcome-screen .welcome-sub {
       font-size:0.85rem;
@@ -141,6 +159,42 @@
       opacity:0.6;
       line-height:1.5;
       max-width:300px;
+    }
+    #welcome-screen .welcome-sub:has(.welcome-setup-action) {
+      max-height:44px;
+      margin-top:4px;
+      opacity:1;
+      overflow:visible;
+    }
+    .welcome-setup-action {
+      min-height:32px;
+      display:inline-flex;
+      align-items:center;
+      gap:7px;
+      padding:5px 8px 5px 9px;
+      border:1px solid color-mix(in srgb, var(--brand-color, var(--red)) 55%, var(--border));
+      border-radius:6px;
+      background:color-mix(in srgb, var(--brand-color, var(--red)) 9%, var(--panel));
+      color:var(--fg);
+      font:inherit;
+      font-size:11px;
+      font-weight:600;
+      letter-spacing:0;
+      cursor:pointer;
+      pointer-events:auto;
+      transition:background .16s ease, border-color .16s ease, transform .16s ease;
+    }
+    .welcome-setup-action svg { width:14px; height:14px; color:var(--brand-color, var(--red)); }
+    .welcome-setup-action-arrow { color:var(--brand-color, var(--red)); transition:transform .16s ease; }
+    .welcome-setup-action:hover {
+      background:color-mix(in srgb, var(--brand-color, var(--red)) 17%, var(--panel));
+      border-color:var(--brand-color, var(--red));
+      transform:translateY(-1px);
+    }
+    .welcome-setup-action:hover .welcome-setup-action-arrow { transform:translateX(2px); }
+    .welcome-setup-action:focus-visible {
+      outline:2px solid color-mix(in srgb, var(--brand-color, var(--red)) 74%, white);
+      outline-offset:3px;
     }
     #welcome-screen .welcome-version {
       font-size:0.7rem;
@@ -443,6 +497,22 @@
       margin-left: auto;
       margin-right: auto;
       width: 100%;
+      box-shadow:inset 0 1px 0 color-mix(in srgb, white 5%, transparent);
+      transition:border-color .16s ease, box-shadow .16s ease, background .16s ease;
+    }
+    .chat-input-bar:focus-within {
+      border-color:color-mix(in srgb, var(--accent, var(--red)) 72%, var(--border));
+      box-shadow:0 0 0 2px color-mix(in srgb, var(--accent, var(--red)) 12%, transparent), inset 0 1px 0 color-mix(in srgb, white 7%, transparent);
+    }
+    .chat-container.welcome-active .chat-input-bar {
+      background:color-mix(in srgb, var(--panel) 92%, var(--bg));
+      box-shadow:0 18px 38px rgba(0,0,0,.2), inset 0 1px 0 color-mix(in srgb, white 6%, transparent);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .welcome-boat { animation:none; }
+      .welcome-setup-action,
+      .welcome-setup-action-arrow,
+      .chat-input-bar { transition:none; }
     }
     .chat-input-top {
       width: 100%;
