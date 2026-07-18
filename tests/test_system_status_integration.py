@@ -217,6 +217,8 @@ def test_search_status_reports_partial_index_failure():
     assert out["state"] == "degraded"
     assert out["metrics"]["global_index"]["available"] is True
     assert out["metrics"]["personal_docs"]["available"] is False
+    assert out["metrics"]["personal_docs"]["error"] == "Status check failed"
+    assert "bad index" not in str(out)
 
 
 def test_system_status_route_is_admin_gated(monkeypatch):

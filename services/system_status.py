@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
+import logging
 from typing import Any, Callable
+
+from src.observability import report_exception
 
 
 StatusProvider = Callable[[], dict[str, Any]]
+logger = logging.getLogger(__name__)
 
 
 def _utcnow_iso() -> str:
@@ -64,7 +69,7 @@ def _failed_component(label: str, exc: Exception) -> dict[str, Any]:
         ready=False,
         state="error",
         summary="Status check failed",
-        metrics={"error": str(exc)},
+        metrics={"error": "Status check failed", "error_type": type(exc).__name__},
         next_step="Open diagnostics and inspect server logs",
     )
 
@@ -94,6 +99,7 @@ def storage_status(readiness_provider: StatusProvider | None = None) -> dict[str
             next_step="Run the readiness check and repair failed storage paths" if failed else None,
         )
     except Exception as exc:
+        report_exception(logger, "system_status_storage_check_failed", exc, outcome="degraded")
         return _failed_component("Storage", exc)
 
 
@@ -117,12 +123,13 @@ def memory_status(memory_manager: Any = None, memory_vector: Any = None) -> dict
             and str((mem or {}).get("text") or "").strip()
         ])
     except Exception as exc:
+        report_exception(logger, "system_status_memory_load_failed", exc, outcome="degraded")
         return _component(
             label="Memory",
             ready=False,
             state="error",
             summary="Persistent memory could not be read",
-            metrics={"error": str(exc)},
+            metrics={"error": "Persistent memory could not be read", "error_type": type(exc).__name__},
             next_step="Check the memory data file and permissions",
         )
 
@@ -134,7 +141,8 @@ def memory_status(memory_manager: Any = None, memory_vector: Any = None) -> dict
         try:
             vector_count = int(memory_vector.count())
         except Exception as exc:
-            vector_error = str(exc)
+            report_exception(logger, "system_status_memory_vector_count_failed", exc, outcome="degraded")
+            vector_error = "Vector index count is unavailable"
             vector_ready = False
 
     vector_drift = abs(indexable_count - vector_count) if vector_attached and vector_ready else 0
@@ -215,6 +223,7 @@ def auth_status(auth_manager: Any = None) -> dict[str, Any]:
             next_step="Create or repair an admin account" if configured and admins == 0 else None,
         )
     except Exception as exc:
+        report_exception(logger, "system_status_auth_check_failed", exc, outcome="degraded")
         return _failed_component("Auth", exc)
 
 
@@ -242,6 +251,7 @@ def email_status() -> dict[str, Any]:
             next_step="Enable or repair at least one mail account" if total and not enabled else None,
         )
     except Exception as exc:
+        report_exception(logger, "system_status_email_check_failed", exc, outcome="degraded")
         return _failed_component("Email", exc)
 
 
@@ -265,14 +275,13 @@ def documents_status() -> dict[str, Any]:
             metrics={"documents": total, "active": active, "archived": archived},
         )
     except Exception as exc:
+        report_exception(logger, "system_status_documents_check_failed", exc, outcome="degraded")
         return _failed_component("Documents", exc)
 
 
 def model_endpoint_status() -> dict[str, Any]:
     """Summarize configured model endpoints and cached model lists."""
     try:
-        import json
-
         from core.database import ModelEndpoint, SessionLocal
 
         db = SessionLocal()
@@ -293,7 +302,14 @@ def model_endpoint_status() -> dict[str, Any]:
                 continue
             try:
                 models = json.loads(raw)
-            except Exception:
+            except (json.JSONDecodeError, TypeError) as exc:
+                report_exception(
+                    logger,
+                    "system_status_cached_models_parse_failed",
+                    exc,
+                    outcome="best_effort",
+                    context={"endpoint_id": getattr(ep, "id", None)},
+                )
                 models = []
             if isinstance(models, list) and models:
                 cached += 1
@@ -317,6 +333,7 @@ def model_endpoint_status() -> dict[str, Any]:
             next_step="Refresh model endpoint caches or check endpoint connectivity" if enabled and cached == 0 else None,
         )
     except Exception as exc:
+        report_exception(logger, "system_status_models_check_failed", exc, outcome="degraded")
         return _failed_component("Models", exc)
 
 
@@ -335,6 +352,7 @@ def tool_server_status(mcp_manager: Any = None) -> dict[str, Any]:
         statuses = mcp_manager.get_all_statuses()
         tools = mcp_manager.get_all_tools() if hasattr(mcp_manager, "get_all_tools") else []
     except Exception as exc:
+        report_exception(logger, "system_status_tool_servers_check_failed", exc, outcome="degraded")
         return _failed_component("Tool Servers", exc)
 
     counts: dict[str, int] = {}
@@ -390,8 +408,9 @@ def search_status(rag_manager: Any = None, personal_docs_mgr: Any = None) -> dic
         try:
             metrics["global_index"] = {"available": True, "stats": rag_manager.get_stats()}
         except Exception as exc:
+            report_exception(logger, "system_status_global_index_check_failed", exc, outcome="degraded")
             degraded.append("global_index_error")
-            metrics["global_index"] = {"available": False, "error": str(exc)}
+            metrics["global_index"] = {"available": False, "error": "Status check failed", "error_type": type(exc).__name__}
 
     if personal_docs_mgr is None:
         metrics["personal_docs"] = {"available": False}
@@ -399,8 +418,9 @@ def search_status(rag_manager: Any = None, personal_docs_mgr: Any = None) -> dic
         try:
             metrics["personal_docs"] = {"available": True, "stats": personal_docs_mgr.get_stats()}
         except Exception as exc:
+            report_exception(logger, "system_status_personal_docs_check_failed", exc, outcome="degraded")
             degraded.append("personal_docs_error")
-            metrics["personal_docs"] = {"available": False, "error": str(exc)}
+            metrics["personal_docs"] = {"available": False, "error": "Status check failed", "error_type": type(exc).__name__}
 
     ready = not degraded
     return _component(
@@ -434,6 +454,7 @@ def terminal_status() -> dict[str, Any]:
             },
         )
     except Exception as exc:
+        report_exception(logger, "system_status_terminal_check_failed", exc, outcome="degraded")
         return _failed_component("Terminal", exc)
 
 
@@ -489,7 +510,8 @@ def background_status(task_scheduler: Any = None) -> dict[str, Any]:
         finally:
             db.close()
     except Exception as exc:
-        db_error = str(exc)
+        report_exception(logger, "system_status_background_database_check_failed", exc, outcome="best_effort")
+        db_error = "Background work database metrics are unavailable"
 
     ready = running and task_done is not True and not db_metrics.get("stuck_runs")
     state = "ready" if ready else "degraded" if running and task_done is not True else "stopped"
