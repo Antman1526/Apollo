@@ -11,6 +11,7 @@ pitfall already fixed in topic_analyzer.py.
 `retrieve` (which needs a chroma collection) is stubbed out so these tests
 exercise only the keyword-hint loop.
 """
+from src import tool_index
 from src.tool_index import ToolIndex
 
 
@@ -51,3 +52,33 @@ def test_genuine_keywords_still_force_include():
     assert "reply_to_email" in ti.get_tools_for_query("reply to this email")
     assert "edit_document" in ti.get_tools_for_query("edit the document")
     assert "serve_model" in ti.get_tools_for_query("serve the model")
+
+
+def test_mcp_index_failures_are_observable_and_non_blocking(monkeypatch):
+    class FailingCollection:
+        def get(self, **_kwargs):
+            raise RuntimeError("index unavailable")
+
+    class FailingMcpManager:
+        _generation = 1
+
+        @staticmethod
+        def get_tool_descriptions_for_prompt(_disabled):
+            raise RuntimeError("manager unavailable")
+
+    events = []
+    monkeypatch.setattr(
+        tool_index,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+    index = ToolIndex.__new__(ToolIndex)
+    index._collection = FailingCollection()
+    index._mcp_generation = 0
+
+    index.index_mcp_tools(FailingMcpManager())
+
+    assert events == [
+        ("tool_index_mcp_entries_clear_failed", {"outcome": "best_effort"}),
+        ("tool_index_mcp_descriptions_load_failed", {"outcome": "best_effort"}),
+    ]

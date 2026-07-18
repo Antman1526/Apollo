@@ -290,8 +290,15 @@ async def _run_subprocess_streaming(
             prog_task.cancel()
             try:
                 await prog_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "agent_subprocess_progress_cleanup_failed",
+                    error,
+                    outcome="best_effort",
+                )
         # Wait for readers to finish draining the pipes.
         for t in (rd_out, rd_err):
             try:
@@ -647,11 +654,18 @@ async def _direct_fallback(
                 )
             except asyncio.TimeoutError:
                 return {"error": f"web_fetch: timed out fetching {url}", "exit_code": 1}
-            except Exception as e:
+            except Exception as error:
                 # Direct URL fetches can hit bot protection / auth walls
                 # (e.g. eBay 403). Treat that as a tool failure the model can
                 # reason around, not an uncaught chat-stream 500.
-                return {"error": f"web_fetch: {url}: {e}", "exit_code": 1}
+                report_exception(
+                    logger,
+                    "agent_web_fetch_failed",
+                    error,
+                    outcome="degraded",
+                    context={"tool_name": "web_fetch"},
+                )
+                return {"error": "web_fetch: request failed", "exit_code": 1}
             err = result.get("error")
             text = (result.get("content") or "").strip()
             title = result.get("title") or ""

@@ -12,6 +12,8 @@ import re
 import time
 from typing import Dict, List, Optional, Set
 
+from src.observability import report_exception
+
 try:
     import numpy as np
 except ImportError:
@@ -210,13 +212,24 @@ class ToolIndex:
             existing = self._collection.get(where={"tool_type": "mcp"})
             if existing and existing["ids"]:
                 self._collection.delete(ids=existing["ids"])
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(
+                logger,
+                "tool_index_mcp_entries_clear_failed",
+                error,
+                outcome="best_effort",
+            )
 
         # Get current MCP tools
         try:
             all_tools = mcp_mgr.get_tool_descriptions_for_prompt(disabled_map or {})
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "tool_index_mcp_descriptions_load_failed",
+                error,
+                outcome="best_effort",
+            )
             all_tools = ""
 
         if not all_tools:
