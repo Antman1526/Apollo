@@ -6,6 +6,7 @@ import re
 from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args, _internal_headers
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,8 @@ async def _cookbook_servers() -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=_internal_headers())
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_state_fetch_failed", error, outcome="best_effort")
         return {"default_host": "", "hosts": []}
     env = (state or {}).get("env") or {}
     if not isinstance(env, dict):
@@ -368,8 +370,9 @@ async def do_download_model(content: str, owner: Optional[str] = None) -> Dict:
             default_note = " (defaulted to the cookbook's selected server — pass host= or local=true to override)" if _host_defaulted else ""
             return {"output": f"Download started: {repo_id} on {where} (session: {sid}){note}{default_note}", "session_id": sid, "host": host, "exit_code": 0}
         return {"error": data.get("error", "Download failed"), "exit_code": 1}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_download_start_failed", error, outcome="critical")
+        return {"error": "Could not start download", "exit_code": 1}
 
 
 
@@ -418,8 +421,9 @@ async def do_serve_model(content: str, owner: Optional[str] = None) -> Dict:
             note = "" if registered else " (state-write failed — task may not show in UI)"
             return {"output": f"Serving {repo_id} (session: {sid}){note}", "session_id": sid, "exit_code": 0}
         return {"error": data.get("error", "Serve failed"), "exit_code": 1}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_serve_start_failed", error, outcome="critical")
+        return {"error": "Could not start model server", "exit_code": 1}
 
 
 
@@ -560,7 +564,8 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
             return {"error": f"shell/exec returned HTTP {resp.status_code}: {resp.text[:200]}", "exit_code": 1}
         try:
             data = resp.json()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "cookbook_tool_stop_response_parse_failed", error, outcome="best_effort")
             data = {}
         kill_failed = isinstance(data, dict) and data.get("exit_code") not in (None, 0)
         kill_err = ((data.get("stderr") or data.get("error") or "").strip() if isinstance(data, dict) else "")
@@ -582,8 +587,9 @@ async def _cookbook_kill_session(session_id: str, *, remote_host: str = "",
 
         suffix = " (was already gone)" if already_gone else ""
         return {"output": f"{verb} {target_label}{suffix}", "exit_code": 0}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_stop_failed", error, outcome="degraded")
+        return {"error": "Could not stop model server", "exit_code": 1}
 
 
 
@@ -624,8 +630,9 @@ async def do_list_downloads(content: str, owner: Optional[str] = None) -> Dict:
             pct_str = f" {pct}%" if pct is not None else ""
             lines.append(f"- {model}: {phase}{pct_str} ({t.get('remote', 'local')}, session: {t.get('session_id', '?')})")
         return {"output": "\n".join(lines), "downloads": tasks, "exit_code": 0}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_download_status_failed", error, outcome="degraded")
+        return {"error": "Could not read download status", "exit_code": 1}
 
 
 
@@ -685,8 +692,9 @@ async def do_search_hf_models(content: str, owner: Optional[str] = None) -> Dict
             else:
                 lines.append(f"- {m}")
         return {"output": "\n".join(lines), "models": models, "exit_code": 0}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_model_list_failed", error, outcome="degraded")
+        return {"error": "Could not list models", "exit_code": 1}
 
 
 
@@ -736,8 +744,9 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         if r.status_code >= 400 or (data.get("exit_code") not in (None, 0)):
             err = (data.get("stderr") or data.get("error") or r.text[:200]).strip()
             return {"error": f"tmux session {sess!r} not found on {host or 'local'}: {err}", "exit_code": 1}
-    except Exception as e:
-        return {"error": f"verify failed: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_server_verify_failed", error, outcome="degraded")
+        return {"error": "Server verification failed", "exit_code": 1}
 
     # Best-effort health check — does port respond to /v1/models?
     if host:
@@ -751,8 +760,8 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
                                   json={"command": health_cmd}, headers=headers)
             body = (r.json() or {}).get("stdout", "") if r.headers.get("content-type", "").startswith("application/json") else ""
             server_up = '"data"' in body or '"object"' in body
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_health_probe_failed", error, outcome="best_effort")
 
     # Read+modify+write cookbook state. APPEND a task entry; do NOT
     # overwrite the whole file (that'd nuke presets).
@@ -760,8 +769,9 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state", headers=headers)
             state = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
-    except Exception as e:
-        return {"error": f"could not read cookbook state: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_state_read_failed", error, outcome="critical")
+        return {"error": "Could not read cookbook state", "exit_code": 1}
     if not isinstance(state, dict):
         state = {}
     tasks = state.get("tasks") if isinstance(state.get("tasks"), list) else []
@@ -796,8 +806,9 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
             async with httpx.AsyncClient(timeout=10) as client:
                 await client.post(f"{_COOKBOOK_BASE}/api/cookbook/state",
                                   json=state, headers=headers)
-        except Exception as e:
-            return {"error": f"could not save cookbook state: {e}", "exit_code": 1}
+        except Exception as error:
+            report_exception(logger, "cookbook_tool_state_save_failed", error, outcome="critical")
+            return {"error": "Could not save cookbook state", "exit_code": 1}
 
     # Optionally register as a chat endpoint
     endpoint_msg = ""
@@ -807,7 +818,8 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
         endpoint_url = f"http://{host_only}:{int(port)}/v1"
         try:
             from src.tools.admin import do_manage_endpoints  # avoid forward ref issues
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "cookbook_tool_endpoint_manager_import_failed", error, outcome="best_effort")
             do_manage_endpoints = None
         if do_manage_endpoints is not None:
             try:
@@ -821,8 +833,9 @@ async def do_adopt_served_model(content: str, owner: Optional[str] = None) -> Di
                     endpoint_msg = f" Endpoint {endpoint_url} added as {display_name!r}."
                 else:
                     endpoint_msg = f" Endpoint registration skipped: {(ep_result or {}).get('error', 'unknown')}"
-            except Exception as e:
-                endpoint_msg = f" Endpoint registration failed: {e}"
+            except Exception as error:
+                report_exception(logger, "cookbook_tool_endpoint_registration_failed", error, outcome="degraded")
+                endpoint_msg = " Endpoint registration failed."
 
     return {
         "output": (
@@ -876,8 +889,9 @@ async def do_list_serve_presets(content: str, owner: Optional[str] = None) -> Di
             resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state",
                                     headers=_internal_headers())
             state = resp.json() or {}
-    except Exception as e:
-        return {"error": f"Failed to fetch cookbook state: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_preset_state_fetch_failed", error, outcome="degraded")
+        return {"error": "Could not load cookbook presets", "exit_code": 1}
 
     presets = state.get("presets") or []
     if not presets:
@@ -925,8 +939,9 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
             resp = await client.get(f"{_COOKBOOK_BASE}/api/cookbook/state",
                                     headers=_internal_headers())
             state = resp.json() or {}
-    except Exception as e:
-        return {"error": f"Failed to fetch cookbook state: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_preset_launch_state_fetch_failed", error, outcome="degraded")
+        return {"error": "Could not load cookbook presets", "exit_code": 1}
 
     presets = state.get("presets") or []
     # Match by exact name first, then case-insensitive substring.
@@ -978,8 +993,9 @@ async def do_serve_preset(content: str, owner: Optional[str] = None) -> Dict:
             note = "" if registered else " (state-write failed — task may not show in UI)"
             return {"output": f"Launched preset {chosen.get('name')!r}: {repo_id} on {host or 'local'} (session: {sid}){note}", "session_id": sid, "exit_code": 0}
         return {"error": data.get("error", "Serve failed"), "exit_code": 1}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_preset_launch_failed", error, outcome="critical")
+        return {"error": "Could not launch preset", "exit_code": 1}
 
 
 
@@ -1028,7 +1044,8 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
                     repo = t.get("modelId") or t.get("repoId") or (t.get("payload") or {}).get("repo_id") or t.get("name")
                     if repo and repo not in downloaded:
                         downloaded.append(repo)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "cookbook_tool_download_history_parse_failed", error, outcome="best_effort")
                 downloaded = []
             if downloaded:
                 host_str = f" on {raw_host or host}" if (raw_host or host) else ""
@@ -1045,5 +1062,6 @@ async def do_list_cached_models(content: str, owner: Optional[str] = None) -> Di
             kind = " [diffusion]" if m.get("is_diffusion") else ""
             lines.append(f"- {name}{kind} — {sz}{inc}")
         return {"output": "\n".join(lines), "models": models, "exit_code": 0}
-    except Exception as e:
-        return {"error": str(e), "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "cookbook_tool_cached_models_list_failed", error, outcome="degraded")
+        return {"error": "Could not list cached models", "exit_code": 1}
