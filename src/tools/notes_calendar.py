@@ -5,6 +5,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from src.observability import report_exception
 from src.tools._common import _parse_tool_args
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,14 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 try:
                     from routes.calendar_routes import parse_due_for_user as _pdt_user
                     due_iso = _pdt_user(due_raw)
-                except Exception:
+                except (AttributeError, TypeError, ValueError) as error:
+                    report_exception(
+                        logger,
+                        "notes_tool_due_date_parse_failed",
+                        error,
+                        outcome="best_effort",
+                        context={"owner": owner, "action": "add"},
+                    )
                     due_iso = due_raw  # fall through; trust the model
             if due_iso and title:
                 # Calendar event reminders are represented as Notes. If the
@@ -172,7 +180,14 @@ async def do_manage_notes(content: str, owner: Optional[str] = None) -> Dict:
                 try:
                     from routes.calendar_routes import parse_due_for_user as _pdt_user
                     note.due_date = _pdt_user(due_raw)
-                except Exception:
+                except (AttributeError, TypeError, ValueError) as error:
+                    report_exception(
+                        logger,
+                        "notes_tool_due_date_parse_failed",
+                        error,
+                        outcome="best_effort",
+                        context={"owner": owner, "action": "update"},
+                    )
                     note.due_date = due_raw  # fall through; trust the model
             new_items = args.get("checklist_items")
             if new_items is None:

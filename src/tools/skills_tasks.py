@@ -5,6 +5,7 @@ import os
 import re
 from typing import Any, Dict, List, Optional
 
+from src.observability import report_exception
 from src.tools._common import _parse_tool_args
 
 logger = logging.getLogger(__name__)
@@ -147,8 +148,15 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
             return {"error": "content (full SKILL.md) is required for edit", "exit_code": 1}
         try:
             sk_new = Skill.from_markdown(new_content)
-        except Exception as e:
-            return {"error": f"Could not parse content as SKILL.md: {e}", "exit_code": 1}
+        except Exception as error:
+            report_exception(
+                logger,
+                "skill_tool_edit_parse_failed",
+                error,
+                outcome="critical",
+                context={"owner": owner},
+            )
+            return {"error": "Could not parse content as SKILL.md", "exit_code": 1}
         sk_new.name = slugify(sk_new.name or name)
         existing = sm.load(owner=owner)
         match = next((s for s in existing if s.get("name") == name), None)
@@ -177,8 +185,15 @@ async def do_manage_skills(content: str, owner: Optional[str] = None) -> Dict:
         new_md = md.replace(old, new_str, 1)
         try:
             sk_new = Skill.from_markdown(new_md)
-        except Exception as e:
-            return {"error": f"Patched content is not valid SKILL.md: {e}", "exit_code": 1}
+        except Exception as error:
+            report_exception(
+                logger,
+                "skill_tool_patch_parse_failed",
+                error,
+                outcome="critical",
+                context={"owner": owner},
+            )
+            return {"error": "Patched content is not valid SKILL.md", "exit_code": 1}
         sk_new.name = slugify(sk_new.name or name)
         ok = sm.update_skill(name, _skill_dump(sk_new), owner=owner)
         return {"results": f"Patched skill `{sk_new.name}`."} if ok else {"error": "Patch update failed", "exit_code": 1}

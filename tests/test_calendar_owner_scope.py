@@ -21,6 +21,15 @@ from unittest.mock import MagicMock
 
 import pytest
 from fastapi import HTTPException
+from tests.real_modules import _drop_module, import_real_module
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_calendar_modules_after_test():
+    """Do not let route-import stubs contaminate later calendar integration tests."""
+    yield
+    _drop_module("routes.calendar_routes")
+    import_real_module("core.database")
 
 
 def test_get_upcoming_events_is_owner_scoped():

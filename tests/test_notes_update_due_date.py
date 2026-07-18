@@ -16,6 +16,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from src import tool_implementations
+from src.tools import notes_calendar
 
 
 def _install_fakes(monkeypatch, note, parse=None):
@@ -108,3 +109,35 @@ def test_update_still_sets_other_fields_without_parsing_them(monkeypatch):
     assert note.label == "home"
     # No due_date supplied → the parser is not invoked.
     assert calls["parsed"] == []
+
+
+def test_update_due_date_parse_failure_falls_back_and_is_observable(monkeypatch):
+    note = SimpleNamespace(
+        id="abc12345-existing", owner=None, title="Dentist", content=None,
+        note_type="note", color=None, label=None, items=None,
+        pinned=False, archived=False, due_date=None,
+    )
+    _install_fakes(
+        monkeypatch,
+        note,
+        parse=lambda _value: (_ for _ in ()).throw(ValueError("invalid date detail")),
+    )
+    events = []
+    monkeypatch.setattr(
+        notes_calendar,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+
+    result = _run_update(
+        {"action": "update", "id": "abc12345", "due_date": "unparseable date"}
+    )
+
+    assert result.get("exit_code") == 0
+    assert note.due_date == "unparseable date"
+    assert events == [
+        (
+            "notes_tool_due_date_parse_failed",
+            {"outcome": "best_effort", "context": {"owner": None, "action": "update"}},
+        )
+    ]
