@@ -20,6 +20,8 @@ import asyncio
 import logging
 from datetime import timezone
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +84,14 @@ def find_remote_calendar(calendars, local_cal_id: str):
         try:
             if _stable_cal_id(str(cal.url)) == local_cal_id:
                 return cal
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "caldav_writeback_calendar_id_read_failed",
+                error,
+                outcome="best_effort",
+                context={"calendar_id": local_cal_id},
+            )
             continue
     return None
 
@@ -103,7 +112,14 @@ def push_event(calendars, local_cal_id: str, ev: dict, *, delete: bool = False) 
 
     try:
         existing = remote.event_by_uid(uid)
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "caldav_writeback_event_lookup_failed",
+            error,
+            outcome="best_effort",
+            context={"calendar_id": local_cal_id},
+        )
         existing = None
 
     if delete:
@@ -129,10 +145,22 @@ def _discover_calendars(client):
         return client.principal().calendars()
     except (AuthorizationError, NotFoundError):
         raise
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "caldav_writeback_discovery_failed",
+            error,
+            outcome="degraded",
+        )
         try:
             return [client.calendar(url=str(client.url))]
-        except Exception:
+        except Exception as fallback_error:
+            report_exception(
+                logger,
+                "caldav_writeback_discovery_fallback_failed",
+                fallback_error,
+                outcome="degraded",
+            )
             return []
 
 
@@ -163,10 +191,42 @@ async def writeback_event(owner: str, calendar_source: str, calendar_id: str,
         pw = cfg.get("password") or ""
         if not (url and user and pw):
             return {"skipped": "caldav not configured"}
+        try:
+            from src.caldav_sync import validate_caldav_url
+            from src.secret_storage import decrypt
+
+            url = validate_caldav_url(url)
+            pw = decrypt(pw)
+        except ValueError as error:
+            report_exception(
+                logger,
+                "caldav_writeback_config_invalid",
+                error,
+                outcome="degraded",
+                context={"calendar_id": calendar_id},
+            )
+            return {"ok": False, "error": "CalDAV configuration is invalid"}
+        except Exception as error:
+            report_exception(
+                logger,
+                "caldav_writeback_secret_decrypt_failed",
+                error,
+                outcome="degraded",
+                context={"calendar_id": calendar_id},
+            )
+            return {"ok": False, "error": "CalDAV credential is unavailable"}
+        if not (url and user and pw):
+            return {"skipped": "caldav not configured"}
         result = await asyncio.to_thread(_writeback_blocking, calendar_id, ev, delete, url, user, pw)
         if not result.get("ok"):
             logger.warning("CalDAV write-back did not apply: %s", result.get("error") or result)
         return result
-    except Exception as e:
-        logger.exception("CalDAV write-back raised")
-        return {"ok": False, "error": str(e)[:200]}
+    except Exception as error:
+        report_exception(
+            logger,
+            "caldav_writeback_failed",
+            error,
+            outcome="degraded",
+            context={"calendar_id": calendar_id},
+        )
+        return {"ok": False, "error": "CalDAV write-back failed"}

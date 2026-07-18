@@ -5,6 +5,9 @@ iCalendar serialization, hash-based remote-calendar discovery, and the
 create/update/delete orchestration.
 """
 
+import asyncio
+import sys
+import types
 from datetime import datetime
 
 from src.caldav_writeback import (
@@ -13,6 +16,7 @@ from src.caldav_writeback import (
     push_event,
     _stable_cal_id,
 )
+import src.caldav_writeback as writeback
 
 REMOTE_URL = "https://p69-caldav.icloud.com/123/calendars/home/"
 CAL_ID = _stable_cal_id(REMOTE_URL)
@@ -123,3 +127,42 @@ def test_push_missing_uid_reports_input_error_before_remote_lookup():
     res = push_event([cal], CAL_ID, _ev(uid=""))
     assert res["ok"] is False and "uid" in res["error"]
     assert cal._existing.saved is False
+
+
+def test_writeback_decrypts_and_validates_saved_credentials(monkeypatch):
+    prefs_mod = types.ModuleType("routes.prefs_routes")
+    prefs_mod._load_for_user = lambda _owner: {
+        "caldav": {
+            "url": " https://calendar.example.com/dav/ ",
+            "username": "alice",
+            "password": "enc:stored",
+        }
+    }
+    monkeypatch.setitem(sys.modules, "routes.prefs_routes", prefs_mod)
+
+    secret_mod = types.ModuleType("src.secret_storage")
+    secret_mod.decrypt = lambda value: "decrypted-password" if value == "enc:stored" else value
+    monkeypatch.setitem(sys.modules, "src.secret_storage", secret_mod)
+
+    captured = {}
+
+    def fake_writeback(calendar_id, event, delete, url, username, password):
+        captured.update({
+            "calendar_id": calendar_id,
+            "event": event,
+            "delete": delete,
+            "url": url,
+            "username": username,
+            "password": password,
+        })
+        return {"ok": True}
+
+    monkeypatch.setattr(writeback, "_writeback_blocking", fake_writeback)
+
+    result = asyncio.run(writeback.writeback_event(
+        "alice", "caldav", "caldav-test", {"uid": "event-1"}
+    ))
+
+    assert result == {"ok": True}
+    assert captured["url"] == "https://calendar.example.com/dav"
+    assert captured["password"] == "decrypted-password"
