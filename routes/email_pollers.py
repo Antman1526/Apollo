@@ -30,6 +30,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from src.llm_core import llm_call_async
+from src.observability import report_exception
 
 
 def _utcnow():
@@ -60,7 +61,8 @@ def _owner_for_email_account(account_id: str | None) -> str:
             return (row[0] or "") if row else ""
         finally:
             db.close()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "email_account_owner_lookup_failed", error, outcome="best_effort", context={"account_id": account_id})
         return ""
 
 
@@ -125,7 +127,8 @@ async def _auto_summarize_pass(days_back: int = 1, account_id: str | None = None
                 names = {r.id: r.name for r in rows}
             finally:
                 db.close()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "email_account_list_failed", error, outcome="degraded")
             ids = []
             names = {}
         if len(ids) <= 1:
@@ -188,7 +191,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                     if st == "OK":
                         folders_to_scan.append(sent_name)
                         break
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "email_sent_folder_probe_failed", error, outcome="best_effort", context={"account_id": account_id})
                     continue
         for folder in folders_to_scan:
             try:
@@ -243,7 +247,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         # urgency self-loop check below.
         try:
             _self_self_addr = (_get_email_config(account_id, owner=account_owner).get("from_address") or "").strip().lower()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "email_sender_address_lookup_failed", error, outcome="best_effort", context={"account_id": account_id})
             _self_self_addr = ""
 
         spam_folder = _detect_spam_folder(conn) if auto_spam else None
@@ -312,7 +317,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                 # display name). parseaddr returns ("", "") on garbage input.
                 try:
                     _, _from_addr_only = email.utils.parseaddr(_from_raw)
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "email_sender_parse_failed", error, outcome="best_effort")
                     _from_addr_only = ""
                 _is_self_mail = bool(_self_self_addr) and _from_addr_only.lower() == _self_self_addr
                 need_urgent = (auto_urgent and message_id not in _urgent_existing
@@ -573,7 +579,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                     from datetime import timedelta as _td3
                                                     _start_dt = datetime.fromisoformat(op["date"].replace("Z", ""))
                                                     _dtend = (_start_dt + _td3(hours=1)).isoformat()
-                                                except Exception:
+                                                except Exception as error:
+                                                    report_exception(logger, "email_calendar_default_duration_failed", error, outcome="best_effort")
                                                     _dtend = op["date"]
                                             # Heuristic fallback: extract common details even if the LLM missed them
                                             _loc = (op.get("location") or "").strip()
@@ -627,8 +634,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                                                 # Include tracking URLs in description (and use as location fallback for deliveries)
                                                 for _lnk in _track_links:
                                                     _desc_parts.append(_lnk)
-                                            except Exception:
-                                                pass
+                                            except Exception as error:
+                                                report_exception(logger, "email_calendar_enrichment_failed", error, outcome="best_effort")
                                             cal_args = json.dumps({
                                                 "action": "create_event",
                                                 "summary": op["title"],
@@ -845,7 +852,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
                             if jm:
                                 try:
                                     parsed = json.loads(jm.group(0))
-                                except Exception:
+                                except Exception as error:
+                                    report_exception(logger, "email_classification_response_parse_failed", error, outcome="best_effort")
                                     parsed = None
                             if parsed is not None:
                                 _ALLOWED_TAGS = {"work","personal","finance","bills","receipt","travel",
@@ -927,8 +935,8 @@ async def _auto_summarize_pass_single(days_back: int = 1, account_id: str | None
         if conn:
             try:
                 conn.logout()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "email_background_imap_logout_failed", error, outcome="best_effort", context={"account_id": account_id})
 
 
 async def _auto_summarize_poller():
