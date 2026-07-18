@@ -2,6 +2,7 @@
 
 import os
 import hashlib
+import json
 import logging
 import re
 import uuid
@@ -13,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from core.database import SessionLocal, GalleryImage, GalleryAlbum, ModelEndpoint
 from core.database import Session as DbSession
 from src.auth_helpers import get_current_user, require_privilege
+from src.observability import report_exception
 from src.runtime_paths import data_path
 
 from routes.gallery_helpers import (
@@ -145,8 +147,14 @@ def setup_gallery_routes() -> APIRouter:
                 with Image.open(BytesIO(content)) as new_im:
                     img.width = new_im.width
                     img.height = new_im.height
-            except Exception:
-                pass
+            except (OSError, ValueError) as error:
+                report_exception(
+                    logger,
+                    "gallery_replace_dimensions_read_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"image_id": image_id},
+                )
             try:
                 db.commit()
             except Exception as e:
@@ -279,8 +287,14 @@ def setup_gallery_routes() -> APIRouter:
                     return {"image": data.get("data", [{}])[0].get("b64_json", "")}
                 # Fallback: no upscale endpoint — return error
                 return {"error": f"Upscale endpoint not available ({resp.status_code})"}
-        except Exception as e:
-            return {"error": str(e)}
+        except Exception as error:
+            report_exception(
+                logger,
+                "gallery_ai_upscale_request_failed",
+                error,
+                outcome="degraded",
+            )
+            return {"error": "Upscale request failed. Check the image endpoint and try again."}
 
     # ---- POST /api/gallery/style-transfer ----
     @router.post("/api/gallery/style-transfer")
@@ -325,8 +339,14 @@ def setup_gallery_routes() -> APIRouter:
                     if img_data:
                         return {"image": img_data}
                 return {"error": f"Style transfer failed ({resp.status_code})"}
-        except Exception as e:
-            return {"error": str(e)}
+        except Exception as error:
+            report_exception(
+                logger,
+                "gallery_style_transfer_request_failed",
+                error,
+                outcome="degraded",
+            )
+            return {"error": "Style transfer request failed. Check the image endpoint and try again."}
 
     # ---- GET /api/gallery/tags ----
     @router.get("/api/gallery/tags")
@@ -669,7 +689,7 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(401, "Not authenticated")
         try:
             data = await request.json()
-        except Exception:
+        except (ValueError, TypeError, UnicodeDecodeError):
             data = {}
         ids = data.get("ids") or []
         if not ids:
@@ -849,7 +869,14 @@ def setup_gallery_routes() -> APIRouter:
                         continue
                     try:
                         meta = _json.loads(m.meta_data)
-                    except Exception:
+                    except (json.JSONDecodeError, TypeError) as error:
+                        report_exception(
+                            logger,
+                            "gallery_delete_chat_metadata_parse_failed",
+                            error,
+                            outcome="best_effort",
+                            context={"image_id": image_id},
+                        )
                         continue
                     events = meta.get("tool_events") or []
                     new_events = []
@@ -886,7 +913,14 @@ def setup_gallery_routes() -> APIRouter:
                             prev_meta = {}
                             try:
                                 prev_meta = _json.loads(prev.meta_data) if prev.meta_data else {}
-                            except Exception:
+                            except (json.JSONDecodeError, TypeError) as error:
+                                report_exception(
+                                    logger,
+                                    "gallery_delete_previous_chat_metadata_parse_failed",
+                                    error,
+                                    outcome="best_effort",
+                                    context={"image_id": image_id},
+                                )
                                 prev_meta = {}
                             # Only purge the prompt if it has no tool
                             # events of its own (i.e. it's a pure user
@@ -900,9 +934,15 @@ def setup_gallery_routes() -> APIRouter:
                     db.delete(m)
                 if msgs:
                     db.commit()
-            except Exception as _e:
+            except Exception as error:
                 # Cleanup is best-effort — never block the delete itself.
-                logger.warning(f"chat-history cleanup after image delete failed: {_e}")
+                report_exception(
+                    logger,
+                    "gallery_delete_chat_history_cleanup_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"image_id": image_id},
+                )
 
             return {"status": "deleted", "id": image_id}
         except HTTPException:
@@ -1151,18 +1191,18 @@ def setup_gallery_routes() -> APIRouter:
         strength = body.get("strength", 0.45)
         try:
             strength = float(strength)
-        except Exception:
+        except (TypeError, ValueError):
             strength = 0.45
         strength = max(0.05, min(0.95, strength))
         # New two-stage controls. Clients may send either color_match/seam_fix
         # explicitly, or fall back to strength→color_match for legacy.
         try:
             color_match = float(body.get("color_match", strength))
-        except Exception:
+        except (TypeError, ValueError):
             color_match = strength
         try:
             seam_fix = float(body.get("seam_fix", 0.0))
-        except Exception:
+        except (TypeError, ValueError):
             seam_fix = 0.0
         color_match = max(0.0, min(1.0, color_match))
         seam_fix = max(0.0, min(1.0, seam_fix))
@@ -1321,7 +1361,7 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
         try:
             strength = float(body.get("strength", 0.5))
-        except Exception:
+        except (TypeError, ValueError):
             strength = 0.5
         strength = max(0.0, min(1.0, strength))
         try:
@@ -1371,7 +1411,7 @@ def setup_gallery_routes() -> APIRouter:
             raise HTTPException(400, "No image provided")
         try:
             scale = int(body.get("scale", 2))
-        except Exception:
+        except (TypeError, ValueError):
             scale = 2
         scale = 2 if scale not in (2, 4) else scale
         try:
@@ -1450,7 +1490,13 @@ def setup_gallery_routes() -> APIRouter:
                         max(0, bbox[0] - pad), max(0, bbox[1] - pad),
                         min(W, bbox[2] + pad), min(H, bbox[3] + pad),
                     )
-            except Exception:
+            except (OSError, ValueError) as error:
+                report_exception(
+                    logger,
+                    "gallery_background_hint_parse_failed",
+                    error,
+                    outcome="best_effort",
+                )
                 hint = None
                 bbox = None
 
@@ -1472,7 +1518,13 @@ def setup_gallery_routes() -> APIRouter:
                 tmp = crop.copy()
                 tmp.putalpha(mask_img)
                 cut = tmp
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "gallery_background_transformer_fallback_failed",
+                    error,
+                    outcome="degraded",
+                )
                 return {"error": "No background removal model available. Install rembg: pip install rembg"}
 
         # Compose the cropped result back into a full-size transparent canvas.
@@ -1782,4 +1834,3 @@ def setup_gallery_routes() -> APIRouter:
             db.close()
 
     return router
-
