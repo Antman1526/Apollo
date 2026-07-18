@@ -70,6 +70,21 @@ def test_status_reports_collector_state():
         assert collector == {"running": True, "connected": False, "authenticated": True}
 
 
+def test_status_reports_unreachable_sidecar_without_failing(caplog):
+    def unavailable(_request):
+        raise httpx.ConnectError("sidecar unavailable")
+
+    app = FastAPI()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(unavailable))
+    app.include_router(setup_paperclip_routes(_cfg(), http_client=client))
+    with TestClient(app) as c:
+        response = c.get("/api/paperclip/status")
+
+    assert response.status_code == 200
+    assert response.json()["reachable"] is False
+    assert "paperclip_health_probe_failed" in caplog.text
+
+
 def test_proxy_forwards_get_and_returns_body():
     async def view(request):
         assert request.url.path == "/dashboard"
@@ -160,6 +175,20 @@ def test_stream_delivers_events_ingested_after_connect(monkeypatch):
     event_line = asyncio.run(run())
     assert "agent.status" in event_line
     assert '"a1"' in event_line
+
+
+def test_events_reject_invalid_json(monkeypatch):
+    monkeypatch.setenv("PAPERCLIP_EVENTS_TOKEN", "tok")
+    app = _app(_cfg())
+    with TestClient(app) as c:
+        response = c.post(
+            "/api/paperclip/events",
+            content=b"not-json",
+            headers={"X-Paperclip-Events-Token": "tok"},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "invalid JSON"}
 
 
 def test_stream_reports_disabled_when_paperclip_is_disabled():

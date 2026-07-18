@@ -29,6 +29,7 @@ from services.paperclip.proxy import (
 )
 from services.paperclip import browser_use_verifier
 from services.integrations import agent_workbench
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,13 @@ def setup_paperclip_routes(
             try:
                 r = await client.get(f"{cfg.url}/api/health", timeout=2.0)
                 reachable = r.status_code < 500
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "paperclip_health_probe_failed",
+                    error,
+                    outcome="degraded",
+                )
                 reachable = False
         browser_use = browser_use_verifier.status(app_base_url)
         payload = {
@@ -109,7 +116,7 @@ def setup_paperclip_routes(
 
         try:
             body = await request.json()
-        except Exception:
+        except json.JSONDecodeError:
             return JSONResponse({"detail": "invalid JSON"}, status_code=400)
 
         raw_events = body.get("events") if isinstance(body, dict) else None
@@ -209,7 +216,7 @@ def setup_paperclip_routes(
             return JSONResponse({"detail": "agent tokens not configured"}, status_code=503)
         try:
             body = await request.json()
-        except Exception:
+        except json.JSONDecodeError:
             return JSONResponse({"detail": "invalid JSON"}, status_code=400)
         agent_id = str((body or {}).get("agent_id", "")).strip()
         if not agent_id:
@@ -282,14 +289,30 @@ def setup_paperclip_routes(
                 try:
                     while True:
                         await upstream.send(await websocket.receive_text())
-                except Exception:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "paperclip_websocket_client_forward_failed",
+                        error,
+                        outcome="degraded",
+                    )
                     await upstream.close()
 
             async def u2c():
                 try:
                     async for msg in upstream:
                         await websocket.send_text(msg)
-                except Exception:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "paperclip_websocket_upstream_forward_failed",
+                        error,
+                        outcome="degraded",
+                    )
                     await websocket.close()
 
             await asyncio.gather(c2u(), u2c())
