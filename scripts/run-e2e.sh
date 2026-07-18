@@ -13,7 +13,7 @@ CHROMIUM="${APOLLO_E2E_CHROMIUM:-$(find "$HOME/Library/Caches/ms-playwright" -ty
 [[ -n "$CHROMIUM" ]] || { echo "Chromium is unavailable; run: python -m playwright install chromium"; exit 1; }
 cleanup() { kill "${SERVER_PID:-}" 2>/dev/null || true; rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
-AUTH_ENABLED=false DATABASE_URL="sqlite:///$TMP_DIR/apollo.db" "$PYTHON" -m uvicorn app:app --host 127.0.0.1 --port "$PORT" >"$TMP_DIR/server.log" 2>&1 &
+AUTH_ENABLED=true DATABASE_URL="sqlite:///$TMP_DIR/apollo.db" "$PYTHON" -m uvicorn app:app --host 127.0.0.1 --port "$PORT" >"$TMP_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 for _ in $(seq 1 60); do curl -fsS "http://127.0.0.1:$PORT/" >/dev/null && break; sleep 1; done
 curl -fsS "http://127.0.0.1:$PORT/" >/dev/null || { cat "$TMP_DIR/server.log"; exit 1; }
