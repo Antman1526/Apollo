@@ -17,3 +17,6 @@ fi
 "$PYTHON" scripts/check_runtime_paths.py --root "$ROOT_DIR"
 "$PYTHON" -m pytest -q
 npm run test:js
+if [[ "${APOLLO_STARTUP_SMOKE:-0}" == "1" ]]; then
+  "$PYTHON" scripts/smoke_startup.py
+fi
