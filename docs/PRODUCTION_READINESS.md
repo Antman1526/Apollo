@@ -37,12 +37,12 @@ access and console piping, and preview/live agent-floor rendering.
 
 Verified on 2026-07-18 from this branch:
 
-- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,927 passed, 3 skipped;
+- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,929 passed, 3 skipped;
   134 JavaScript tests passed; startup smoke passed.
 - `bash scripts/run-e2e.sh`: 4 browser journeys passed in an isolated runtime.
 - `dist/Apollo.app` was built and passed `codesign --verify --deep --strict`.
   `dist/Apollo.dmg` is a UDZO image with SHA-256
-  `ab8a721e4d92597fe7e433c2e6d338de2e2cabdad6eaf4ee3e9800cfc7c9aaac`.
+  `8660656055bcb0aac172214e60ddcbb587a40624e0ac382551a770e482042946`.
 - A clean packaged macOS profile passed first-run setup, local-model chat,
   embedded browser navigation and text extraction, native Paperclip startup
   and Floor events, document editing, backup verification, restore, and
@@ -51,6 +51,20 @@ Verified on 2026-07-18 from this branch:
   reports zero vulnerabilities. `pip-audit -r requirements.txt` reports
   `PYSEC-2026-311` for `chromadb==1.5.9`; the installed version is the latest
   available release and the advisory does not list a fixed version.
+
+## Hosted Release Evidence
+
+- The [final macOS/Ubuntu CI and browser-journey jobs](https://github.com/Antman1526/Apollo/actions/runs/29665314060)
+  passed (macOS: 1,929 passed, 4 skipped). Its Windows unit-test job was
+  canceled after it exceeded the normal test duration; it is not a blocker for
+  the local macOS release.
+- The [Windows executable package workflow](https://github.com/Antman1526/Apollo/actions/runs/29665123196)
+  passed installation, PyInstaller build, launcher `--help` smoke, checksum,
+  and artifact upload. `Apollo.exe` SHA-256 is
+  `ee4cc7379461875c4befd6e629d11a630c4bd31e2d5d886654ebec0d871f274f`.
+- The [dependency audit workflow](https://github.com/Antman1526/Apollo/actions/runs/29664596925)
+  records the unresolved `chromadb==1.5.9` advisory above and a successful
+  `npm audit --omit=dev --audit-level=high` result.
 
 ## Operational Contract
 
@@ -75,20 +89,24 @@ Verified on 2026-07-18 from this branch:
   Ubuntu browser-journey job that installs Chromium before invoking the E2E
   runner.
 
-## Remaining Manual Release Gates
+## Remaining Optional Checks
 
-- Run the Windows launcher on a clean Windows host.
+- For a local macOS release, code signing, notarization, Windows signing, and
+  auto-update are intentionally out of scope.
+- Run the Windows launcher on a clean Windows host only when Windows use is
+  needed. The packaged launcher build and `--help` smoke are verified, but the
+  complete Windows unit-test matrix needs investigation because it exceeded
+  the normal duration.
 - Build and start the Docker path with its configured volume, then validate
   `/api/ready`, backup/restore, and authenticated access behind the intended
-  network boundary. The local Docker daemon was unavailable during the latest
-  release check, so this gate could not be executed.
+  network boundary only when Docker deployment is needed. The local Docker
+  daemon was unavailable during the latest release check, so this was not run.
 - Inspect the browser and Paperclip workspace manually at desktop and mobile
   sizes for clipped controls, focus order, and visual overlap.
-- Push the release candidate and record the CI and Windows-packaging run URLs.
-- Sign and notarize the macOS app with a Developer ID identity. The current
-  bundle is ad-hoc signed and Gatekeeper rejects it. Sign the Windows launcher
-  with the production code-signing certificate. Auto-update remains future
-  work.
+- For public distribution later, sign and notarize the macOS app with a
+  Developer ID identity, sign the Windows launcher, and add an auto-update
+  strategy. The current macOS bundle is ad-hoc signed and Gatekeeper rejects
+  it outside the local workflow.
 
 ## Residual Risks
 
