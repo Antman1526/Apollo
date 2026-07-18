@@ -39,6 +39,7 @@ from core.platform_compat import (
     find_bash,
 )
 from src.auth_helpers import resolve_identity
+from src.observability import report_exception
 
 
 def _require_admin(request: Request):
@@ -247,7 +248,8 @@ def _prepend_user_install_bins_to_path() -> None:
         import site
 
         candidates = [os.path.join(site.USER_BASE, "bin")]
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "shell_user_install_bin_discovery_failed", error, outcome="best_effort")
         candidates = []
     candidates.append(os.path.expanduser("~/.local/bin"))
 
@@ -401,8 +403,9 @@ async def _exec_shell(command: str, timeout: int = EXEC_TIMEOUT) -> Dict[str, An
             except ProcessLookupError:
                 pass
         return {"stdout": "", "stderr": f"Command timed out after {timeout}s", "exit_code": -1}
-    except Exception as e:
-        return {"stdout": "", "stderr": str(e), "exit_code": -1}
+    except Exception as error:
+        report_exception(logger, "shell_command_execution_failed", error, outcome="critical")
+        return {"stdout": "", "stderr": "Command could not be started", "exit_code": -1}
 
 
 async def _generate_pty(cmd: str, timeout: int, request: Request):
@@ -515,13 +518,15 @@ async def _generate_pty(cmd: str, timeout: int, request: Request):
         await wait_task
         yield f"data: {json.dumps({'exit_code': proc.returncode})}\n\n"
 
-    except Exception as e:
-        try:
-            proc.kill()
-            await proc.wait()
-        except ProcessLookupError:
-            pass
-        yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+    except Exception as error:
+        report_exception(logger, "shell_pty_execution_failed", error, outcome="critical")
+        if proc:
+            try:
+                proc.kill()
+                await proc.wait()
+            except ProcessLookupError:
+                pass
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'Command could not be started'})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
     finally:
         wait_task.cancel()
@@ -651,8 +656,8 @@ async def _generate_tmux(cmd: str, request: Request):
     # Clean up log file
     try:
         log_path.unlink(missing_ok=True)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "shell_background_log_cleanup_failed", error, outcome="best_effort")
 
 
 async def _generate_win_detached(cmd: str, request: Request):
@@ -697,8 +702,9 @@ async def _generate_win_detached(cmd: str, request: Request):
             stdin=subprocess.DEVNULL,
             **detached_popen_kwargs(),
         )
-    except Exception as e:
-        yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Failed to launch background job: {e}'})}\n\n"
+    except Exception as error:
+        report_exception(logger, "shell_background_job_launch_failed", error, outcome="critical")
+        yield f"data: {json.dumps({'stream': 'stderr', 'data': 'Failed to launch background job'})}\n\n"
         yield f"data: {json.dumps({'exit_code': -1})}\n\n"
         return
 
@@ -729,7 +735,8 @@ async def _generate_win_detached(cmd: str, request: Request):
                         yield f"data: {json.dumps({'stream': 'stdout', 'data': line})}\n\n"
                     lines_sent = len(lines)
                 exit_code = int((exit_path.read_text(encoding="utf-8", errors="replace").strip() or "0"))
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "shell_background_exit_code_read_failed", error, outcome="best_effort")
                 exit_code = 0
             break
         await asyncio.sleep(1.0)
@@ -738,8 +745,8 @@ async def _generate_win_detached(cmd: str, request: Request):
     for p in (log_path, exit_path, script_path):
         try:
             p.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "shell_background_artifact_cleanup_failed", error, outcome="best_effort")
 
 
 def setup_shell_routes() -> APIRouter:
@@ -871,8 +878,9 @@ def setup_shell_routes() -> APIRouter:
                         pass
                 yield f"data: {json.dumps({'stream': 'stderr', 'data': f'Command timed out after {timeout}s'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'stream': 'stderr', 'data': str(e)})}\n\n"
+            except Exception as error:
+                report_exception(logger, "shell_stream_execution_failed", error, outcome="critical")
+                yield f"data: {json.dumps({'stream': 'stderr', 'data': 'Command could not be started'})}\n\n"
                 yield f"data: {json.dumps({'exit_code': -1})}\n\n"
             finally:
                 for t in reader_tasks:
@@ -898,8 +906,8 @@ def setup_shell_routes() -> APIRouter:
             user_site = site.getusersitepackages()
             if user_site and os.path.isdir(user_site) and user_site not in sys.path:
                 sys.path.append(user_site)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "shell_user_site_discovery_failed", error, outcome="best_effort")
         if ssh_port and str(ssh_port).strip() not in ("", "22"):
             _port = str(ssh_port).strip()
             if not _SSH_PORT_RE.match(_port) or not (1 <= int(_port) <= 65535):
@@ -952,7 +960,8 @@ def setup_shell_routes() -> APIRouter:
                         break
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "shell_remote_package_probe_failed", error, outcome="degraded")
                 remote_status = {}
         if host and remote_system_names:
             try:
@@ -973,8 +982,8 @@ def setup_shell_routes() -> APIRouter:
                         remote_status[name] = value == "1"
             except ValueError as e:
                 raise HTTPException(400, str(e))
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "shell_remote_system_package_probe_failed", error, outcome="degraded")
 
         for pkg in packages:
             on_remote = bool(host and pkg.get("target") == "remote")
