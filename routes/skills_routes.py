@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
 from src.auth_helpers import get_current_user
+from src.observability import report_exception
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -167,7 +168,8 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
             for cand in (frag, _re.sub(r',(\s*[}\]])', r'\1', frag)):
                 try:
                     d = _coerce(_json.loads(cand))
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "skill_verdict_json_parse_failed", error, outcome="best_effort")
                     d = None
                 if d is not None:
                     data = d
@@ -180,7 +182,8 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                 for cand in (frag, _re.sub(r',(\s*[}\]])', r'\1', frag)):
                     try:
                         d = _coerce(_json.loads(cand))
-                    except Exception:
+                    except Exception as error:
+                        report_exception(logger, "skill_verdict_fallback_json_parse_failed", error, outcome="best_effort")
                         d = None
                     if d is not None:
                         data = d
@@ -229,10 +232,11 @@ async def _eval_skill_run(skill_md: str, task: str, transcript: str,
                 url, model, msgs,
                 temperature=0.1, max_tokens=32768, headers=headers, timeout=180,
             )
-        except Exception as e:
+        except Exception as error:
+            report_exception(logger, "skill_eval_attempt_failed", error, outcome="degraded")
             # Don't give up on a transient first-attempt error — let the second
             # (no-think) attempt run before reporting failure.
-            last_err = e
+            last_err = error
             continue
         last_text = (raw or '')
         parsed = _parse(raw)
@@ -290,7 +294,8 @@ async def _eval_skill_necessity(skill_md: str, others: list, url: str, model: st
             try:
                 data = _json.loads(cand)
                 break
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skill_necessity_json_parse_failed", error, outcome="best_effort")
                 continue
     if not isinstance(data, dict) or "necessary" not in data:
         return None
@@ -378,7 +383,8 @@ async def _eval_skill_retrieval_precision(skill_md: str, others: list,
             try:
                 data = _json.loads(cand)
                 break
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skill_retrieval_json_parse_failed", error, outcome="best_effort")
                 continue
     if not isinstance(data, dict) or "ok" not in data:
         return None
@@ -430,7 +436,8 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
                 continue
             try:
                 d = _json.loads(chunk[6:])
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skill_run_stream_event_parse_failed", error, outcome="best_effort")
                 continue
             if d.get("delta"):
                 say_buf.append(d["delta"]); transcript.append(d["delta"])
@@ -451,15 +458,17 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
             if len(log) > 600:
                 del log[0:len(log) - 600]
         _flush_say()
-    except Exception as e:
+    except Exception as error:
+        report_exception(logger, "skill_run_execution_failed", error, outcome="degraded")
         _flush_say()
-        log.append({"type": "error", "error": str(e)})
+        log.append({"type": "error", "error": "Skill run failed"})
 
     log.append({"type": "evaluating"})
     try:
         job["verdict"] = await _eval_skill_run(md, task, "".join(transcript), url, model, headers)
-    except Exception as e:
-        job["verdict"] = {"verdict": "unknown", "confidence": 0, "summary": f"Eval failed: {e}", "issues": []}
+    except Exception as error:
+        report_exception(logger, "skill_run_evaluation_failed", error, outcome="degraded")
+        job["verdict"] = {"verdict": "unknown", "confidence": 0, "summary": "Evaluation failed", "issues": []}
     # Record the result so the card shows a 'verified' check (a manual test
     # never involves the teacher) and nudge the confidence score to match the
     # verdict — same scale as Audit-all's pass=0.95. inconclusive/unknown leave
@@ -468,14 +477,14 @@ async def _run_skill_test_job(key, name, md, task, url, model, headers, owner, s
         v = (job["verdict"] or {}).get("verdict") or "unknown"
         try:
             skills_manager.set_audit(name, v, by_teacher=False, worker_model=model, owner=owner)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "skill_run_audit_persist_failed", error, outcome="best_effort", context={"skill_name": name})
         conf = {"pass": 0.95, "needs_work": 0.6, "fail": 0.4}.get(v)
         if conf is not None:
             try:
                 skills_manager.update_skill(name, {"confidence": conf}, owner=owner)
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "skill_run_confidence_update_failed", error, outcome="best_effort", context={"skill_name": name})
     job["status"] = "done"
 
 
@@ -488,12 +497,14 @@ def _audit_auto_publish_policy(owner) -> tuple[bool, float]:
     try:
         from routes.prefs_routes import _load_for_user
         prefs = _load_for_user(owner) or {}
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "skill_auto_publish_preferences_load_failed", error, outcome="best_effort")
         prefs = {}
     try:
         from src.settings import get_setting
         default_min = get_setting("skill_autosave_min_confidence", 0.85)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "skill_auto_publish_default_load_failed", error, outcome="best_effort")
         default_min = 0.85
     enabled = bool(prefs.get("auto_approve_skills", True))
     try:
@@ -569,8 +580,8 @@ def _skill_duplicate_blocker(skills_manager, name: str, owner) -> Optional[str]:
                 f"Lower-priority duplicate of {keeper_name}",
                 owner=owner,
             )
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "skill_duplicate_necessity_persist_failed", error, outcome="best_effort", context={"skill_name": cur_name})
         return keeper_name
     return None
 
@@ -635,8 +646,8 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
         necessary = False
         try:
             skills_manager.set_necessity(name, False, [], generic_reason, owner=owner)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "skill_generic_necessity_persist_failed", error, outcome="best_effort", context={"skill_name": name})
     duplicate_of = _skill_duplicate_blocker(skills_manager, name, owner) if verdict == "pass" else None
     if duplicate_of:
         necessary = False
@@ -644,8 +655,8 @@ def _audit_finalize_status(skills_manager, name: str, owner, verdict: str,
     status = "published" if (auto_publish and necessary and verdict == "pass" and c >= min_conf) else "draft"
     try:
         skills_manager.update_skill(name, {"status": status}, owner=owner)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "skill_status_update_failed", error, outcome="best_effort", context={"skill_name": name})
     return status
 
 
@@ -691,7 +702,8 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
                 continue
             try:
                 d = _json.loads(chunk[6:])
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skill_test_stream_event_parse_failed", error, outcome="best_effort")
                 continue
             if d.get("delta"):
                 transcript.append(d["delta"])
@@ -701,8 +713,9 @@ async def _run_skill_test_once(md: str, task: str, url, model, headers, owner) -
                 transcript.append(f"[output] {str(d.get('output') or '')[:600]}\n")
             elif d.get("type") == "agent_step":
                 transcript.append(f"\n--- round {d.get('round')} ---\n")
-    except Exception as e:
-        transcript.append(f"\n[run error] {e}\n")
+    except Exception as error:
+        report_exception(logger, "skill_test_execution_failed", error, outcome="degraded")
+        transcript.append("\n[run error]\n")
     text = "".join(transcript)
     verdict = await _eval_skill_run(md, task, text, url, model, headers)
     return text, verdict
@@ -768,8 +781,8 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     def _set_conf(c):
         try:
             skills_manager.update_skill(name, {"confidence": c}, owner=owner)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "skill_audit_confidence_update_failed", error, outcome="best_effort", context={"skill_name": name})
 
     md = skills_manager.read_skill_md(name, owner=owner)
     if not md:
@@ -797,8 +810,9 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
                                          owner=owner)
             if not nec.get("necessary", True):
                 log(f"{name}: possibly unnecessary — {nec.get('reason', '')[:80]}")
-    except Exception as e:
-        log(f"{name}: necessity check skipped — {e}")
+    except Exception as error:
+        report_exception(logger, "skill_audit_necessity_check_failed", error, outcome="best_effort", context={"skill_name": name})
+        log(f"{name}: necessity check skipped")
 
     generic_reason = _audit_generic_blocker(skill, nec, None)
     duplicate_of = _skill_duplicate_blocker(skills_manager, name, owner)
@@ -811,8 +825,8 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
                 skills_manager.set_necessity(name, False, [duplicate_of], reason, owner=owner)
             else:
                 skills_manager.set_necessity(name, False, [], reason, owner=owner)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "skill_audit_draft_persist_failed", error, outcome="best_effort", context={"skill_name": name})
         log(f"{name}: draft — skipped functional test ({reason[:100]})")
         return {"skill": name, "result": "skipped", "reason": reason, "confidence": 0.35, "status": "draft"}
 
@@ -835,8 +849,9 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
                     refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == name), None)
                     if refreshed:
                         skill = refreshed
-    except Exception as e:
-        log(f"{name}: retrieval precision check skipped — {e}")
+    except Exception as error:
+        report_exception(logger, "skill_audit_retrieval_check_failed", error, outcome="best_effort", context={"skill_name": name})
+        log(f"{name}: retrieval precision check skipped")
 
     task = _skill_test_task(skill)
     log(f"{name}: testing…")
@@ -910,8 +925,8 @@ async def _audit_one_skill(skills_manager, skill, url, model, headers,
     # Still failing → demote to draft + low confidence + flag (do NOT delete).
     try:
         skills_manager.update_skill(name, {"status": "draft", "confidence": 0.35}, owner=owner)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "skill_audit_demote_persist_failed", error, outcome="best_effort", context={"skill_name": name})
     skills_manager.set_audit(
         name, v or "fail", by_teacher=teacher_ran,
         worker_model=model,
@@ -955,8 +970,9 @@ async def _run_audit_all_job(key, skills_manager, names, url, model, headers, te
                 job["cancel"] = True
                 log("(cancelled)")
                 raise
-            except Exception as e:
-                log(f"{nm}: error — {e}")
+            except Exception as error:
+                report_exception(logger, "skill_audit_job_failed", error, outcome="degraded", context={"skill_name": nm})
+                log(f"{nm}: error")
                 res = {"skill": nm, "result": "error"}
             try:
                 refreshed = next((s for s in skills_manager.load(owner=owner) if s.get("name") == nm), None)
@@ -972,8 +988,8 @@ async def _run_audit_all_job(key, skills_manager, names, url, model, headers, te
                         "audited_at": refreshed.get("audited_at"),
                         "necessity": refreshed.get("necessity"),
                     }
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "skill_audit_state_refresh_failed", error, outcome="best_effort", context={"skill_name": nm})
             job["results"].append(res)
             job["done"] = len(job["results"])
     except _asyncio.CancelledError:
@@ -1004,8 +1020,8 @@ def _resolve_audit_models(owner=None):
         if _avail and model not in _avail:
             _base = _os.path.basename((model or "").rstrip("/"))
             model = next((a for a in _avail if _os.path.basename(a.rstrip("/")) == _base), None) or _avail[0]
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "skill_audit_model_resolution_failed", error, outcome="best_effort")
 
     teacher = None
     try:
@@ -1121,8 +1137,9 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
 
         try:
             from src.agent_loop import TOOL_SECTIONS, get_builtin_overrides
-        except Exception as e:
-            return {"builtin": [], "count": 0, "error": str(e)}
+        except Exception as error:
+            report_exception(logger, "skill_builtin_registry_load_failed", error, outcome="critical")
+            return {"builtin": [], "count": 0, "error": "Built-in skill registry is unavailable"}
 
         overrides = get_builtin_overrides()
         out = []
