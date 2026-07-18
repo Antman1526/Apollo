@@ -12,6 +12,7 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import HTTPException, UploadFile
+from src.observability import report_exception
 def secure_filename(filename: str) -> str:
     """Sanitize a filename (replaces werkzeug.utils.secure_filename)."""
     import unicodedata
@@ -101,7 +102,7 @@ class UploadHandler:
         p = os.path.realpath(path)
         try:
             return os.path.commonpath([base, p]) == base
-        except Exception:
+        except (TypeError, ValueError):
             return False
     
     def get_upload_dir(self):
@@ -275,7 +276,7 @@ class UploadHandler:
         p = os.path.realpath(path)
         try:
             return os.path.commonpath([base, p]) == base
-        except Exception:
+        except (TypeError, ValueError):
             return False
 
     def _atomic_write_json(self, path: str, data: dict) -> None:
@@ -376,7 +377,14 @@ class UploadHandler:
         if allow_admin and owner and auth_manager and hasattr(auth_manager, "is_admin"):
             try:
                 is_admin = bool(auth_manager.is_admin(owner))
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "upload_admin_lookup_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"upload_id": upload_id, "owner": owner},
+                )
                 is_admin = False
 
         if owner and not is_admin:
