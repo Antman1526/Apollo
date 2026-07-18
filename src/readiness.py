@@ -8,8 +8,13 @@ for an orchestrator readiness probe (200 only when every critical check passes).
 
 import os
 import uuid
+import logging
 from datetime import datetime, timezone
 from typing import Dict
+
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 def _utcnow():
@@ -34,8 +39,9 @@ def check_readiness() -> Dict[str, object]:
         with engine.connect() as conn:
             conn.execute(sql_text("SELECT 1"))
         checks["database"] = {"ok": True}
-    except Exception as e:
-        checks["database"] = {"ok": False, "error": str(e)}
+    except Exception as error:
+        report_exception(logger, "readiness_database_check_failed", error, outcome="critical")
+        checks["database"] = {"ok": False, "error": "Database check failed"}
 
     # Data directory present and writable — home must be able to hold its own data.
     try:
@@ -45,8 +51,9 @@ def check_readiness() -> Dict[str, object]:
             fh.write("ok")
         os.remove(probe)
         checks["data_dir"] = {"ok": True, "path": DATA_DIR}
-    except Exception as e:
-        checks["data_dir"] = {"ok": False, "error": str(e)}
+    except Exception as error:
+        report_exception(logger, "readiness_data_dir_check_failed", error, outcome="critical")
+        checks["data_dir"] = {"ok": False, "error": "Data directory check failed"}
 
     # Local-first: storage stays on the home machine (informational, never fatal).
     local_first = (

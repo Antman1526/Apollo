@@ -1,5 +1,6 @@
 """Tests for the readiness / integrity self-check (src/readiness.py)."""
 
+from src import readiness
 from src.readiness import check_readiness
 
 
@@ -25,3 +26,26 @@ def test_local_first_check_is_informational_never_fatal():
     # readiness — a remote database is a valid deployment.
     assert lf["ok"] is True
     assert "local" in lf
+
+
+def test_data_directory_failure_is_redacted_and_observable(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        readiness.os,
+        "makedirs",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(PermissionError("private path detail")),
+    )
+    monkeypatch.setattr(
+        readiness,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+
+    result = check_readiness()
+
+    assert result["checks"]["data_dir"] == {
+        "ok": False,
+        "error": "Data directory check failed",
+    }
+    assert "private path detail" not in str(result)
+    assert events == [("readiness_data_dir_check_failed", {"outcome": "critical"})]
