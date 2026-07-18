@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import logging
 import os
 from urllib.parse import urlparse
 import subprocess
@@ -15,6 +16,10 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserUseUnavailable(RuntimeError):
@@ -60,7 +65,13 @@ def _python_can_import(python: str) -> bool:
             timeout=10,
         )
         return proc.returncode == 0
-    except Exception:
+    except (OSError, subprocess.TimeoutExpired) as error:
+        report_exception(
+            logger,
+            "browser_use_runtime_probe_failed",
+            error,
+            outcome="best_effort",
+        )
         return False
 
 
@@ -101,7 +112,13 @@ def _default_lmproxy_token() -> str:
     try:
         from services.paperclip.config import resolve_proxy_token
         return resolve_proxy_token()
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "browser_use_proxy_token_resolve_failed",
+            error,
+            outcome="best_effort",
+        )
         return os.getenv("PAPERCLIP_PROXY_TOKEN", "").strip() or os.getenv("PAPERCLIP_MODEL_API_KEY", "").strip()
 
 
