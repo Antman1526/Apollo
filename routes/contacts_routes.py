@@ -19,11 +19,12 @@ from typing import List, Dict, Optional
 
 from src.auth_helpers import require_user
 from src.observability import report_exception
+from src.runtime_paths import data_path
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = data_path()
 SETTINGS_FILE = DATA_DIR / "settings.json"
 LOCAL_CONTACTS_FILE = DATA_DIR / "contacts.json"
 

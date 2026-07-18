@@ -1,16 +1,21 @@
 """
 RAG singleton instance for the application.
 """
-import os
 import logging
 import time
-from pathlib import Path
+
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
 rag_instance = None
 _last_attempt = 0.0
 _RETRY_INTERVAL = 30  # seconds between re-init attempts
+
+
+def _persist_dir() -> str:
+    """Return the runtime-owned vector store instead of a frozen code path."""
+    return str(data_path("rag"))
 
 
 def get_rag_manager():
@@ -41,10 +46,7 @@ def get_rag_manager():
     try:
         from src.rag_vector import VectorRAG
 
-        base_dir = Path(__file__).parent.parent
-        persist_dir = os.path.join(base_dir, "data", "rag")
-
-        rag_instance = VectorRAG(persist_directory=persist_dir)
+        rag_instance = VectorRAG(persist_directory=_persist_dir())
         if not rag_instance.healthy:
             logger.warning("VectorRAG created but not healthy, will retry later")
             rag_instance = None

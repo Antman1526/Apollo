@@ -79,6 +79,10 @@ def _verify_doc_owner(db, doc: Document, user: str):
     """
     if user is None:
         raise HTTPException(403, "Authentication required")
+    # ``require_user`` uses an empty owner for explicit local single-user
+    # modes. Routes reject remote anonymous callers before this helper runs.
+    if user == "":
+        return
     if doc.owner is not None:
         if doc.owner != user:
             raise HTTPException(404, "Document not found")
@@ -105,6 +109,8 @@ def _owner_session_filter(q, user):
     we therefore match the owner strictly."""
     if user is None:
         return q.filter(False)
+    if user == "":
+        return q
     return q.filter(Document.owner == user)
 
 

@@ -15,14 +15,24 @@ def _cfg(mode="native", enabled=True, port=3100):
 
 def test_build_env_points_opencode_at_proxy():
     env = runtime.build_env(_cfg(), proxy_token="tok", proxy_base="http://localhost:7000/lmproxy/v1",
-                            base_env={"PATH": "/usr/bin"})
+                            base_env={"PATH": "/usr/bin", "DATABASE_URL": "sqlite:///apollo.db"})
     assert env["PORT"] == "3100"
     assert env["HOST"] == "127.0.0.1"
     assert env["OPENAI_BASE_URL"] == "http://localhost:7000/lmproxy/v1"
     assert env["OPENAI_API_KEY"] == "tok"
     assert env["OPENCODE_ALLOW_ALL_MODELS"] == "true"
+    assert "DATABASE_URL" not in env
     # base env preserved
     assert env["PATH"] == "/usr/bin"
+
+
+def test_build_env_honors_explicit_paperclip_database_url():
+    env = runtime.build_env(
+        _cfg(), proxy_token="tok", proxy_base="http://localhost:7000/lmproxy/v1",
+        base_env={"PAPERCLIP_DATABASE_URL": "postgres://paperclip"},
+    )
+    assert env["DATABASE_URL"] == "postgres://paperclip"
+    assert "PAPERCLIP_DATABASE_URL" not in env
 
 
 def test_build_command_uses_explicit_cli_when_set():
@@ -33,6 +43,32 @@ def test_build_command_uses_explicit_cli_when_set():
 def test_build_command_falls_back_to_npx_pinned():
     cmd = runtime.build_command(node="/opt/node", npx="/opt/npx", cli=None, version="2026.529.0")
     assert cmd == ["/opt/npx", "-y", "paperclipai@2026.529.0", "run"]
+
+
+def test_build_command_onboards_fresh_native_install():
+    cmd = runtime.build_command(
+        node="/opt/node", npx="/opt/npx", cli=None, version="2026.529.0", initialized=False,
+    )
+    assert cmd == [
+        "/opt/npx", "-y", "paperclipai@2026.529.0",
+        "onboard", "--yes", "--bind", "loopback", "--run",
+    ]
+
+
+def test_runtime_log_path_follows_application_data_root(tmp_path):
+    data_dir = tmp_path / "Apollo" / "data"
+    assert runtime.runtime_log_path({"APOLLO_DATA_DIR": str(data_dir)}) == (
+        tmp_path / "Apollo" / "logs" / "paperclip.log"
+    )
+
+
+def test_is_initialized_checks_default_instance_config(tmp_path):
+    env = {"PAPERCLIP_HOME": str(tmp_path / "paperclip")}
+    assert runtime.is_initialized(env) is False
+    config = tmp_path / "paperclip" / "instances" / "default" / "config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}")
+    assert runtime.is_initialized(env) is True
 
 
 def test_find_node_prefers_bundled(monkeypatch, tmp_path):

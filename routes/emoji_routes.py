@@ -18,10 +18,11 @@ import httpx
 from fastapi import APIRouter
 from fastapi.responses import FileResponse, Response
 from src.observability import report_exception
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
-_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "emoji_cache"
+_CACHE_DIR = data_path("emoji_cache")
 # OpenMoji "black" set = monochrome line-art SVGs. Filenames are the codepoints
 # in UPPERCASE (FE0F dropped, same as we compute), '-' joined.
 _OPENMOJI_BASE = "https://cdn.jsdelivr.net/npm/openmoji@15.0.0/black/svg"

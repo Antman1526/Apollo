@@ -5,6 +5,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+packaging/playwright-browsers/
 !static/js/editor/build/
 venv/
 .venv/

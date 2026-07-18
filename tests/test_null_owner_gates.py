@@ -143,6 +143,20 @@ def test_document_owner_filter_applies_owner_clause():
     assert out is fake_q.filter.return_value
 
 
+def test_document_owner_filter_allows_trusted_single_user_mode():
+    from routes.document_routes import _owner_session_filter
+    fake_q = MagicMock()
+    out = _owner_session_filter(fake_q, user="")
+    assert out is fake_q
+    fake_q.filter.assert_not_called()
+
+
+def test_document_owner_gate_allows_trusted_single_user_mode():
+    from routes.document_helpers import _verify_doc_owner
+    doc = SimpleNamespace(owner=None, session_id=None)
+    _verify_doc_owner(MagicMock(), doc, user="")
+
+
 # ---------------------------------------------------------------------------
 # gallery._owner_filter
 # ---------------------------------------------------------------------------

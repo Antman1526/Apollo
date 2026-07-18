@@ -21,28 +21,36 @@ single migration pass rewrites them.
 import os
 import logging
 from pathlib import Path
-
 from cryptography.fernet import Fernet, InvalidToken
 
 from core.platform_compat import safe_chmod
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
-_KEY_PATH = Path(__file__).resolve().parent.parent / "data" / ".app_key"
 _PREFIX = "enc:"
 _fernet: Fernet | None = None
+# Compatibility seam for tests and controlled maintenance tools. Normal app
+# operation leaves this unset so the path follows APOLLO_DATA_DIR dynamically.
+_KEY_PATH: Path | None = None
+
+
+def _key_path():
+    """Resolve the encryption key alongside the active application data."""
+    return _KEY_PATH if _KEY_PATH is not None else data_path(".app_key")
 
 
 def _load_or_create_key() -> bytes:
-    if _KEY_PATH.exists():
-        return _KEY_PATH.read_bytes()
-    _KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    key_path = _key_path()
+    if key_path.exists():
+        return key_path.read_bytes()
+    key_path.parent.mkdir(parents=True, exist_ok=True)
     key = Fernet.generate_key()
-    _KEY_PATH.write_bytes(key)
+    key_path.write_bytes(key)
     # POSIX: lock the key to 0o600. Windows: no-op (the user-profile data dir is
     # already ACL-restricted); safe_chmod swallows both cases.
-    safe_chmod(_KEY_PATH, 0o600)
-    logger.info(f"Generated new app key at {_KEY_PATH}")
+    safe_chmod(key_path, 0o600)
+    logger.info(f"Generated new app key at {key_path}")
     return key
 
 

@@ -35,6 +35,7 @@ from typing import Optional, List
 from src.auth_helpers import require_user as _shared_require_user
 from src.observability import report_exception
 from src.secret_storage import decrypt as _decrypt
+from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,7 @@ def _cleanup_compose_uploads(tokens) -> None:
             report_exception(logger, "email_compose_upload_cleanup_failed", error, outcome="best_effort")
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = data_path()
 SETTINGS_FILE = DATA_DIR / "settings.json"
 # Override at deploy time via APOLLO_MAIL_ATTACHMENTS_DIR. Defaults to a
 # subdir of the install's data/ tree so the app works out-of-the-box without

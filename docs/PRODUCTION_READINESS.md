@@ -37,11 +37,20 @@ access and console piping, and preview/live agent-floor rendering.
 
 Verified on 2026-07-18 from this branch:
 
-- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,908 passed, 3 skipped;
+- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,927 passed, 3 skipped;
   134 JavaScript tests passed; startup smoke passed.
 - `bash scripts/run-e2e.sh`: 4 browser journeys passed in an isolated runtime.
-- Dependency locks, `pip check`, and the production dependency audit completed
-  without reported issues.
+- `dist/Apollo.app` was built and passed `codesign --verify --deep --strict`.
+  `dist/Apollo.dmg` is a UDZO image with SHA-256
+  `ab8a721e4d92597fe7e433c2e6d338de2e2cabdad6eaf4ee3e9800cfc7c9aaac`.
+- A clean packaged macOS profile passed first-run setup, local-model chat,
+  embedded browser navigation and text extraction, native Paperclip startup
+  and Floor events, document editing, backup verification, restore, and
+  persisted auth/session/document/model state after restart.
+- Dependency locks and `pip check` pass. `npm audit --omit=dev --audit-level=high`
+  reports zero vulnerabilities. `pip-audit -r requirements.txt` reports
+  `PYSEC-2026-311` for `chromadb==1.5.9`; the installed version is the latest
+  available release and the advisory does not list a fixed version.
 
 ## Operational Contract
 
@@ -68,20 +77,27 @@ Verified on 2026-07-18 from this branch:
 
 ## Remaining Manual Release Gates
 
-- Launch the native macOS app and validate first-run setup, restore, and a
-  normal workspace session on the packaged artifact.
 - Run the Windows launcher on a clean Windows host.
 - Build and start the Docker path with its configured volume, then validate
   `/api/ready`, backup/restore, and authenticated access behind the intended
-  network boundary.
+  network boundary. The local Docker daemon was unavailable during the latest
+  release check, so this gate could not be executed.
 - Inspect the browser and Paperclip workspace manually at desktop and mobile
   sizes for clipped controls, focus order, and visual overlap.
-- Record CI run URLs and dependency-audit output with the release candidate.
+- Push the release candidate and record the CI and Windows-packaging run URLs.
+- Sign and notarize the macOS app with a Developer ID identity. The current
+  bundle is ad-hoc signed and Gatekeeper rejects it. Sign the Windows launcher
+  with the production code-signing certificate. Auto-update remains future
+  work.
 
 ## Residual Risks
 
 Local-model availability, external MCP services, email providers, and optional
-Paperclip infrastructure remain environment-dependent. Apollo exposes their
-degraded state through system status rather than silently treating missing
-providers as healthy. These integrations require deployment-specific
-credential and connectivity validation before a production launch.
+Paperclip infrastructure remain environment-dependent. The first native
+Paperclip start downloads its pinned runtime and initializes an embedded
+database, so it requires network access and can take several minutes. Apollo
+exposes degraded state through system status rather than silently treating
+missing providers as healthy. These integrations require deployment-specific
+credential and connectivity validation before a production launch. The
+unresolved ChromaDB advisory also needs upstream remediation or an approved
+compensating-control decision before public distribution.

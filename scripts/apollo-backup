@@ -28,8 +28,8 @@ import argparse, json, logging, os, shutil, sqlite3, subprocess, sys, tarfile, t
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
-_DATA_DIR = _REPO_ROOT / "data"
-_BACKUP_DIR = _REPO_ROOT / "backups"
+_DATA_DIR = Path(os.environ.get("APOLLO_DATA_DIR") or _REPO_ROOT / "data").expanduser().resolve()
+_BACKUP_DIR = Path(os.environ.get("APOLLO_BACKUP_DIR") or _DATA_DIR.parent / "backups").expanduser().resolve()
 
 # Stuff inside data/ that we explicitly skip — anything we can re-derive
 # from the SQLite DB + JSON state. Keeps the tarball small.
@@ -100,7 +100,7 @@ def cmd_snapshot(args):
             for p in sorted(_DATA_DIR.rglob("*")):
                 if not p.is_file() or p.is_symlink():
                     continue
-                rel = p.relative_to(_DATA_DIR.parent)
+                rel = Path("data") / p.relative_to(_DATA_DIR)
                 # Skip user-asked-to-skip categories
                 if not args.include_research and "deep_research" in rel.parts:
                     continue
@@ -211,10 +211,10 @@ def cmd_restore(args):
         _validate_restore_members(members)
         # Save a safety copy of current data/ before extracting.
         if _DATA_DIR.exists() or _DATA_DIR.is_symlink():
-            stash = _REPO_ROOT / f"data.before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+            stash = _DATA_DIR.parent / f"data.before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
             os.rename(_DATA_DIR, stash)
         try:
-            _extract_restore_members(tar, members, _REPO_ROOT)
+            _extract_restore_members(tar, members, _DATA_DIR.parent)
         except Exception as e:
             fail(f"extract failed: {e}")
     emit({

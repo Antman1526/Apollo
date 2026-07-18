@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, UploadFile, File, 
 from sqlalchemy import func
 from core.database import SessionLocal, Document, DocumentVersion
 from core.database import Session as DbSession
-from src.auth_helpers import get_current_user
+from src.auth_helpers import require_user
 from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,10 @@ from routes.document_helpers import (
 
 def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     router = APIRouter(tags=["documents"])
+
+    def _request_user(request: Request) -> str:
+        """Require a user or one of the application's explicit local modes."""
+        return require_user(request)
 
     def _locate_current_user_upload(request: Request, upload_id: str, user: Optional[str]):
         if upload_handler is None:
@@ -245,7 +249,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         limit: int = Query(20, ge=1, le=50),
         archived: bool = Query(False),
     ) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             from sqlalchemy import or_
@@ -343,10 +347,10 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- GET /api/documents/{session_id} ----
     @router.get("/api/documents/{session_id}")
     async def list_documents(request: Request, session_id: str) -> List[Dict[str, Any]]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
-            if not user:
+            if user is None:
                 raise HTTPException(403, "Authentication required")
             session = db.query(DbSession).filter(DbSession.id == session_id).first()
             # v2 review HIGH-9: raise 403 explicitly when the caller
@@ -367,7 +371,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- GET /api/document/{doc_id} ----
     @router.get("/api/document/{doc_id}")
     async def get_document(request: Request, doc_id: str) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -381,7 +385,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- POST /api/document/{doc_id}/archive — soft-archive / restore ----
     @router.post("/api/document/{doc_id}/archive")
     async def archive_document(request: Request, doc_id: str, archived: bool = Query(True)) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -408,7 +412,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.document_processor import _process_pdf, strip_pdf_content_marker
         from src.pdf_form_doc import find_source_upload_id
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -460,7 +464,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         """Zip the selected documents (each as a text file with the right
         extension) — mirrors the gallery's bulk download-zip so multi-export
         is one file instead of a blocked flood of individual downloads."""
-        user = get_current_user(request)
+        user = _request_user(request)
         try:
             data = await request.json()
         except (TypeError, UnicodeDecodeError, ValueError) as error:
@@ -523,7 +527,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
 
     @router.put("/api/document/{doc_id}")
     async def update_document(request: Request, doc_id: str, req: DocumentUpdate) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -585,7 +589,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- PATCH /api/document/{doc_id} — metadata only ----
     @router.patch("/api/document/{doc_id}")
     async def patch_document(request: Request, doc_id: str, req: DocumentPatch) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -628,7 +632,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- DELETE /api/document/{doc_id} — soft delete ----
     @router.delete("/api/document/{doc_id}")
     async def delete_document(request: Request, doc_id: str) -> Dict[str, str]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -662,7 +666,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- GET /api/document/{doc_id}/versions ----
     @router.get("/api/document/{doc_id}/versions")
     async def list_versions(request: Request, doc_id: str) -> List[Dict[str, Any]]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             # Verify ownership before listing versions
@@ -686,7 +690,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- GET /api/document/{doc_id}/version/{num} ----
     @router.get("/api/document/{doc_id}/version/{num}")
     async def get_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             # Verify ownership
@@ -706,7 +710,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     # ---- POST /api/document/{doc_id}/restore/{num} ----
     @router.post("/api/document/{doc_id}/restore/{num}")
     async def restore_version(request: Request, doc_id: str, num: int) -> Dict[str, Any]:
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -748,7 +752,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
     @router.post("/api/documents/tidy")
     async def tidy_documents(request: Request) -> Dict[str, Any]:
         """Fix empty titles and remove broken/empty documents (user's docs only)."""
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             q = (
@@ -856,7 +860,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
 
-        user = get_current_user(request)
+        user = _request_user(request)
         url, model, headers = resolve_task_endpoint()
         if not url or not model:
             # Fall back to default endpoint
@@ -955,7 +959,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
         from src.constants import UPLOAD_DIR
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -1020,7 +1024,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar
         from src.constants import UPLOAD_DIR
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -1088,7 +1092,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.pdf_form_doc import find_source_upload_id
         from src.constants import UPLOAD_DIR
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -1144,7 +1148,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         if not instruction:
             raise HTTPException(400, "instruction is required")
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -1293,7 +1297,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 except Exception as _e:
                     logger.warning(f"Could not unlink temp PDF {_p}: {_e}")
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -1374,6 +1378,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         from src.pdf_form_doc import find_source_upload_id, parse_markdown_to_values, load_field_sidecar, parse_markdown_annotations
         from src.pdf_forms import fill_fields, stamp_signatures, stamp_annotations
         from src.constants import UPLOAD_DIR
+        from src.runtime_paths import data_path
         from core.database import Signature
 
         _to_unlink: list[str] = []
@@ -1386,7 +1391,7 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
                 except Exception as _e:
                     logger.warning(f"Could not unlink temp PDF {_p}: {_e}")
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -1522,12 +1527,12 @@ def setup_document_routes(session_manager, upload_handler=None) -> APIRouter:
         # as email_routes (APOLLO_MAIL_ATTACHMENTS_DIR).
         from pathlib import Path as _Path
         import os as _os
-        _DATA_DIR = _Path(__file__).resolve().parent.parent / "data"
+        _DATA_DIR = data_path()
         _BASE = _os.environ.get("APOLLO_MAIL_ATTACHMENTS_DIR", str(_DATA_DIR / "mail-attachments"))
         _COMPOSE_DIR = _Path(_BASE) / "_compose"
         _COMPOSE_DIR.mkdir(parents=True, exist_ok=True)
 
-        user = get_current_user(request)
+        user = _request_user(request)
         db = SessionLocal()
         try:
             doc = db.query(Document).filter(Document.id == doc_id).first()

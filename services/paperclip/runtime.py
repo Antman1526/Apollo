@@ -16,6 +16,7 @@ import subprocess
 import threading
 import time
 import urllib.request
+from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 from services.paperclip.config import PaperclipConfig
@@ -78,14 +79,45 @@ def build_env(cfg: PaperclipConfig, proxy_token: str, proxy_base: str,
     env["OPENAI_BASE_URL"] = proxy_base
     env["OPENAI_API_KEY"] = proxy_token
     env["OPENCODE_ALLOW_ALL_MODELS"] = "true"
+    # Apollo's packaged runtime sets DATABASE_URL to its own SQLite file.
+    # Passing that through makes Paperclip mistake it for an external Postgres
+    # deployment and reject first-run onboarding. Keep Paperclip self-contained
+    # unless the operator explicitly configures its database connection.
+    paperclip_database_url = env.pop("PAPERCLIP_DATABASE_URL", "")
+    if paperclip_database_url:
+        env["DATABASE_URL"] = paperclip_database_url
+    else:
+        env.pop("DATABASE_URL", None)
     return env
 
 
 def build_command(node: str, npx: Optional[str], cli: Optional[str],
-                  version: str = DEFAULT_VERSION) -> List[str]:
+                  version: str = DEFAULT_VERSION, initialized: bool = True) -> List[str]:
+    action = ["run"] if initialized else ["onboard", "--yes", "--bind", "loopback", "--run"]
     if cli:
-        return [node, cli, "run"]
-    return [npx, "-y", f"paperclipai@{version}", "run"]
+        return [node, cli, *action]
+    return [npx, "-y", f"paperclipai@{version}", *action]
+
+
+def is_initialized(env: Optional[Dict[str, str]] = None) -> bool:
+    """Whether Paperclip has the config its noninteractive run command needs."""
+    env = env or os.environ
+    home = Path(
+        env.get("PAPERCLIP_HOME") or Path(env.get("HOME") or Path.home()) / ".paperclip"
+    ).expanduser()
+    return (home / "instances" / "default" / "config.json").is_file()
+
+
+def runtime_log_path(env: Optional[Dict[str, str]] = None) -> Path:
+    """Return the durable sidecar log path without writing into the bundle."""
+    env = env or os.environ
+    configured = env.get("PAPERCLIP_LOG_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    data_dir = env.get("APOLLO_DATA_DIR") or env.get("DATA_DIR")
+    if data_dir:
+        return Path(data_dir).expanduser().parent / "logs" / "paperclip.log"
+    return Path.home() / ".apollo" / "paperclip.log"
 
 
 def _http_ok(url: str, timeout: float = 2.0) -> bool:
@@ -151,12 +183,20 @@ class PaperclipRuntime:
                 logger.warning("Paperclip: neither PAPERCLIP_CLI nor npx found; staying off.")
                 return False
             version = os.getenv("PAPERCLIP_VERSION", DEFAULT_VERSION)
-            cmd = build_command(node, npx, cli, version)
             env = build_env(self._cfg, self._token(), self._base())
+            cmd = build_command(node, npx, cli, version, initialized=is_initialized(env))
             logger.info("Starting Paperclip: %s (PORT=%s)", " ".join(cmd), self._cfg.port)
             try:
-                self._proc = self._spawn(cmd, env=env, stdout=subprocess.DEVNULL,
-                                         stderr=subprocess.STDOUT)
+                log_path = runtime_log_path(env)
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                # A sidecar failure previously disappeared into DEVNULL, making
+                # a packaged install look healthy while Paperclip was unusable.
+                # Keep the process output beside the app logs so operators can
+                # diagnose Node/package/runtime incompatibilities after launch.
+                with log_path.open("ab", buffering=0) as output:
+                    self._proc = self._spawn(cmd, env=env, stdout=output,
+                                             stderr=subprocess.STDOUT)
+                logger.info("Paperclip output is captured in %s", log_path)
             except Exception as e:  # pragma: no cover - defensive
                 logger.warning("Paperclip failed to start: %s", e)
                 self._proc = None

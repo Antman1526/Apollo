@@ -15,6 +15,8 @@ import os
 import socket
 import logging
 
+from src.runtime_paths import data_path
+
 logger = logging.getLogger(__name__)
 
 _client = None
@@ -40,8 +42,10 @@ def _port_open(host: str, port: int, timeout: float = None) -> bool:
 
 def _persist_dir() -> str:
     """Absolute path of the embedded ChromaDB store."""
-    d = os.getenv("CHROMA_PERSIST_DIR", "").strip() or os.path.join(_REPO_ROOT, "data", "chroma")
-    return d if os.path.isabs(d) else os.path.join(_REPO_ROOT, d)
+    configured = os.getenv("CHROMA_PERSIST_DIR", "").strip()
+    if configured:
+        return configured if os.path.isabs(configured) else os.path.join(_REPO_ROOT, configured)
+    return str(data_path("chroma"))
 
 
 def get_chroma_client():

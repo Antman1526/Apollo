@@ -23,6 +23,7 @@ APP="$DIST/$APP_NAME.app"
 VENV="$REPO_DIR/venv"
 ONEDIR="$DIST/apollo"          # PyInstaller COLLECT output (name=apollo)
 EXE_NAME="apollo"              # PyInstaller EXE name
+PLAYWRIGHT_BROWSERS="$REPO_DIR/packaging/playwright-browsers"
 
 echo "Building self-contained $APP_NAME.app"
 echo "  repo:  $REPO_DIR"
@@ -32,6 +33,15 @@ echo "  port:  $PORT"
 if [ ! -x "$VENV/bin/pyinstaller" ]; then
   echo "  pyinstaller: installing into venv…"
   "$VENV/bin/python" -m pip install --quiet pyinstaller
+fi
+
+# Bundle Chromium for the embedded browser and agent browser API. Keeping the
+# download under packaging/ makes PyInstaller collect it and avoids depending
+# on a user's global Playwright cache at first run.
+if ! find "$PLAYWRIGHT_BROWSERS" -type f \( -name headless_shell -o -name chrome -o -name "Google Chrome for Testing" \) -print -quit 2>/dev/null | grep -q .; then
+  echo "  playwright: downloading bundled Chromium…"
+  mkdir -p "$PLAYWRIGHT_BROWSERS"
+  PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS" "$VENV/bin/python" -m playwright install chromium
 fi
 
 # ── 2. PyInstaller onedir build (arm64) ──
@@ -44,6 +54,11 @@ if [ ! -x "$ONEDIR/$EXE_NAME" ]; then
   echo "  ✗ PyInstaller did not produce $ONEDIR/$EXE_NAME" >&2
   exit 1
 fi
+# Chromium is a nested, already-signed macOS application bundle. Copy it only
+# after PyInstaller finishes: otherwise its binary collector attempts to
+# re-sign the nested framework structure and rejects it as an invalid bundle.
+rm -rf "$ONEDIR/_internal/playwright-browsers"
+cp -R "$PLAYWRIGHT_BROWSERS" "$ONEDIR/_internal/playwright-browsers"
 echo "  pyinstaller: onedir ready ($(du -sh "$ONEDIR" | cut -f1))"
 
 # ── 3. Assemble Apollo.app around the onedir ──

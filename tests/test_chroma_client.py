@@ -50,3 +50,10 @@ def test_get_chroma_client_does_not_cache_when_unreachable(monkeypatch):
     # A failed connection must leave the singleton unset so a later call
     # (once ChromaDB is up) can succeed.
     assert cc._client is None
+
+
+def test_embedded_store_follows_application_data_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("APOLLO_DATA_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("CHROMA_PERSIST_DIR", raising=False)
+
+    assert cc._persist_dir() == str(tmp_path / "state" / "chroma")

@@ -72,8 +72,10 @@ def _seed_home(bundle: Path, home: Path) -> None:
     bundle_data = bundle / "data"
     home_data = home / "data"
     home_data.mkdir(parents=True, exist_ok=True)
+    # Authentication state is deliberately absent: copying a checkout's
+    # auth.json would ship its local accounts to every installed app and skip
+    # first-run setup. The auth manager creates an empty file on first use.
     seed_files = [
-        "auth.json",
         "presets.json",
         "features.json",
         "settings.json",
@@ -105,24 +107,50 @@ def _seed_home(bundle: Path, home: Path) -> None:
         (home_data / sub).mkdir(parents=True, exist_ok=True)
 
 
+def _configure_bundled_playwright(bundle: Path) -> None:
+    """Point Playwright at Chromium shipped with the application, if present.
+
+    A fresh desktop profile has no ``~/Library/Caches/ms-playwright`` cache.
+    The package build places Chromium in this resource directory so the
+    browser panel and agent browser API work without a global Node install or
+    first-run browser download. Operators can still provide an explicit path.
+    """
+    bundled_browsers = bundle / "playwright-browsers"
+    if bundled_browsers.is_dir():
+        os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", str(bundled_browsers))
+
+
+def _configure_runtime_paths(home: Path) -> None:
+    """Make every runtime-path import resolve under the writable app home."""
+    os.environ.setdefault("APOLLO_DATA_DIR", str(home / "data"))
+
+
 def _patch_constants(home: Path) -> None:
-    """Rebind path constants to the writable home before app import."""
+    """Rebind legacy path constants to the writable home before app import."""
     import core.constants as C
+    import src.constants as S
 
     base = str(home) + os.sep
-    C.BASE_DIR = base
-    C.STATIC_DIR = os.path.join(base, "static")
-    C.DATA_DIR = os.path.join(base, "data")
-    # Recompute the derived file/dir constants that were built from DATA_DIR at
-    # module load, so importers that read them get the writable paths.
-    C.SESSIONS_FILE = os.path.join(C.DATA_DIR, "sessions.json")
-    C.MEMORY_FILE = os.path.join(C.DATA_DIR, "memory.json")
-    C.MEMORY_DOC = os.path.join(C.DATA_DIR, "memory_doc.md")
-    C.PERSONAL_DIR = os.path.join(C.DATA_DIR, "personal_docs")
-    C.RUNBOOK_DIR = os.path.join(C.PERSONAL_DIR, "runbook")
-    C.UPLOAD_DIR = os.path.join(C.DATA_DIR, "uploads")
-    C.FEATURES_FILE = os.path.join(C.DATA_DIR, "features.json")
-    C.SETTINGS_FILE = os.path.join(C.DATA_DIR, "settings.json")
+    values = {
+        "BASE_DIR": base,
+        "STATIC_DIR": os.path.join(base, "static"),
+        "DATA_DIR": os.path.join(base, "data"),
+    }
+    values.update(
+        {
+            "SESSIONS_FILE": os.path.join(values["DATA_DIR"], "sessions.json"),
+            "MEMORY_FILE": os.path.join(values["DATA_DIR"], "memory.json"),
+            "MEMORY_DOC": os.path.join(values["DATA_DIR"], "memory_doc.md"),
+            "PERSONAL_DIR": os.path.join(values["DATA_DIR"], "personal_docs"),
+            "RUNBOOK_DIR": os.path.join(values["DATA_DIR"], "personal_docs", "runbook"),
+            "UPLOAD_DIR": os.path.join(values["DATA_DIR"], "uploads"),
+            "FEATURES_FILE": os.path.join(values["DATA_DIR"], "features.json"),
+            "SETTINGS_FILE": os.path.join(values["DATA_DIR"], "settings.json"),
+        }
+    )
+    for name, value in values.items():
+        setattr(S, name, value)
+        setattr(C, name, value)
 
 
 def main() -> None:
@@ -152,6 +180,8 @@ def main() -> None:
         sys.path.insert(0, root)
 
     _seed_home(bundle, home)
+    _configure_bundled_playwright(bundle)
+    _configure_runtime_paths(home)
 
     # Everything downstream expects to run from a dir containing static/ + data/.
     os.chdir(home)

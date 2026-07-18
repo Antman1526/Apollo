@@ -69,13 +69,14 @@ for pkg in ("routes", "services", "core", "src", "companion", "mcp_servers", "co
 def tree(src, dst=None):
     dst = dst or src
     out = []
-    for root, _dirs, files in os.walk(os.path.join(REPO, src)):
+    source_root = os.path.join(REPO, src)
+    for root, _dirs, files in os.walk(source_root):
         for f in files:
             if f.endswith((".pyc",)):
                 continue
             full = os.path.join(root, f)
-            rel = os.path.relpath(full, REPO)
-            out.append((full, os.path.dirname(rel)))
+            rel = os.path.relpath(full, source_root)
+            out.append((full, os.path.join(dst, os.path.dirname(rel))))
     return out
 
 datas += tree("static")
@@ -85,7 +86,7 @@ datas += tree("config")
 # embeds them as bytecode with no file on disk, so ship the tree too.
 datas += tree("mcp_servers")
 # Seed data (small JSON only — skip large caches/DBs; boot shim copies these).
-for name in ("auth.json", "presets.json", "features.json", "settings.json",
+for name in ("presets.json", "features.json", "settings.json",
              "memory.json", "user_prefs.json"):
     p = os.path.join(REPO, "data", name)
     if os.path.isfile(p):

@@ -41,6 +41,16 @@ def test_snapshot_rejects_output_inside_data_dir(tmp_path, monkeypatch):
         backup._reject_output_inside_data(data / "self.tar.gz")
 
 
+def test_backup_cli_uses_explicit_application_data_root(tmp_path, monkeypatch):
+    data = tmp_path / "application-state" / "data"
+    monkeypatch.setenv("APOLLO_DATA_DIR", str(data))
+
+    backup = _load_backup_cli()
+
+    assert backup._DATA_DIR == data.resolve()
+    assert backup._BACKUP_DIR == data.parent / "backups"
+
+
 def test_restore_rejects_symlink_escape(tmp_path, monkeypatch):
     backup = _load_backup_cli()
     repo = tmp_path / "repo"
