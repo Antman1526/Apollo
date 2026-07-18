@@ -38,6 +38,7 @@ from core.platform_compat import (
     detached_popen_kwargs,
     find_bash,
 )
+from src.auth_helpers import resolve_identity
 
 
 def _require_admin(request: Request):
@@ -47,15 +48,15 @@ def _require_admin(request: Request):
     if not auth_manager:
         # No auth at all — only safe in fully-trusted localhost dev mode
         return
-    user = getattr(request.state, "current_user", None)
+    identity = resolve_identity(request)
     # In-process tool loopback. The AuthMiddleware already validated the
     # internal token + loopback client before setting this marker, so
     # honour it here as admin-equivalent.
-    if user == "internal-tool":
+    if identity.auth_mode == "internal_tool":
         return
-    if not user or user == "api":
+    if not identity.owner:
         raise HTTPException(403, "Admin only")
-    if not auth_manager.is_admin(user):
+    if not identity.is_admin:
         raise HTTPException(403, "Admin only")
 
 

@@ -11,7 +11,7 @@ import logging
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
-from src.auth_helpers import get_current_user
+from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +47,16 @@ def setup_compare_routes(session_manager: SessionManager):
         sid_a = str(uuid.uuid4())
         sid_b = str(uuid.uuid4())
 
+        owner = require_user(request)
         # Create ephemeral sessions (prefixed [CMP])
         for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
-            user = getattr(request.state, 'current_user', None)
             session_manager.create_session(
                 session_id=sid,
                 name=f"[CMP] {model.split('/')[-1]}",
                 endpoint_url=endpoint,
                 model=model,
                 rag=False,
-                owner=user,
+                owner=owner,
             )
             # Copy API key from endpoint config
             db = SessionLocal()
