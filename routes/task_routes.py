@@ -15,6 +15,7 @@ from src.auth_helpers import get_current_user
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 from src.runtime_paths import data_path
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -149,8 +150,8 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
             sess = db.query(DbSession).filter(DbSession.id == task.session_id).first()
             if sess and sess.endpoint_url:
                 return sess.endpoint_url or ""
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "task_session_endpoint_lookup_failed", error, outcome="best_effort")
 
     model = (getattr(run, "model", None) or getattr(task, "model", None) or "").strip()
     if not model:
@@ -164,12 +165,13 @@ def _resolve_run_endpoint(db, task: ScheduledTask, run: TaskRun) -> str:
             if ep.cached_models:
                 try:
                     cached = json.loads(ep.cached_models) or []
-                except Exception:
+                except (json.JSONDecodeError, TypeError) as error:
+                    report_exception(logger, "task_endpoint_model_cache_parse_failed", error, outcome="best_effort")
                     cached = []
             if model in cached:
                 return ep.base_url or ""
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "task_endpoint_model_lookup_failed", error, outcome="best_effort")
     return ""
 
 
@@ -207,7 +209,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             )
             title = result.strip().strip('"\'').strip()
             return title[:60] if title else prompt[:50].strip()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "task_title_generation_failed", error, outcome="best_effort")
             first = prompt.split('\n')[0].split('.')[0].strip()
             return first[:50] if first else "Untitled Task"
 
@@ -314,7 +317,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 # Unconfigured single-user deploy: trust the local owner.
                 return True
             return bool(auth.is_admin(user))
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "task_admin_check_failed", error, outcome="best_effort", context={"owner": user})
             return False
 
     @router.post("")
@@ -488,16 +492,16 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                     try:
                         child.unlink()
                         removed_files += 1
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "task_state_file_cleanup_failed", error, outcome="best_effort", context={"owner": user})
             owner_slug = "".join(c if (c.isalnum() or c in "-_.@") else "_" for c in (user or "default"))
             for state_path in [Path(f"data/email_urgency_state_{owner_slug}.json")]:
                 try:
                     if state_path.exists():
                         state_path.unlink()
                         removed_files += 1
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "task_email_urgency_state_cleanup_failed", error, outcome="best_effort", context={"owner": user})
 
         return {"ok": True, "action": action, "cleared": cleared, "files": removed_files}
 
@@ -842,8 +846,8 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                         "label": f"{tool['server_name']} → {tool['name']}",
                         "description": tool.get("description", ""),
                     })
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "task_targets_tool_list_failed", error, outcome="best_effort")
         return {"targets": targets}
 
     @router.get("/meta/actions")
