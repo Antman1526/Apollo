@@ -1,4 +1,34 @@
+from services.memory import chat_import
 from services.memory.chat_import import parse_chatgpt_export, parse_claude_export, parse_export
+
+
+def test_chatgpt_record_failure_is_observable_and_does_not_abort(monkeypatch):
+    events = []
+
+    def parse_one(conversation):
+        if conversation.get("title") == "bad":
+            raise RuntimeError("bad record")
+        return {"title": "good", "messages": [{"role": "user", "text": "hello"}]}
+
+    monkeypatch.setattr(chat_import, "_parse_chatgpt_conversation", parse_one)
+    monkeypatch.setattr(
+        chat_import,
+        "report_exception",
+        lambda _logger, event, _error, **kwargs: events.append((event, kwargs)),
+    )
+
+    result = chat_import.parse_chatgpt_export([
+        {"title": "bad", "mapping": {}},
+        {"title": "good", "mapping": {}},
+    ])
+
+    assert result == [{"title": "good", "messages": [{"role": "user", "text": "hello"}]}]
+    assert events == [
+        (
+            "chat_import_conversation_parse_failed",
+            {"outcome": "best_effort", "context": {"format": "chatgpt", "record_index": 0}},
+        )
+    ]
 
 
 def test_parse_chatgpt_mapping_tree():

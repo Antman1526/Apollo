@@ -8,7 +8,12 @@ Roles are normalized (`human` -> `user`). Empty-text messages are skipped.
 Unrecognized shapes return `[]` (never raise); a single malformed conversation
 is skipped rather than aborting the whole import.
 """
+import logging
 from typing import Any, Dict, List
+
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 _ROLE_MAP = {"human": "user"}
 
@@ -64,14 +69,21 @@ def parse_chatgpt_export(obj: Any) -> List[Dict]:
     if not isinstance(obj, list):
         return []
     out: List[Dict] = []
-    for convo in obj:
+    for index, convo in enumerate(obj):
         try:
             if not isinstance(convo, dict):
                 continue
             parsed = _parse_chatgpt_conversation(convo)
             if parsed["messages"]:
                 out.append(parsed)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_import_conversation_parse_failed",
+                error,
+                outcome="best_effort",
+                context={"format": "chatgpt", "record_index": index},
+            )
             continue
     return out
 
@@ -103,14 +115,21 @@ def parse_claude_export(obj: Any) -> List[Dict]:
     if not isinstance(conversations, list):
         return []
     out: List[Dict] = []
-    for convo in conversations:
+    for index, convo in enumerate(conversations):
         try:
             if not isinstance(convo, dict):
                 continue
             parsed = _parse_claude_conversation(convo)
             if parsed["messages"]:
                 out.append(parsed)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_import_conversation_parse_failed",
+                error,
+                outcome="best_effort",
+                context={"format": "claude", "record_index": index},
+            )
             continue
     return out
 
