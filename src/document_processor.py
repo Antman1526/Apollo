@@ -9,6 +9,7 @@ import tempfile
 from typing import List, Dict, Any
 
 from src.llm_core import llm_call
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,8 @@ def _process_pdf(path: str) -> str:
             # For pages with images but little text, try VL model
             try:
                 images = list(page.images)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "document_pdf_images_read_failed", error, outcome="best_effort")
                 images = []
             if images and len(page_text) < 50:
                 for img_index, img in enumerate(images[:3]):  # cap at 3 images per page
@@ -148,8 +150,9 @@ def _process_pdf(path: str) -> str:
         else:
             return "\n\n[PDF processed but no readable content found]"
 
-    except Exception as e:
-        return f"\n\n[PDF processing failed: {str(e)}]"
+    except Exception as error:
+        report_exception(logger, "document_pdf_processing_failed", error, outcome="degraded")
+        return "\n\n[PDF processing failed]"
 
 
 def _truncate_inline(text: str, limit: int = 15000) -> tuple[str, str]:
@@ -211,7 +214,8 @@ def _load_vl_settings() -> dict:
     try:
         from src.settings import load_settings
         return load_settings()
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "document_settings_load_failed", error, outcome="best_effort")
         return {}
 
 
@@ -236,7 +240,8 @@ def _resolve_vl_model(configured: str) -> tuple:
     for candidate in candidates:
         try:
             return _resolve_model(candidate)
-        except (ValueError, Exception):
+        except Exception as error:
+            report_exception(logger, "document_vision_model_resolve_failed", error, outcome="best_effort")
             continue
 
     raise ValueError("No vision model available")
@@ -278,7 +283,8 @@ def analyze_image_with_vl_result(image_path: str) -> dict:
         try:
             from src.endpoint_resolver import resolve_vision_fallback_candidates
             _vl_candidates = [(url, model_id, headers)] + resolve_vision_fallback_candidates()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "document_vision_fallback_candidates_resolve_failed", error, outcome="best_effort")
             _vl_candidates = [(url, model_id, headers)]
 
         last_err = None
@@ -397,7 +403,8 @@ def build_user_content(
                             pdf_body_text = _process_pdf(path).lstrip(
                                 "\n[PDF content]:"
                             ).strip()
-                        except Exception:
+                        except Exception as error:
+                            report_exception(logger, "document_pdf_marker_extract_failed", error, outcome="best_effort")
                             pdf_body_text = None
 
                         is_form = False
