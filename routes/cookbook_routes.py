@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, Depends
 
 from src.auth_helpers import require_user
+from src.observability import report_exception
 from pydantic import BaseModel
 
 from core.middleware import require_admin
@@ -243,7 +244,8 @@ def setup_cookbook_routes() -> APIRouter:
             state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
             env = state.get("env") if isinstance(state, dict) else {}
             return _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "cookbook_hf_token_read_failed", error, outcome="best_effort")
             return ""
 
     def _cookbook_ssh_dir() -> Path:
@@ -341,7 +343,8 @@ def setup_cookbook_routes() -> APIRouter:
             )
             await asyncio.wait_for(proc.communicate(), timeout=10)
             return proc.returncode == 0
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "cookbook_binary_probe_failed", error, outcome="best_effort")
             return False
 
     async def _binary_available(binary: str, remote: str | None, ssh_port: str | None, *, windows: bool = False) -> bool:
@@ -689,8 +692,8 @@ def setup_cookbook_routes() -> APIRouter:
                 f"Started downloading {req.repo_id} to {remote or 'local'}",
                 category="Download",
             )
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "cookbook_download_task_record_failed", error, outcome="best_effort", context={"session_id": session_id})
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local"}
 
@@ -1217,8 +1220,8 @@ def setup_cookbook_routes() -> APIRouter:
                 f"Started serving {short} on {remote or 'local'}",
                 category="Serve",
             )
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "cookbook_serve_task_record_failed", error, outcome="best_effort", context={"session_id": session_id})
 
         return {"ok": True, "session_id": session_id, "remote": remote or "local",
                 "endpoint_id": endpoint_id}
@@ -1260,7 +1263,8 @@ def setup_cookbook_routes() -> APIRouter:
                 )
                 stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=10)
                 platform = stdout2.decode().strip()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "cookbook_remote_platform_probe_failed", error, outcome="best_effort")
             platform = "linux"
 
         if platform == "windows":
@@ -1316,8 +1320,9 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": ok, "output": output.strip(), "platform": platform}
         except asyncio.TimeoutError:
             return {"ok": False, "error": "Setup timed out (120s)", "platform": platform}
-        except Exception as e:
-            return {"ok": False, "error": str(e), "platform": platform}
+        except Exception as error:
+            report_exception(logger, "cookbook_remote_setup_failed", error, outcome="critical")
+            return {"ok": False, "error": "Setup failed", "platform": platform}
 
     # ── GPU availability probe ──
 
@@ -1495,8 +1500,9 @@ def setup_cookbook_routes() -> APIRouter:
         except FileNotFoundError:
             nvidia_error = "nvidia-smi not found"
             gpu_out = ""
-        except Exception as e:
-            nvidia_error = str(e)[:200]
+        except Exception as error:
+            report_exception(logger, "cookbook_nvidia_probe_failed", error, outcome="degraded")
+            nvidia_error = "GPU probe failed"
             gpu_out = ""
 
         gpus = []
@@ -1546,8 +1552,8 @@ def setup_cookbook_routes() -> APIRouter:
                     gpus_by_idx[idx]["processes"].append({
                         "pid": pid, "name": pname, "used_mb": pmem,
                     })
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "cookbook_gpu_process_probe_failed", error, outcome="best_effort")
 
         if gpus:
             return {"ok": True, "gpus": gpus, "backend": "cuda", "source": "nvidia-smi"}
@@ -1674,8 +1680,9 @@ def setup_cookbook_routes() -> APIRouter:
             return {"ok": True, "pid": req.pid, "signal": sig}
         except asyncio.TimeoutError:
             return {"ok": False, "error": "kill command timed out"}
-        except Exception as e:
-            return {"ok": False, "error": str(e)[:200]}
+        except Exception as error:
+            report_exception(logger, "cookbook_process_stop_failed", error, outcome="degraded")
+            return {"ok": False, "error": "Could not stop process"}
 
     # ── Cookbook state persistence (cross-device sync) ──
 
@@ -1686,7 +1693,8 @@ def setup_cookbook_routes() -> APIRouter:
         if _cookbook_state_path.exists():
             try:
                 return _state_for_client(json.loads(_cookbook_state_path.read_text(encoding="utf-8")))
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "cookbook_state_read_failed", error, outcome="best_effort")
                 return {}
         return {}
 
@@ -1717,7 +1725,8 @@ def setup_cookbook_routes() -> APIRouter:
                     on_disk = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
                 else:
                     on_disk = {}
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "cookbook_state_merge_read_failed", error, outcome="best_effort")
                 on_disk = {}
             # Anti-wipe guard for env servers. The UI debounces a
             # sync of whatever is in memory; if it fires before the state has
@@ -1758,8 +1767,9 @@ def setup_cookbook_routes() -> APIRouter:
                 data["tasks"] = incoming_tasks + preserved
             atomic_write_json(str(_cookbook_state_path), _state_for_storage(data, on_disk), indent=2)
             return {"ok": True, "preserved": len(preserved)}
-        except Exception as e:
-            return {"ok": False, "error": str(e)}
+        except Exception as error:
+            report_exception(logger, "cookbook_state_sync_failed", error, outcome="critical")
+            return {"ok": False, "error": "Could not save cookbook state"}
 
     @router.get("/api/cookbook/hf-latest")
     async def hf_latest(vram_gb: float = 0, limit: int = 10, pipeline: str = "text-generation", owner: str = Depends(require_user)):
@@ -1784,8 +1794,9 @@ def setup_cookbook_routes() -> APIRouter:
                 if resp.status_code != 200:
                     return {"models": [], "error": f"HF API HTTP {resp.status_code}"}
                 raw = resp.json()
-        except Exception as e:
-            return {"models": [], "error": str(e)}
+        except Exception as error:
+            report_exception(logger, "cookbook_huggingface_catalog_request_failed", error, outcome="degraded")
+            return {"models": [], "error": "Model catalog unavailable"}
 
         # Estimate VRAM from the model id. Looks for patterns like "7B", "70B", "1.5B" etc.
         # Returns approx VRAM in GB at fp16 (params*2). Caller adjusts for quant.
@@ -1924,7 +1935,8 @@ def setup_cookbook_routes() -> APIRouter:
                 else:
                     proc = subprocess.run(cmd, timeout=12, capture_output=True)
                 return proc.returncode == 0
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "cookbook_saved_task_process_probe_failed", error, outcome="best_effort")
                 return False
 
         # Load saved tasks from cookbook state
@@ -1937,8 +1949,8 @@ def setup_cookbook_routes() -> APIRouter:
                     tasks = saved_tasks
                 elif isinstance(saved_tasks, dict):
                     tasks = list(saved_tasks.values())
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "cookbook_saved_task_state_read_failed", error, outcome="best_effort")
 
         results = []
         for task in tasks:
@@ -2022,7 +2034,8 @@ def setup_cookbook_routes() -> APIRouter:
                 task_pid = None
                 try:
                     task_pid = int(pid_path.read_text(encoding="utf-8").strip())
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "cookbook_local_task_pid_read_failed", error, outcome="best_effort", context={"session_id": session_id})
                     task_pid = None
                 is_alive = pid_alive(task_pid)
                 try:
@@ -2036,13 +2049,14 @@ def setup_cookbook_routes() -> APIRouter:
                             progress_text = downloading_lines[-1]
                         elif lines:
                             progress_text = lines[-1]
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(logger, "cookbook_local_task_log_read_failed", error, outcome="best_effort", context={"session_id": session_id})
             else:
                 try:
                     alive = subprocess.run(check_cmd, timeout=10, capture_output=True)
                     is_alive = alive.returncode == 0
-                except Exception:
+                except Exception as error:
+                    report_exception(logger, "cookbook_remote_task_probe_failed", error, outcome="best_effort", context={"session_id": session_id})
                     is_alive = False
 
                 # Capture last lines for progress. Prefer the "Downloading" line
@@ -2059,8 +2073,8 @@ def setup_cookbook_routes() -> APIRouter:
                                 progress_text = downloading_lines[-1]
                             elif lines:
                                 progress_text = lines[-1]
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "cookbook_remote_task_log_read_failed", error, outcome="best_effort", context={"session_id": session_id})
 
             # Determine status. For the local-Windows detached model the log file
             # persists after the process exits, so a finished download still has a
