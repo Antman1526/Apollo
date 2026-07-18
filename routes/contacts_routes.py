@@ -18,6 +18,7 @@ from fastapi import APIRouter, Query, Depends, Response
 from typing import List, Dict, Optional
 
 from src.auth_helpers import require_user
+from src.observability import report_exception
 from core.middleware import require_admin
 
 logger = logging.getLogger(__name__)
@@ -326,8 +327,14 @@ def _resolve_resource_url(uid: str) -> str:
     # Not in cache (or no href) — refresh once and retry before guessing.
     try:
         _fetch_contacts(force=True)
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "contacts_resource_refresh_failed",
+            error,
+            outcome="best_effort",
+            context={"contact_id": uid},
+        )
     return _lookup() or _vcard_url(uid)
 
 
@@ -465,13 +472,13 @@ def _import_csv_contacts(text: str) -> Dict:
     try:
         sample = raw[:2048]
         dialect = csv.Sniffer().sniff(sample)
-    except Exception:
+    except csv.Error:
         dialect = csv.excel
 
     stream = io.StringIO(raw)
     try:
         has_header = csv.Sniffer().has_header(raw[:2048])
-    except Exception:
+    except csv.Error:
         has_header = True
 
     rows = []
@@ -533,8 +540,14 @@ def _import_csv_contacts(text: str) -> Dict:
                     created = next((c for c in contacts if email.lower() in [e.lower() for e in c.get("emails", [])]), None)
                     if created and created.get("uid"):
                         _update_contact(created["uid"], name, [email], [phone])
-                except Exception:
-                    pass
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "contacts_csv_phone_update_failed",
+                        error,
+                        outcome="best_effort",
+                        context={"contact_id": created.get("uid") if created else None},
+                    )
         else:
             failed += 1
 
