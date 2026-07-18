@@ -56,9 +56,10 @@ _RETENTION_S = 3600  # 1 hour after follow-up
 def _load() -> Dict[str, Dict[str, Any]]:
     try:
         if _STORE.exists():
-            return json.loads(_STORE.read_text(encoding="utf-8")) or {}
-    except Exception:
-        pass
+            data = json.loads(_STORE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
     return {}
 
 
@@ -161,7 +162,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
 def _read_output(rec: Dict[str, Any]) -> str:
     try:
         txt = Path(rec["log_path"]).read_text(encoding="utf-8", errors="replace")
-    except Exception:
+    except (KeyError, OSError, TypeError):
         return ""
     if len(txt) > _MAX_OUTPUT_CHARS:
         # Keep head + tail — the interesting bits are usually at both ends.
@@ -182,7 +183,7 @@ def _prune(jobs: Dict[str, Dict[str, Any]], now: float) -> bool:
         for p in _JOBS_DIR.glob(f"{jid}.*"):   # .sh .cmd.sh .log .exit
             try:
                 p.unlink()
-            except Exception:
+            except OSError:
                 pass
     return bool(stale)
 
@@ -200,7 +201,7 @@ def refresh() -> Dict[str, Dict[str, Any]]:
         if exit_path.exists():
             try:
                 code = int(exit_path.read_text(encoding="utf-8", errors="replace").strip() or "1")
-            except Exception:
+            except (OSError, ValueError):
                 code = 1
             rec["exit_code"] = code
             rec["status"] = "done" if code == 0 else "failed"
