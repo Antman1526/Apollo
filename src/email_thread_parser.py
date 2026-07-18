@@ -25,8 +25,13 @@ where level 0 is the current reply, increasing levels = deeper in the chain.
 from __future__ import annotations
 
 import html as _html
+import logging
 import re
 from typing import Any
+
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 # Bump whenever the parser's output shape or splitting rules change. The
 # cache layer wraps turns as {"v": THREAD_PARSER_VERSION, "turns": [...]}
@@ -438,12 +443,18 @@ def _parse_html(html: str) -> list[dict[str, Any]] | None:
         return None
     try:
         from bs4 import BeautifulSoup
-    except Exception:
+    except ImportError:
         return None  # bs4 not installed → caller falls back to plaintext / client parse
 
     try:
         soup = BeautifulSoup(html, "html.parser")
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "email_quote_html_parse_failed",
+            error,
+            outcome="best_effort",
+        )
         return None
 
     # Find all quote containers, then keep only the top-level ones (those

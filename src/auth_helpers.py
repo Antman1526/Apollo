@@ -1,9 +1,14 @@
 """Shared auth helpers used by all route files."""
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Optional
 from fastapi import Request, HTTPException
+
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -42,7 +47,8 @@ def _is_admin(auth_manager, username: Optional[str]) -> bool:
         return False
     try:
         return bool(is_admin(username))
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "auth_admin_lookup_failed", error, outcome="best_effort")
         return False
 
 
@@ -169,7 +175,14 @@ def require_privilege(request: Request, key: str) -> str:
         return user
     try:
         privs = auth_mgr.get_privileges(user) or {}
-    except Exception:
+    except Exception as error:
+        report_exception(
+            logger,
+            "auth_privilege_lookup_failed",
+            error,
+            outcome="best_effort",
+            context={"owner": user, "privilege": key},
+        )
         return user
     # True = permitted; missing key defaults to permitted (unknown privileges
     # fail open — the UI gates display-side).
