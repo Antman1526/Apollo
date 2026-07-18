@@ -9,6 +9,7 @@ import os
 
 from core.auth import AuthManager
 from src.rate_limiter import RateLimiter
+from src.observability import report_exception
 from src.settings_scrub import scrub_settings
 from src.settings import (
     load_settings as _load_settings,
@@ -169,8 +170,8 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
             u = result.get("username")
             if u:
                 result["privileges"] = auth_manager.get_privileges(u)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "auth_status_privileges_load_failed", error, outcome="best_effort")
         return result
 
     @router.post("/change-password")
@@ -544,12 +545,13 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
                             f"\"{base}\" (or paste the full URL: {full_url})."
                         ),
                     }
-                return {"ok": False, "message": f"ntfy returned HTTP {r.status_code} from {full_url}: {r.text[:200]}"}
-            except Exception as e:
+                return {"ok": False, "message": f"ntfy returned HTTP {r.status_code}"}
+            except Exception as error:
+                report_exception(logger, "auth_ntfy_connectivity_test_failed", error, outcome="degraded")
                 hint = ""
                 if parsed.hostname not in ("127.0.0.1", "localhost"):
                     hint = " If this is Docker Compose ntfy, set NTFY_BIND to that host/Tailscale IP and NTFY_BASE_URL to the same server URL in .env, then recreate ntfy."
-                return {"ok": False, "message": f"ntfy publish to {full_url} failed: {e}.{hint}"[:500]}
+                return {"ok": False, "message": f"ntfy publish failed.{hint}"}
 
         # All other presets: GET against a known health endpoint.
         # Fall back to detecting from name if preset is missing.

@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Form, Request
 from services.youtube.youtube_handler import extract_youtube_id, extract_transcript_async
 from core.constants import DEFAULT_HOST
 from core.middleware import require_admin
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,9 @@ def setup_diagnostics_routes(
                     else data.get("transcript", ""),
                 "error": data.get("error") if not data.get("success") else None,
             }
-        except Exception as e:
-            return {"error": str(e)}
+        except Exception as error:
+            report_exception(logger, "diagnostics_youtube_test_failed", error, outcome="degraded")
+            return {"error": "YouTube transcript test failed"}
 
     @router.post("/api/test-research")
     async def test_research(request: Request, query: str = Form("What is machine learning?")) -> Dict[str, Any]:
@@ -70,7 +72,8 @@ def setup_diagnostics_routes(
                 "result_preview": result[:200] + "..." if len(result) > 200 else result,
                 "result_length": len(result),
             }
-        except Exception as e:
-            return {"status": "error", "error": str(e), "query": query}
+        except Exception as error:
+            report_exception(logger, "diagnostics_research_test_failed", error, outcome="degraded")
+            return {"status": "error", "error": "Research test failed"}
 
     return router
