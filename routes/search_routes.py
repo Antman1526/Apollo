@@ -15,6 +15,7 @@ from services.search import get_search_config, comprehensive_web_search, PROVIDE
 from services.search.core import _call_provider
 from services.search.providers import _get_provider_key, _get_search_instance
 from src.constants import BASE_DIR
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +37,8 @@ async def _request_values(request: Request) -> Dict[str, Any]:
         else:
             form = await request.form()
             values.update(dict(form))
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "search_request_payload_parse_failed", error, outcome="best_effort")
     return values
 
 
@@ -66,9 +67,9 @@ def setup_search_routes(config) -> APIRouter:
                 query, return_sources=True, time_filter=time_filter,
             )
             return {"context": context, "sources": sources}
-        except Exception as e:
-            logger.error(f"Standalone web search failed: {e}")
-            return {"context": "", "sources": [], "error": str(e)}
+        except Exception as error:
+            report_exception(logger, "standalone_web_search_failed", error, outcome="degraded")
+            return {"context": "", "sources": [], "error": "Search failed"}
 
     @router.get("/api/search/providers")
     async def list_search_providers():
@@ -97,7 +98,7 @@ def setup_search_routes(config) -> APIRouter:
         provider = str(values.get("provider") or "").strip()
         try:
             count = int(values.get("count") or values.get("limit") or 10)
-        except Exception:
+        except (TypeError, ValueError):
             count = 10
         if not query:
             return {"results": [], "provider": provider, "error": "query is required"}
@@ -108,10 +109,16 @@ def setup_search_routes(config) -> APIRouter:
             results = _call_provider(provider, query, min(count, 20))
             elapsed = round(time.time() - t0, 2)
             return {"results": results, "provider": provider, "time": elapsed}
-        except Exception as e:
+        except Exception as error:
             elapsed = round(time.time() - t0, 2)
-            logger.error(f"Search provider {provider} failed: {e}")
-            return {"results": [], "provider": provider, "time": elapsed, "error": str(e)}
+            report_exception(
+                logger,
+                "search_provider_query_failed",
+                error,
+                outcome="degraded",
+                context={"provider": provider},
+            )
+            return {"results": [], "provider": provider, "time": elapsed, "error": "Search failed"}
 
     # ── Managed SearXNG sidecar ──
     _install_state = {"running": False, "log": [], "ok": None}
@@ -127,7 +134,7 @@ def setup_search_routes(config) -> APIRouter:
             if os.path.exists(_LOG_PATH):
                 with open(_LOG_PATH, "r", errors="replace") as _lf:
                     _runtime_log_tail = _lf.read().splitlines()[-20:]
-        except Exception:
+        except OSError:
             pass
         return {
             "status": rt.status(),
@@ -167,8 +174,9 @@ def setup_search_routes(config) -> APIRouter:
                 if ok:
                     logger.info("searxng install: script succeeded — starting updated sidecar")
                     get_runtime().start()
-            except Exception as e:
-                _install_state["log"].append(f"install failed: {e}")
+            except Exception as error:
+                report_exception(logger, "searxng_install_failed", error, outcome="critical")
+                _install_state["log"].append("install failed")
                 _install_state["ok"] = False
             finally:
                 _install_state["running"] = False
