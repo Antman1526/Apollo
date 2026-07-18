@@ -9,6 +9,8 @@ Stores pre-computed embeddings (ChromaDB does not manage embedding).
 import logging
 from typing import List, Dict, Optional
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 
@@ -143,8 +145,8 @@ class MemoryVectorStore:
         client = get_chroma_client()
         try:
             client.delete_collection(self.COLLECTION_NAME)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "memory_vector_collection_delete_failed", error, outcome="best_effort")
         self._collection = client.get_or_create_collection(
             name=self.COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},

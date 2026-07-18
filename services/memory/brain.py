@@ -9,9 +9,13 @@ The thin `distill_session` wrapper is the only side-effecting entry point — it
 lazily imports the session manager and LLM caller so this module stays
 import-clean and DB-free.
 """
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from .distiller import distill_transcript
+from src.observability import report_exception
+
+logger = logging.getLogger(__name__)
 
 
 def distill_and_store(
@@ -67,9 +71,9 @@ def distill_and_store(
             if mem_id:
                 try:
                     memory_vector.add(mem_id, text)
-                except Exception:
+                except Exception as error:
                     # Indexing is best-effort; storage already succeeded.
-                    pass
+                    report_exception(logger, "memory_brain_vector_index_failed", error, outcome="best_effort", context={"memory_id": mem_id})
 
     if dirty:
         memory_manager.save(entries)

@@ -482,7 +482,7 @@ async def audit_memories(
                     v = json.loads(cand)
                     if isinstance(v, list):
                         return v
-                except Exception:
+                except json.JSONDecodeError:
                     continue
             return None
 

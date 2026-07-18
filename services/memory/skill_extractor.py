@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Optional
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 SKILL_EXTRACT_PROMPT = (
@@ -151,8 +153,8 @@ async def maybe_extract_skill(
         try:
             from src.text_helpers import strip_think as _strip_think
             response = _strip_think(response, prose=True, prompt_echo=True)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "skill_extractor_response_cleanup_failed", error, outcome="best_effort")
 
         # Parse JSON
         text = response.strip()
