@@ -9,6 +9,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Dict, Tuple
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 
@@ -178,8 +180,8 @@ def _resolve_task_timezone(db, task) -> str | None:
         cm = db.query(CrewMember).filter(CrewMember.id == task.crew_member_id).first()
         if cm and cm.timezone:
             return cm.timezone
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "scheduled_task_timezone_lookup_failed", error, outcome="best_effort", context={"crew_member_id": task.crew_member_id})
     return None
 
 
@@ -840,7 +842,7 @@ class TaskScheduler:
                     logger.warning(f"Skipping chain from '{task.name}': cycle detected")
 
         except Exception as exec_exc:
-            logger.exception(f"Task {task_id} execution error")
+            report_exception(logger, "scheduled_task_execution_failed", exec_exc, outcome="critical", context={"task_id": task_id, "owner": getattr(task, "owner", None)})
             # Fetch the task's owner so the error notification reaches
             # the same user the success notification would have.
             _owner = None
@@ -857,13 +859,13 @@ class TaskScheduler:
                     and (_t_for_notify.task_type or "llm") in {"llm", "research"}
                     and getattr(_t_for_notify, "notifications_enabled", True)
                 )
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "scheduled_task_error_notification_check_failed", error, outcome="best_effort", context={"task_id": task_id, "owner": _owner})
                 _should_notify_error = False
             if _should_notify_error:
                 self.add_notification(f"Task {task_id}", "error", task_id, owner=_owner)
             try:
-                # Persist the actual exception message so the UI can show it
-                err_text = f"{type(exec_exc).__name__}: {exec_exc}"
+                err_text = f"Task execution failed ({type(exec_exc).__name__})"
                 run_obj = db.query(TaskRun).filter(TaskRun.id == run_id).first()
                 if run_obj and run_obj.status in ("running", "success"):
                     run_obj.status = "error"
@@ -894,8 +896,8 @@ class TaskScheduler:
                     logger.warning("Task %s error-path commit failed: %s — falling back", task_id, commit_err)
                     try:
                         db.rollback()
-                    except Exception:
-                        pass
+                    except Exception as rollback_error:
+                        report_exception(logger, "scheduled_task_error_rollback_failed", rollback_error, outcome="best_effort", context={"task_id": task_id, "owner": _owner})
                     from datetime import timedelta as _td
                     _recover_db = SessionLocal()
                     try:
@@ -1014,9 +1016,9 @@ class TaskScheduler:
         except TaskNoop:
             # Bubble up so _execute_task_locked can drop the run row silently.
             raise
-        except Exception as e:
-            logger.error(f"Action '{task.action}' failed: {e}")
-            return str(e), False
+        except Exception as error:
+            report_exception(logger, "scheduled_task_action_failed", error, outcome="degraded", context={"task_id": getattr(task, "id", None), "tool_name": task.action, "owner": task.owner})
+            return f"Action failed ({type(error).__name__})", False
 
     # ── Check-in source discovery ──
     # Pattern-based: if an MCP server has a tool matching a pattern, it becomes
@@ -1531,8 +1533,8 @@ class TaskScheduler:
             msg.set_content(result or "")
             _send_smtp_message(cfg, from_addr, [to_addr], msg.as_string(), timeout=30)
             logger.info("Task %s emailed result to %s (%sb)", task.id, to_addr, len(result or ""))
-        except Exception as e:
-            logger.error("Task %s email delivery failed: %s", task.id, e, exc_info=True)
+        except Exception as error:
+            report_exception(logger, "scheduled_task_email_delivery_failed", error, outcome="critical", context={"task_id": task.id, "owner": task.owner})
             raise
 
     async def _run_agent_loop(self, endpoint_url: str, model: str, task, session_id: str,
@@ -1564,8 +1566,8 @@ class TaskScheduler:
                         break
             finally:
                 db2.close()
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "scheduled_task_endpoint_headers_unavailable", error, outcome="best_effort", context={"task_id": task.id, "owner": task.owner})
         full_text = ""
         tool_results = []
 
@@ -1579,7 +1581,8 @@ class TaskScheduler:
         try:
             from src.endpoint_resolver import resolve_utility_fallback_candidates
             _task_fallbacks = resolve_utility_fallback_candidates()
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "scheduled_task_fallback_discovery_failed", error, outcome="best_effort", context={"task_id": task.id, "owner": task.owner})
             _task_fallbacks = []
         async for event_str in stream_agent_loop(
             endpoint_url=endpoint_url,

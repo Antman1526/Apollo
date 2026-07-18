@@ -1,4 +1,6 @@
 import asyncio
+import logging
+from types import SimpleNamespace
 
 from sqlalchemy import Column, DateTime, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
@@ -103,3 +105,24 @@ def test_stop_task_cleans_up_queued_handle_and_run(tmp_path, monkeypatch):
         assert run.finished_at >= run.started_at
     finally:
         db.close()
+
+
+def test_failed_action_returns_sanitized_terminal_error(monkeypatch, caplog):
+    from src import builtin_actions
+    from src.task_scheduler import TaskScheduler
+
+    async def failing_action(**_kwargs):
+        raise RuntimeError("provider returned prompt body: private user request")
+
+    monkeypatch.setitem(builtin_actions.BUILTIN_ACTIONS, "failing_action", failing_action)
+    scheduler = TaskScheduler.__new__(TaskScheduler)
+    scheduler._set_run_progress = lambda *_args: None
+    task = SimpleNamespace(id="task-1", action="failing_action", owner="alice", name="Failure")
+
+    with caplog.at_level(logging.DEBUG, logger="src.task_scheduler"):
+        result, success = asyncio.run(scheduler._execute_action(task, run_id="run-1"))
+
+    assert success is False
+    assert result == "Action failed (RuntimeError)"
+    assert "private user request" not in caplog.text
+    assert any("scheduled_task_action_failed" in record.message for record in caplog.records)

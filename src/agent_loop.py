@@ -17,6 +17,7 @@ from typing import AsyncGenerator, List, Dict, Optional, Set
 from src.llm_core import stream_llm, stream_llm_with_fallback
 from src.model_context import estimate_tokens
 from src.settings import get_setting
+from src.observability import report_exception
 from src.prompt_security import untrusted_context_message
 from src.tool_security import blocked_tools_for_owner
 from src.agent_tools import (
@@ -624,8 +625,8 @@ def _build_system_prompt(
             f"subtract the offset above from the user's local time "
             f"(local {_now.strftime('%H:%M')} = {_utc.strftime('%H:%M')} UTC right now).\n\n"
         ) + agent_prompt
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "agent_timezone_context_unavailable", error, outcome="best_effort")
 
     # Document context is kept as a SEPARATE message (not merged into the tool
     # prompt) so the context trimmer doesn't destroy it when truncating the
@@ -668,8 +669,8 @@ def _build_system_prompt(
             try:
                 from src.pdf_form_doc import find_source_upload_id
                 _is_form_backed = bool(find_source_upload_id(active_document.current_content or ""))
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "agent_pdf_form_detection_failed", error, outcome="best_effort")
 
             if _is_form_backed:
                 doc_ctx = (
@@ -795,8 +796,8 @@ def _build_system_prompt(
                     "For English emails, default to Hi [Name] or Hiya from the saved style rather than Hey. "
                     "If the saved style specifies Best/newline/name, use that sign-off when a sign-off is natural."
                 )
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "agent_email_style_unavailable", error, outcome="best_effort", context={"owner": owner})
 
     # When creating email documents, instruct the AI on the format
     if relevant_tools and (_EMAIL_TOOL_HINTS & set(relevant_tools)):
@@ -829,8 +830,8 @@ def _build_system_prompt(
             from routes.prefs_routes import _load_for_user as _load_prefs
             _prefs = _load_prefs(owner) or {}
             _skills_on = _prefs.get("skills_enabled", True)
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "agent_skills_preference_unavailable", error, outcome="best_effort", context={"owner": owner})
         if last_user and _skills_on:
             from services.memory.skills import SkillsManager
             from src.constants import DATA_DIR
@@ -870,8 +871,8 @@ def _build_system_prompt(
                 for _sk in relevant_skills:
                     try:
                         sm.record_use(_sk.get('name', ''), owner=owner)
-                    except Exception:
-                        pass
+                    except Exception as error:
+                        report_exception(logger, "agent_skill_usage_record_failed", error, outcome="best_effort", context={"owner": owner, "tool_name": _sk.get("name", "")})
                 lines.append("## Relevant skills for this request")
                 lines.append("These skills are matched to your current request. Each is a "
                              "procedure proven to work. Follow them step by step. To see "

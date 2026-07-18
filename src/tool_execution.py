@@ -17,6 +17,7 @@ import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
 from src.subproc_env import build_agent_env
+from src.observability import report_exception
 from src.tool_security import is_public_blocked_tool, owner_is_admin_or_single_user
 
 MAX_OUTPUT_CHARS = 10_000
@@ -671,8 +672,9 @@ async def _direct_fallback(
         # manage_memory / generate_image still live as MCP servers
         # (mcp_servers/{memory,image_gen}_server.py); the MCP path above
         # handles them.
-    except Exception as e:
-        return {"error": f"{tool}: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(logger, "agent_tool_execution_failed", error, outcome="degraded", context={"tool_name": tool})
+        return {"error": f"{tool}: execution failed ({type(error).__name__})", "exit_code": 1}
 
     return None
 
