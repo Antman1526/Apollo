@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args
 from src.runtime_paths import data_path
+from src.observability import report_exception
+from src.subproc_env import build_agent_env
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +22,10 @@ def _load_vault_config() -> Dict:
     p = data_path("vault.json")
     if p.exists():
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {}
     return {}
 
 
@@ -30,9 +33,7 @@ def _load_vault_config() -> Dict:
 async def _run_bw(args: list, session: Optional[str] = None, input_text: Optional[str] = None) -> tuple:
     """Run a bw CLI command with optional session + stdin. Returns (stdout, stderr, returncode)."""
     import asyncio
-    env = {}
-    import os as _os
-    env.update(_os.environ)
+    env = build_agent_env()
     if session:
         env["BW_SESSION"] = session
 
@@ -133,8 +134,8 @@ async def do_vault_get(content: str, owner: Optional[str] = None) -> Dict:
                 f"Retrieved password for **{name}** — reason: {reason}",
                 category="Vault",
             )
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "vault_access_audit_log_failed", error, outcome="best_effort")
 
     output = [
         f"Vault item: {name}",
@@ -175,12 +176,7 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
 
     # Save session to vault.json
     p = data_path("vault.json")
-    cfg = {}
-    if p.exists():
-        try:
-            cfg = json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
+    cfg = _load_vault_config()
     cfg["session"] = session
     from datetime import datetime as _dt
     cfg["unlocked_at"] = _dt.utcnow().isoformat()
@@ -188,7 +184,8 @@ async def do_vault_unlock(content: str, owner: Optional[str] = None) -> Dict:
     try:
         import os as _os
         _os.chmod(str(p), 0o600)
-    except Exception:
+    except OSError as error:
+        report_exception(logger, "vault_session_permission_hardening_failed", error, outcome="best_effort")
         pass
 
     return {"output": "Vault unlocked. Session saved.", "exit_code": 0}
