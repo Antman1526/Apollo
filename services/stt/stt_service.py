@@ -8,6 +8,8 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 # Known STT provider identifiers. Endpoint providers are expressed as
@@ -92,7 +94,13 @@ class STTService:
                 try:
                     import torch
                     use_cuda = torch.cuda.is_available()
-                except Exception:
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "stt_cuda_probe_failed",
+                        error,
+                        outcome="best_effort",
+                    )
                     use_cuda = False
                 device = "cuda" if use_cuda else "cpu"
                 compute_type = "float16" if device == "cuda" else "int8"
@@ -220,7 +228,7 @@ class STTService:
             r.raise_for_status()
             try:
                 result = r.json()
-            except Exception:
+            except ValueError:
                 result = r.text
             text = self._parse_voicebox_text(result)
             logger.info(f"Voicebox STT: {len(text)} chars from {base}")
