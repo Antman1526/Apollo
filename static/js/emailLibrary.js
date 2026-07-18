@@ -22,6 +22,8 @@ import {
   _tryFoldHintSig, _foldSignature, _SIG_ICON, _QUOTE_ICON,
 } from './emailLibrary/signatureFold.js';
 import { state } from './emailLibrary/state.js';
+import { buildAttachmentsHtml } from './emailLibrary/attachments.js';
+import { allocReaderSlot, freeReaderSlot, readerSlot } from './emailLibrary/readerWindows.js';
 
 const API_BASE = window.location.origin;
 let _emailUnreadChipClickWired = false;
@@ -2249,7 +2251,7 @@ async function _toggleCardPreview(card, em) {
     // image filter (small inline PNGs/JPGs, Outlook image001 placeholders,
     // logo/banner files) is applied here too. Falls back to '' when every
     // attachment is filtered out.
-    const attsHtml = _buildAttsHtmlFor(em.uid, data);
+    const attsHtml = buildAttachmentsHtml(em.uid, data);
 
     // Format date nicely (compact): "Mar 21, 2026 14:32"
     let dateDisplay = data.date || '';
@@ -3653,52 +3655,6 @@ function _wireAttachmentHandlers(reader, folder) {
   });
 }
 
-// Heuristic: skip "attachments" that are clearly inline images used by
-// signatures / quoted-reply headers (small image files, Outlook-style
-// image001.png placeholders, logo*.png, etc.). They aren't real user-
-// shared attachments and adding them to the chips makes every email look
-// like it has content the user needs to act on.
-function _isLikelySignatureImage(a) {
-  if (!a || !a.filename) return false;
-  const name = String(a.filename).toLowerCase();
-  const isImage = /\.(png|jpe?g|gif|bmp|svg|webp)$/i.test(name);
-  if (!isImage) return false;
-  const size = Number(a.size) || 0;
-  // Outlook / Gmail inline image placeholders always look like this.
-  if (/^image\d{3,}\.(png|jpe?g|gif)$/i.test(name)) return true;
-  if (/^(signature|logo|sig|footer|banner)[-_\d]*\.(png|jpe?g|gif|svg)$/i.test(name)) return true;
-  // Most signature logos / inline thumbnails are < 30 KB. Real user-
-  // shared images (screenshots, photos) are typically 50 KB+.
-  if (size > 0 && size < 30 * 1024) return true;
-  return false;
-}
-
-// Build the attachments header+chips HTML for an email read response. Pulled
-// out so both the initial-open and the swap-reader paths can render it.
-function _buildAttsHtmlFor(uid, data) {
-  if (!data || !data.attachments || !data.attachments.length) return '';
-  const _OPENABLE_RE = /\.(pdf|docx|txt|md|markdown)$/i;
-  const visible = data.attachments.filter(a => !_isLikelySignatureImage(a));
-  if (!visible.length) return '';
-  const chips = visible.map(a => {
-    const openable = _OPENABLE_RE.test(a.filename || '');
-    const openBtn = openable
-      ? `<span class="email-attachment-open" title="Open in document editor" data-open-uid="${_esc(uid)}" data-open-index="${a.index}" data-open-name="${_esc(a.filename)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="8" y1="9" x2="10" y2="9"/></svg><span class="email-attachment-open-label">Open</span></span>`
-      : '';
-    return `<button type="button" class="email-attachment-chip" data-att-uid="${_esc(uid)}" data-att-index="${a.index}" data-att-name="${_esc(a.filename)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg><span>${_esc(a.filename)}</span><span class="att-size">${Math.round((a.size||0)/1024)} KB</span>${openBtn}</button>`;
-  }).join('');
-  return (
-    '<div class="email-reader-atts-wrap collapsed">'
-    +   '<div class="email-reader-atts-header email-summary-toggle" role="button" tabindex="0">'
-    +     '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 17.93 8.8l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>'
-    +     `<span>Attachments (${data.attachments.length})</span>`
-    +     '<svg class="email-summary-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left:auto;transition:transform .15s ease;"><polyline points="6 9 12 15 18 9"/></svg>'
-    +   '</div>'
-    +   '<div class="email-reader-atts">' + chips + '</div>'
-    + '</div>'
-  );
-}
-
 // "Open in new tab" — the email opens in the library (expanded inline)
 // AND a separate floating "email viewer" overlay modal is created. The
 // overlay starts minimized as a chip in the dock; tapping the chip
@@ -3710,19 +3666,6 @@ let _emailTabSeq = 0;
 // it stays "tab 2" until it's closed — even if tab 1 closes first, the
 // remaining reader doesn't renumber down to 1. New tabs claim the
 // lowest unused slot.
-const _emailReaderSlots = new Map(); // modalId -> slot (1, 2, 3, ...)
-function _allocReaderSlot(modalId) {
-  if (_emailReaderSlots.has(modalId)) return _emailReaderSlots.get(modalId);
-  const used = new Set(_emailReaderSlots.values());
-  let n = 1;
-  while (used.has(n)) n++;
-  _emailReaderSlots.set(modalId, n);
-  return n;
-}
-function _freeReaderSlot(modalId) {
-  _emailReaderSlots.delete(modalId);
-}
-
 // JS-driven gate: sets [data-email-tabs="N"] on <body> so CSS can show
 // the per-chip number badge only when 2+ tabs exist.
 function _syncEmailTabsCount() {
@@ -3742,7 +3685,7 @@ function _syncEmailTabBadge() {
   // data-tab-num via attr() instead of using a counter so the number
   // stays stable when other tabs close.
   readers.forEach(chip => {
-    const slot = _emailReaderSlots.get(chip.dataset.modalId);
+    const slot = readerSlot(chip.dataset.modalId);
     if (slot) chip.dataset.tabNum = String(slot);
   });
 }
@@ -3793,7 +3736,7 @@ async function _openEmailAsTab(em, folder) {
   const useFolder = folder || state._libFolder || 'INBOX';
   _emailTabSeq += 1;
   const modalId = `email-reader-${em.uid}-${_emailTabSeq}`;
-  _allocReaderSlot(modalId);
+  allocReaderSlot(modalId);
 
   // Build the modal shell. Uses the same doclib-modal-content sizing
   // as the email library so it feels like a sibling window. The reader
@@ -3830,7 +3773,7 @@ async function _openEmailAsTab(em, folder) {
     icon: _EMAIL_ICON_PATH,
     closeFn: () => {
       modal.remove();
-      _freeReaderSlot(modalId);
+      freeReaderSlot(modalId);
       Promise.resolve().then(_syncEmailTabBadge);
     },
     restoreFn: () => {
@@ -3951,7 +3894,7 @@ async function _openEmailAsTab(em, folder) {
     };
     const fromChip = _recipientChipHtml(`${data.from_name || ''} <${data.from_address || ''}>`, data.from_name || data.from_address, 'from-chip');
     let attsHtml = '';
-    try { attsHtml = _buildAttsHtmlFor(em.uid, data); } catch {}
+    try { attsHtml = buildAttachmentsHtml(em.uid, data); } catch {}
     reader.innerHTML = `
       <div class="email-reader-header">
         <div class="email-reader-meta">
@@ -4100,7 +4043,7 @@ async function _openEmailWindow(em, folder) {
     };
     const fromChip = _recipientChipHtml(`${data.from_name || ''} <${data.from_address || ''}>`, data.from_name || data.from_address, 'from-chip');
     let attsHtml = '';
-    try { attsHtml = _buildAttsHtmlFor(em.uid, data); } catch {}
+    try { attsHtml = buildAttachmentsHtml(em.uid, data); } catch {}
     // Repurpose bodyEl as a full email-card-reader so the inline reader's
     // CSS applies (sized header, action buttons in two rows, etc.).
     bodyEl.classList.add('email-card-reader');
@@ -4227,7 +4170,7 @@ async function _swapReaderToUid(reader, uid, folder) {
     // and either replace the existing block, remove it (if the new email has
     // none), or insert one before the body (if the previous email had none
     // but the new one does).
-    const newAttsHtml = _buildAttsHtmlFor(uid, data);
+    const newAttsHtml = buildAttachmentsHtml(uid, data);
     const oldAtts = reader.querySelector('.email-reader-atts-wrap');
     if (newAttsHtml) {
       if (oldAtts) {
