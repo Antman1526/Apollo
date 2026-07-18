@@ -17,6 +17,7 @@ from typing import Optional, Dict
 
 from src.research_utils import strip_thinking, is_low_quality
 from src.runtime_paths import data_path
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -417,9 +418,15 @@ class ResearchHandler:
             except asyncio.CancelledError:
                 entry["status"] = "cancelled"
                 raise
-            except Exception as e:
-                logger.error(f"Background research failed: {e}", exc_info=True)
-                entry["result"] = str(e)
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "background_research_failed",
+                    error,
+                    outcome="critical",
+                    context={"session_id": session_id, "owner": entry.get("owner")},
+                )
+                entry["result"] = f"Research failed ({type(error).__name__}). Check the integration status and retry."
                 entry["status"] = "error"
 
         task = asyncio.create_task(_run())

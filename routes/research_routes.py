@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from src.endpoint_resolver import resolve_endpoint
 from src.auth_helpers import require_privilege, require_user
 from src.research_handler import ResearchRepository
+from src.observability import report_exception
 from services.research import crawl4ai_adapter
 
 _SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{1,128}$")
@@ -94,9 +95,15 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
             raise HTTPException(503, str(e))
         except asyncio.TimeoutError:
             raise HTTPException(504, "Crawl4AI crawl timed out")
-        except Exception as e:
-            logger.error(f"Crawl4AI crawl failed for {body.url}: {e}", exc_info=True)
-            raise HTTPException(500, f"Crawl4AI crawl failed: {e}")
+        except Exception as error:
+            report_exception(
+                logger,
+                "research_crawl_failed",
+                error,
+                outcome="degraded",
+                context={"owner": user},
+            )
+            raise HTTPException(503, "Crawl service failed. Check its status and retry.")
 
         session_id = ""
         if body.save:
@@ -211,9 +218,15 @@ def setup_research_routes(research_handler, session_manager=None) -> APIRouter:
         logger.info(f"Visual report requested for session {session_id}")
         try:
             html_content = research_handler.get_report_html(session_id)
-        except Exception as e:
-            logger.error(f"Visual report generation error: {e}", exc_info=True)
-            raise HTTPException(500, f"Report generation failed: {e}")
+        except Exception as error:
+            report_exception(
+                logger,
+                "research_report_generation_failed",
+                error,
+                outcome="critical",
+                context={"session_id": session_id, "owner": user},
+            )
+            raise HTTPException(500, "Report generation failed. Retry after checking the research status.")
         if html_content is None:
             logger.warning(f"No report data found for session {session_id}")
             raise HTTPException(404, "No visual report available for this session")
