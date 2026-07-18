@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
 from src.auth_helpers import get_current_user
+from src.observability import report_exception
 from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
@@ -429,7 +430,7 @@ async def dispatch_reminder(
             _STATE.parent.mkdir(parents=True, exist_ok=True)
             try:
                 _cache = cache or (_json.loads(_STATE.read_text(encoding="utf-8")) if _STATE.exists() else {})
-            except Exception:
+            except (OSError, _json.JSONDecodeError):
                 _cache = {}
             sent_channel = "email" if email_sent else "ntfy" if ntfy_sent else "browser"
             _cache[cache_key or str(note_id)] = {
@@ -718,7 +719,13 @@ def setup_note_routes(task_scheduler=None):
         try:
             from core.auth import AuthManager
             _allow_null = not AuthManager().is_configured
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "notes_reorder_auth_configuration_lookup_failed",
+                error,
+                outcome="best_effort",
+            )
             _allow_null = False
         db = SessionLocal()
         try:

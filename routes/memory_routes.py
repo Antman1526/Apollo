@@ -31,6 +31,7 @@ from services.memory.chat_import import parse_export
 from services.memory.memory_extractor import audit_memories
 from src.auth_helpers import get_current_user, require_user
 from src.endpoint_resolver import resolve_endpoint
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,14 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 return []
             try:
                 return memory_vector.search(mem.get("text") or "", k=6)
-            except Exception:
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "memory_graph_vector_search_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"owner": user},
+                )
                 return []
 
         return build_graph(mems, neighbor_fn, threshold=0.6, max_neighbors=4, max_nodes=300)
@@ -288,7 +296,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                             models = _json.loads(ep.models) if isinstance(ep.models, str) else ep.models
                             if models:
                                 model = models[0]
-                        except Exception:
+                        except (_json.JSONDecodeError, TypeError):
                             pass
                     if ep.api_key:
                         headers = {"Authorization": f"Bearer {ep.api_key}"}
