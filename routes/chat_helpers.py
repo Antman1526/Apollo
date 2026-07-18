@@ -16,6 +16,7 @@ from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
+from src.observability import report_exception
 from routes.prefs_routes import _load_for_user as load_prefs_for_user
 
 from fastapi import HTTPException
@@ -79,7 +80,8 @@ def _enforce_chat_privileges(request, sess) -> None:
     """
     try:
         user = get_current_user(request)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "chat_privileges_user_lookup_failed", error, outcome="best_effort")
         user = None
     if not user:
         return
@@ -253,7 +255,8 @@ def try_fallback_endpoint(sess, session_id: str) -> dict | None:
                 "endpoint_url": chat_url,
                 "endpoint_name": ep.name,
             }
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "chat_fallback_candidate_read_failed", error, outcome="best_effort")
             continue
 
     return None
@@ -325,7 +328,8 @@ def _session_url_matches_endpoint(session_url: str, endpoint_base: str) -> bool:
             base + "/chat/completions",
             build_chat_url(base).rstrip("/"),
         }
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "chat_endpoint_url_match_failed", error, outcome="best_effort")
         return False
 
 
@@ -394,7 +398,8 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
 
     try:
         session_base = normalize_base(endpoint_url)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "chat_cached_model_base_normalize_failed", error, outcome="best_effort")
         session_base = endpoint_url.rstrip("/")
     if not session_base:
         return None
@@ -406,7 +411,8 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
             try:
                 if normalize_base(getattr(ep, "base_url", "") or "") != session_base:
                     continue
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "chat_cached_model_endpoint_normalize_failed", error, outcome="best_effort")
                 continue
 
             raw_models = getattr(ep, "cached_models", None)
@@ -414,7 +420,8 @@ def _normalize_model_id_from_cache(sess) -> Optional[str]:
                 continue
             try:
                 models = json.loads(raw_models) if isinstance(raw_models, str) else raw_models
-            except Exception:
+            except (json.JSONDecodeError, TypeError) as error:
+                report_exception(logger, "chat_cached_model_parse_failed", error, outcome="best_effort")
                 continue
 
             matched = _match_cached_model_id(requested, models)
@@ -572,8 +579,9 @@ def accumulate_token_usage(session_id: str, metrics: dict):
             db_s.total_input_tokens = (db_s.total_input_tokens or 0) + in_t
             db_s.total_output_tokens = (db_s.total_output_tokens or 0) + out_t
             db.commit()
-    except Exception:
+    except Exception as error:
         db.rollback()
+        report_exception(logger, "chat_token_metrics_persist_failed", error, outcome="best_effort", context={"session_id": session_id})
     finally:
         db.close()
 
