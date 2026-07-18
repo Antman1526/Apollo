@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Optional, Dict
 from src.runtime_paths import data_path
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +123,14 @@ class ResearchHandler:
                     "query": data.get("query", ""),
                     "started_at": data.get("started_at", 0),
                 }
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "research_status_cache_read_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": session_id},
+                )
         return None
 
     def cancel_research(self, session_id: str) -> bool:
@@ -154,8 +161,14 @@ class ResearchHandler:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("result")
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "research_result_cache_read_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": session_id},
+                )
         return None
 
     def get_sources(self, session_id: str) -> Optional[list]:
@@ -174,8 +187,14 @@ class ResearchHandler:
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return data.get("sources")
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "research_sources_cache_read_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": session_id},
+                )
         return None
 
     @staticmethod
@@ -198,8 +217,14 @@ class ResearchHandler:
         if path.exists():
             try:
                 path.unlink()
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(
+                    logger,
+                    "research_result_cleanup_failed",
+                    error,
+                    outcome="best_effort",
+                    context={"session_id": session_id},
+                )
 
     def _save_result(self, session_id: str, entry: dict):
         """Persist completed research result to disk."""
@@ -323,7 +348,13 @@ class ResearchHandler:
                 "Searches": tracker.counters['searches_executed'],
                 "URLs": tracker.counters['urls_processed'],
             }
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "research_legacy_stats_read_failed",
+                error,
+                outcome="best_effort",
+            )
             return {}
 
     def _format_research_report(
