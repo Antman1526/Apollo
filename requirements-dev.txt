@@ -589,8 +589,10 @@ uvicorn==0.51.0
     #   -r requirements.in
     #   chromadb
     #   mcp
-uvloop==0.22.1
-    # via uvicorn
+uvloop==0.22.1 ; sys_platform != "win32"
+    # via
+    #   -r requirements.in
+    #   uvicorn
 wassima==2.1.2
     # via niquests
 watchfiles==1.2.0
