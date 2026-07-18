@@ -16,6 +16,7 @@ directly from an existing ``venv``.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import socket
 import subprocess
@@ -71,7 +72,22 @@ def _find_python(root: Path) -> str | None:
     return which("python") or which("py")
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Start Apollo from a local Windows project checkout."
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version="Apollo Windows launcher",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    # Parsing before the launcher side effects makes `Apollo.exe --help` a
+    # deterministic packaging smoke test instead of an accidental server run.
+    parse_args(argv)
     root = app_root()
     os.chdir(root)
     print(f"Apollo launcher — project: {root}")

@@ -41,7 +41,12 @@ def _app(cfg, upstream_view=None, ws_validate=None):
         client = httpx.AsyncClient(transport=transport, base_url="http://upstream")
     else:
         client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
-    app.include_router(setup_paperclip_routes(cfg, http_client=client, ws_validate=ws_validate))
+    router = setup_paperclip_routes(cfg, http_client=client, ws_validate=ws_validate)
+    # FastAPI may wrap included routers rather than expose their routes through
+    # app.routes. Keep the created router so SSE generator tests can target the
+    # endpoint without depending on that framework representation.
+    app.state.paperclip_router = router
+    app.include_router(router)
     return app
 
 
@@ -119,9 +124,20 @@ def test_proxy_disabled_returns_503():
 def _stream_endpoint(app):
     """The live stream never ends, and TestClient buffers whole bodies, so the
     SSE tests drive the endpoint's generator directly."""
-    for route in app.routes:
-        if getattr(route, "path", "") == "/api/paperclip/stream":
-            return route.endpoint
+    def walk(routes):
+        for route in routes:
+            if getattr(route, "path", "") == "/api/paperclip/stream":
+                return route.endpoint
+            nested = getattr(route, "routes", None)
+            if nested:
+                endpoint = walk(nested)
+                if endpoint is not None:
+                    return endpoint
+        return None
+
+    endpoint = walk(app.state.paperclip_router.routes)
+    if endpoint is not None:
+        return endpoint
     raise AssertionError("stream route not found")
 
 

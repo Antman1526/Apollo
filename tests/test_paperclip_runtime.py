@@ -97,7 +97,7 @@ def test_runtime_external_mode_is_noop_start():
     assert rt.start() is False  # external → user/Docker owns the process
 
 
-def test_runtime_spawns_in_native_mode(monkeypatch):
+def test_runtime_spawns_in_native_mode(monkeypatch, tmp_path):
     calls = {}
 
     class FakeProc:
@@ -115,7 +115,12 @@ def test_runtime_spawns_in_native_mode(monkeypatch):
         calls["env"] = env
         return FakeProc()
 
+    paperclip_home = tmp_path / "paperclip"
+    config = paperclip_home / "instances" / "default" / "config.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}")
     monkeypatch.setenv("PAPERCLIP_CLI", "/x/paperclipai")
+    monkeypatch.setenv("PAPERCLIP_HOME", str(paperclip_home))
     rt = runtime.PaperclipRuntime(
         _cfg(), proxy_token_provider=lambda: "tok",
         proxy_base_provider=lambda: "http://localhost:7000/lmproxy/v1",
@@ -128,6 +133,33 @@ def test_runtime_spawns_in_native_mode(monkeypatch):
     assert calls["env"]["OPENAI_API_KEY"] == "tok"
     rt.stop()
     assert calls.get("terminated") is True
+
+
+def test_runtime_onboards_a_fresh_native_install(monkeypatch, tmp_path):
+    calls = {}
+
+    class FakeProc:
+        def poll(self):
+            return None
+
+    def fake_spawn(cmd, env=None, **_kw):
+        calls["cmd"] = cmd
+        return FakeProc()
+
+    monkeypatch.setenv("PAPERCLIP_CLI", "/x/paperclipai")
+    monkeypatch.setenv("PAPERCLIP_HOME", str(tmp_path / "fresh-paperclip"))
+    rt = runtime.PaperclipRuntime(
+        _cfg(), proxy_token_provider=lambda: "tok",
+        proxy_base_provider=lambda: "http://localhost:7000/lmproxy/v1",
+        spawn=fake_spawn, health_check=lambda _url, timeout=0: False,
+        node_finder=lambda: "/opt/node", npx_finder=lambda: "/opt/npx",
+    )
+
+    assert rt.start() is True
+    assert calls["cmd"] == [
+        "/opt/node", "/x/paperclipai",
+        "onboard", "--yes", "--bind", "loopback", "--run",
+    ]
 
 
 def test_runtime_reuses_already_running_paperclip():
