@@ -26,6 +26,7 @@ import time
 from typing import Dict, Iterable, List, Optional
 
 from .skill_format import Skill, slugify
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -92,14 +93,16 @@ class SkillsManager:
             with open(self.usage_file, encoding="utf-8") as f:
                 d = json.load(f)
             return d if isinstance(d, dict) else {}
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "skills_usage_load_failed", error, outcome="best_effort")
             return {}
 
     def _save_usage(self, usage: Dict[str, Dict]) -> None:
         try:
             from core.atomic_io import atomic_write_json
             atomic_write_json(self.usage_file, usage, indent=2)
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "skills_usage_atomic_save_failed", error, outcome="best_effort")
             tmp = self.usage_file + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(usage, f, indent=2)
@@ -271,8 +274,8 @@ class SkillsManager:
                             "last_used": row.get("last_used"),
                             "_legacy": True,
                         })
-            except Exception:
-                pass
+            except Exception as error:
+                report_exception(logger, "skills_legacy_load_failed", error, outcome="best_effort")
         return out
 
     def load(self, owner: Optional[str] = None) -> List[Dict]:
@@ -345,8 +348,8 @@ class SkillsManager:
                         # knows it already exists.
                         try:
                             self.record_use(s["name"], owner=s.get("owner"))
-                        except Exception:
-                            pass
+                        except Exception as error:
+                            report_exception(logger, "skills_duplicate_usage_record_failed", error, outcome="best_effort", context={"skill_name": s["name"]})
                         return {**s, "_deduped": True, "_duplicate_of": s.get("name")}
 
         # Avoid clobbering an existing skill with the same name
@@ -503,7 +506,8 @@ class SkillsManager:
             try:
                 with open(path, encoding="utf-8") as f:
                     return f.read()
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skills_read_failed", error, outcome="best_effort")
                 return None
         return None
 
@@ -525,7 +529,8 @@ class SkillsManager:
             try:
                 with open(target, encoding="utf-8") as f:
                     return f.read()
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skills_legacy_read_failed", error, outcome="best_effort")
                 return None
         return None
 
