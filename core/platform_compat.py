@@ -14,14 +14,17 @@ Design rules:
 from __future__ import annotations
 
 import os
+import logging
 import ntpath
 import shutil
 import subprocess
 from pathlib import Path
 from typing import List, Optional
+from src.observability import report_exception
 
 IS_WINDOWS = os.name == "nt"
 IS_POSIX = not IS_WINDOWS
+logger = logging.getLogger(__name__)
 
 
 # ── File permissions ────────────────────────────────────────────────────────
@@ -116,18 +119,19 @@ def kill_process_tree(pid: Optional[int]) -> None:
                 stderr=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-        except Exception:
-            pass
+        except Exception as error:
+            report_exception(logger, "windows_process_tree_termination_failed", error, outcome="best_effort")
         return
     import signal
 
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "process_group_termination_failed", error, outcome="best_effort")
         try:
             os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+        except Exception as fallback_error:
+            report_exception(logger, "process_termination_fallback_failed", fallback_error, outcome="best_effort")
 
 
 # ── Shell / executable resolution ───────────────────────────────────────────

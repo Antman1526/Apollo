@@ -12,7 +12,7 @@ from pathlib import Path
 BASELINES = {
     "admin.js": 2092, "calendar.js": 3348, "chat.js": 4584,
     "chatRenderer.js": 2105, "cookbook-hwfit.js": 1790, "cookbook.js": 1965,
-    "cookbookRunning.js": 3218, "cookbookServe.js": 2086, "document.js": 9574,
+    "cookbookRunning.js": 3218, "cookbookServe.js": 2086, "document.js": 9453,
     "documentLibrary.js": 3365, "emailLibrary.js": 5217, "gallery.js": 2835,
     "galleryEditor.js": 3798, "modalManager.js": 1550, "notes.js": 5011,
     "sessions.js": 3135, "settings.js": 5043, "skills.js": 2038,

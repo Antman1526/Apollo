@@ -3,10 +3,15 @@
 
 import os
 import secrets
+import logging
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
+from src.observability import report_exception
+
+
+logger = logging.getLogger(__name__)
 
 
 # Per-process token that lets the in-app tool layer hit admin-gated
@@ -32,8 +37,13 @@ def require_admin(request: Request):
             return
         if getattr(request.state, "internal_tool", False):
             return
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "internal_tool_token_check_failed",
+            error,
+            outcome="best_effort",
+        )
 
     auth_mgr = getattr(request.app.state, "auth_manager", None)
     if os.getenv("AUTH_ENABLED", "true").lower() == "false":

@@ -65,6 +65,7 @@ from core.exceptions import (
 import bcrypt as _bcrypt
 
 from src.app_helpers import abs_join
+from src.observability import report_exception
 from services.app_startup import RouterSpec, build_and_include_router, include_router_checked, register_router_specs
 from starlette.responses import RedirectResponse
 
@@ -167,7 +168,8 @@ def _bypass_user() -> str:
     """
     try:
         users = auth_manager.users or {}
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "localhost_bypass_user_lookup_failed", error, outcome="best_effort")
         users = {}
     for name, data in users.items():
         if isinstance(data, dict) and data.get("is_admin"):
@@ -759,7 +761,8 @@ async def _paperclip_status_for_integrations():
             async with _httpx.AsyncClient(timeout=2.0) as client:
                 r = await client.get(f"{_paperclip_cfg.url}/api/health")
                 reachable = r.status_code < 500
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "paperclip_health_probe_failed", error, outcome="degraded")
             reachable = False
     return {
         "enabled": _paperclip_cfg.enabled,
@@ -800,7 +803,8 @@ def _browser_ws_authorize(token):
         return True
     try:
         privs = auth_manager.get_privileges(username) or {}
-    except Exception:
+    except Exception as error:
+        report_exception(logger, "browser_privilege_lookup_failed", error, outcome="best_effort")
         return True
     return bool(privs.get("can_use_browser", True))
 
@@ -913,8 +917,8 @@ async def _start_searxng_runtime():
     def _boot():
         try:
             _get_searxng_runtime().start()
-        except Exception as e:
-            logger.warning("SearXNG sidecar startup failed (non-critical): %s", e)
+        except Exception as error:
+            report_exception(logger, "searxng_sidecar_startup_failed", error, outcome="degraded")
     threading.Thread(target=_boot, name="searxng-runtime", daemon=True).start()
 
 
@@ -922,8 +926,8 @@ async def _start_searxng_runtime():
 async def _stop_searxng_runtime():
     try:
         _get_searxng_runtime().stop()
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(logger, "searxng_sidecar_stop_failed", error, outcome="best_effort")
 
 # ========= ROUTES (kept in app.py) =========
 
@@ -1018,7 +1022,8 @@ async def runtime_info() -> Dict[str, object]:
             with open("/proc/1/cgroup", "r", encoding="utf-8", errors="ignore") as fh:
                 cg = fh.read()
             in_docker = any(marker in cg for marker in ("docker", "containerd", "kubepods"))
-        except Exception:
+        except Exception as error:
+            report_exception(logger, "runtime_container_probe_failed", error, outcome="best_effort")
             in_docker = False
     ollama_url = (
         os.getenv("OLLAMA_BASE_URL")
@@ -1237,7 +1242,8 @@ async def startup_event():
             try:
                 from src.settings import get_setting
                 hour = int(get_setting("skill_audit_hour", 2) or 2)
-            except Exception:
+            except Exception as error:
+                report_exception(logger, "skill_audit_schedule_read_failed", error, outcome="best_effort")
                 hour = 2
             now = datetime.now()
             nxt = now.replace(hour=hour % 24, minute=0, second=0, microsecond=0)

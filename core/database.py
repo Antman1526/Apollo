@@ -6,6 +6,7 @@ from sqlalchemy import event, create_engine, Column, String, Text, Boolean, Date
 from sqlalchemy.engine import Engine
 from sqlalchemy.types import TypeDecorator
 from sqlalchemy.orm import declarative_base, declared_attr, relationship, sessionmaker, backref
+from src.observability import report_exception
 from src.runtime_paths import data_path
 
 logger = logging.getLogger(__name__)
@@ -1036,8 +1037,13 @@ def _migrate_assign_legacy_owner():
                     break
             if not admin_user:
                 admin_user = next(iter(users))
-    except Exception:
-        pass
+    except Exception as error:
+        report_exception(
+            logger,
+            "legacy_owner_auth_read_failed",
+            error,
+            outcome="best_effort",
+        )
 
     if not admin_user:
         return
@@ -1046,7 +1052,6 @@ def _migrate_assign_legacy_owner():
     if not os.path.exists(db_path):
         return
 
-    logger = logging.getLogger(__name__)
     try:
         conn = sqlite3.connect(db_path)
         # Every table with an `owner` column. New tables added later will be
@@ -1467,7 +1472,13 @@ def _migrate_seed_email_account():
             return
         try:
             s = _json.loads(settings_file.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "legacy_email_settings_read_failed",
+                error,
+                outcome="best_effort",
+            )
             return
 
         imap_host = (s.get("imap_host") or "").strip()
