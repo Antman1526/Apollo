@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 
 from src.tools._common import _parse_tool_args, _internal_headers
 from src.tools.cookbook import _COOKBOOK_BASE
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +113,15 @@ async def do_browser(content: str, owner: Optional[str] = None) -> Dict:
         return {"error": f"browser: {exc}", "exit_code": 1}
     except embedded_browser.BrowserUnavailable as exc:
         return {"error": f"browser unavailable: {exc}", "exit_code": 1}
-    except Exception as exc:
-        return {"error": f"browser: {str(exc)[:240]}", "exit_code": 1}
+    except Exception as error:
+        report_exception(
+            logger,
+            "browser_tool_action_failed",
+            error,
+            outcome="critical",
+            context={"action": action_key or "unknown"},
+        )
+        return {"error": "browser action failed", "exit_code": 1}
 
     return {"response": "Browser action completed.", "browser": result, "exit_code": 0}
 
@@ -201,8 +209,9 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
                 resp = await client.get(f"{base}/openapi.json",
                                         headers=_internal_headers())
                 data = resp.json()
-        except Exception as e:
-            return {"error": f"OpenAPI fetch failed: {e}", "exit_code": 1}
+        except Exception as error:
+            report_exception(logger, "app_api_openapi_fetch_failed", error, outcome="degraded")
+            return {"error": "OpenAPI fetch failed", "exit_code": 1}
         rows: List[Dict[str, Any]] = []
         for path, methods in (data.get("paths") or {}).items():
             if not isinstance(methods, dict):
@@ -281,7 +290,7 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             preview = json.dumps(payload, indent=2, default=str)
             if len(preview) > 4000:
                 preview = preview[:4000] + "\n... (truncated)"
-        except Exception:
+        except (json.JSONDecodeError, TypeError, ValueError):
             payload = None
             preview = (resp.text or "")[:4000]
         if resp.status_code >= 400:
@@ -297,5 +306,12 @@ async def do_app_api(content: str, owner: Optional[str] = None) -> Dict:
             "json": payload,
             "exit_code": 0,
         }
-    except Exception as e:
-        return {"error": f"{method} {path} failed: {e}", "exit_code": 1}
+    except Exception as error:
+        report_exception(
+            logger,
+            "app_api_request_failed",
+            error,
+            outcome="critical",
+            context={"method": method},
+        )
+        return {"error": f"{method} {path} failed", "exit_code": 1}
