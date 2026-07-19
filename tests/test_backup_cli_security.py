@@ -1,5 +1,6 @@
 import importlib.machinery
 import importlib.util
+import errno
 import io
 import tarfile
 from pathlib import Path
@@ -139,3 +140,37 @@ def test_restore_extracts_regular_files_without_extractall(tmp_path, monkeypatch
     assert (repo / "data" / "nested" / "new.txt").read_text(encoding="utf-8") == "new"
     assert not (repo / "data" / "old.txt").exists()
     assert list(repo.glob("data.before-restore-*"))
+
+
+def test_restore_falls_back_to_in_place_swap_for_bind_mount(tmp_path, monkeypatch):
+    """Docker bind mounts cannot rename their root, but can move children."""
+    backup = _load_backup_cli()
+    repo = tmp_path / "repo"
+    data = repo / "data"
+    data.mkdir(parents=True)
+    (data / "old.txt").write_text("old", encoding="utf-8")
+    _patch_repo(backup, monkeypatch, repo)
+
+    tar_path = tmp_path / "valid.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        payload = b"new"
+        item = tarfile.TarInfo("data/new.txt")
+        item.size = len(payload)
+        tar.addfile(item, io.BytesIO(payload))
+
+    original_rename = backup.os.rename
+
+    def mounted_root_rename(source, destination):
+        if Path(source) == data:
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        if Path(source).parent == data:
+            raise OSError(errno.EXDEV, "Invalid cross-device link")
+        return original_rename(source, destination)
+
+    monkeypatch.setattr(backup.os, "rename", mounted_root_rename)
+    backup.cmd_restore(_restore_args(tar_path))
+
+    assert (data / "new.txt").read_text(encoding="utf-8") == "new"
+    assert not (data / "old.txt").exists()
+    stash = next(repo.glob("data.before-restore-*"))
+    assert (stash / "old.txt").read_text(encoding="utf-8") == "old"

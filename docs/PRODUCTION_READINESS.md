@@ -37,7 +37,7 @@ access and console piping, and preview/live agent-floor rendering.
 
 Verified on 2026-07-18 from this branch:
 
-- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,929 passed, 3 skipped;
+- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,933 passed, 3 skipped;
   134 JavaScript tests passed; startup smoke passed.
 - `bash scripts/run-e2e.sh`: 4 browser journeys passed in an isolated runtime.
 - `dist/Apollo.app` was built and passed `codesign --verify --deep --strict`.
@@ -48,9 +48,11 @@ Verified on 2026-07-18 from this branch:
   and Floor events, document editing, backup verification, restore, and
   persisted auth/session/document/model state after restart.
 - Dependency locks and `pip check` pass. `npm audit --omit=dev --audit-level=high`
-  reports zero vulnerabilities. `pip-audit -r requirements.txt` reports
-  `PYSEC-2026-311` for `chromadb==1.5.9`; the installed version is the latest
-  available release and the advisory does not list a fixed version.
+  reports zero vulnerabilities. `PYSEC-2026-311` for `chromadb==1.5.9` has no
+  fixed upstream release. The default native and Docker configurations use
+  `PersistentClient` only and do not start or publish ChromaDB's affected HTTP
+  API. `scripts/check_dependency_audit.py` keeps that narrow exception visible,
+  exact-versioned, and expiring on 2026-08-31; any other or stale finding fails.
 
 ## Hosted Release Evidence
 
@@ -97,10 +99,11 @@ Verified on 2026-07-18 from this branch:
   needed. The packaged launcher build and `--help` smoke are verified, but the
   complete Windows unit-test matrix needs investigation because it exceeded
   the normal duration.
-- Build and start the Docker path with its configured volume, then validate
-  `/api/ready`, backup/restore, and authenticated access behind the intended
-  network boundary only when Docker deployment is needed. The local Docker
-  daemon was unavailable during the latest release check, so this was not run.
+- The Docker Compose deployment was verified on 2026-07-18 in a disposable
+  bind-mounted data root: image build, seeded admin login, `/api/ready`,
+  embedded ChromaDB persistence with no port `8100` listener, backup verify,
+  stopped-container restore, and authenticated restart persistence all passed.
+  Default snapshots now persist in the host `./backups/` directory.
 - Inspect the browser and Paperclip workspace manually at desktop and mobile
   sizes for clipped controls, focus order, and visual overlap.
 - For public distribution later, sign and notarize the macOS app with a
@@ -117,5 +120,6 @@ database, so it requires network access and can take several minutes. Apollo
 exposes degraded state through system status rather than silently treating
 missing providers as healthy. These integrations require deployment-specific
 credential and connectivity validation before a production launch. The
-unresolved ChromaDB advisory also needs upstream remediation or an approved
-compensating-control decision before public distribution.
+ChromaDB advisory still needs an upstream fixed release before any deployment
+deliberately enables its HTTP server; the default deployment is mitigated by
+not running that server.

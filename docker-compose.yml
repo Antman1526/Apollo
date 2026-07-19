@@ -6,6 +6,9 @@ services:
     volumes:
       - ./data:/app/data:z
       - ./logs:/app/logs:z
+      # Default apollo-backup output is /app/backups. Bind it explicitly so
+      # snapshots survive an Apollo container recreation.
+      - ./backups:/app/backups:z
       # Cookbook remote-server SSH identity. Apollo can generate a key here;
       # add the shown public key to each remote server's authorized_keys.
       - ./data/ssh:/app/.ssh:z
@@ -29,8 +32,10 @@ services:
       - HF_TOKEN=${HF_TOKEN:-}
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN:-}
       - SEARXNG_INSTANCE=http://searxng:8080
-      - CHROMADB_HOST=chromadb
-      - CHROMADB_PORT=8000
+      # Keep ChromaDB embedded in Apollo's persisted data directory. ChromaDB
+      # currently has an upstream pre-auth HTTP-server advisory without a
+      # released fix; no Chroma HTTP service is started or published here.
+      - CHROMA_PERSIST_DIR=/app/data/chroma
       - DATABASE_URL=${DATABASE_URL:-sqlite:///./data/app.db}
       - AUTH_ENABLED=${AUTH_ENABLED:-true}
       - LOCALHOST_BYPASS=${LOCALHOST_BYPASS:-false}
@@ -71,18 +76,6 @@ services:
     depends_on:
       searxng:
         condition: service_healthy
-      chromadb:
-        condition: service_started
-    restart: unless-stopped
-
-  chromadb:
-    image: docker.io/chromadb/chroma:latest
-    ports:
-      - "${CHROMADB_BIND:-127.0.0.1}:8100:8000"
-    volumes:
-      - chromadb-data:/chroma/chroma
-    environment:
-      - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
 
   searxng:
@@ -197,7 +190,6 @@ services:
 
 volumes:
   searxng-data:
-  chromadb-data:
   ntfy-cache:
   paperclip-pgdata:
   paperclip-data:

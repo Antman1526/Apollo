@@ -13,7 +13,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Set `SECURE_COOKIES=true` when Apollo is served through HTTPS by a trusted reverse proxy or private access gateway.
 - Use HTTPS when exposing the app beyond localhost.
 - Put the authenticated Apollo web/API entrypoint behind a trusted reverse proxy or private access layer such as Cloudflare Access, Tailscale, or a VPN.
-- Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only.
+- Keep ChromaDB, SearXNG, ntfy, Ollama, vLLM, llama.cpp, databases, and raw model/provider APIs internal-only. The default Docker topology uses an embedded ChromaDB store and does not run a ChromaDB HTTP server.
 - Protect `.env`, `data/`, `logs/`, uploads, generated media, backups, auth/session files, database files, API keys, and model/provider tokens.
 - Disable open signup unless you intentionally want new accounts.
 - Keep demo/test users non-admin, and remove them entirely on serious deployments.
@@ -21,7 +21,7 @@ Security fixes are handled on the default branch until formal releases are cut.
 - Leave high-risk agent tools restricted to admins: shell, Python, file read/write, email send/read, MCP, app API, task/skill/memory management, settings, tokens, and model serving.
 - Rotate API keys, webhook secrets, and Apollo API tokens if they appear in logs, screenshots, demos, or shared chats.
 - Treat shell, model-serving, MCP, email, calendar, and vault features as privileged admin functionality.
-- Common internal-only ports are Apollo `7000`, SearXNG `8080`, ntfy `8091`, ChromaDB `8100`, Ollama `11434`, and local model/provider APIs such as `8000-8020`.
+- Common internal-only ports are Apollo `7000`, SearXNG `8080`, ntfy `8091`, Ollama `11434`, and local model/provider APIs such as `8000-8020`. Do not expose an external ChromaDB server unless it has a released remediation for `CVE-2026-45829` and is protected by a trusted network boundary.
 
 ## Publishing A Fork
 

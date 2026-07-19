@@ -22,6 +22,7 @@ data/
 !services/hwfit/data/
 !services/hwfit/data/hf_models.json
 logs/
+backups/
 *.log
 *.db
 *.sqlite

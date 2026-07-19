@@ -170,8 +170,10 @@ docker compose up -d --build
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
-only when you intentionally want LAN/reverse-proxy access. Compose also starts
-the bundled `chromadb`, `searxng`, and `ntfy` services (all `127.0.0.1`-bound).
+only when you intentionally want LAN/reverse-proxy access. Compose starts the
+bundled `searxng` and `ntfy` services; vector memory is persisted in
+`./data/chroma` inside Apollo rather than exposed through a separate ChromaDB
+HTTP service.
 
 ### Native Linux / macOS
 ```bash
@@ -594,8 +596,8 @@ Key settings:
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `SECURE_COOKIES` | `false` | Set true when serving Apollo through HTTPS at a trusted proxy or private access gateway. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
-| `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
-| `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
+| `CHROMADB_HOST` | -- | Optional trusted external ChromaDB host. Docker uses the embedded persisted store by default. |
+| `CHROMADB_PORT` | -- | Port for an explicitly configured external ChromaDB host. |
 | `FASTEMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Local ONNX embedding model. |
 | `EMBEDDING_URL` | -- | Optional OpenAI-compatible embeddings endpoint |
 | `PAPERCLIP_ENABLED` | `false` | Enable the Paperclip agent-management sidecar. |
@@ -636,7 +638,7 @@ Apollo/
 ├── app.py                 # Slim FastAPI orchestrator: middleware, manager init, ~40 routers
 ├── setup.py               # First-run: data dirs, DB, admin account + temp password
 ├── requirements*.txt      # Core / optional / browser-use dependency sets
-├── docker-compose.yml     # apollo + chromadb + searxng + ntfy + paperclip(+db) profile
+├── docker-compose.yml     # apollo + embedded vector store + searxng + ntfy + paperclip(+db) profile
 ├── start-macos.sh         # Native macOS quick-start (venv + brew + uvicorn)
 ├── launch-windows.ps1     # Native Windows launcher
 ├── build-macos-app.sh     # Launcher build: dist/Apollo.app + Apollo.dmg (drives repo venv)
@@ -767,7 +769,6 @@ Common internal-only ports from the default setup:
 | `8080` | SearXNG (Docker-bundled instance) |
 | `8091` | ntfy |
 | `8893` | SearXNG managed sidecar (native installs; `searxng_port` setting) |
-| `8100` | ChromaDB host port for manual/compose access |
 | `11434` | Ollama |
 | `17493` | Voicebox (opt-in TTS/STT engine; `voicebox_url`) |
 | `8000-8020` | Common local model/provider APIs |

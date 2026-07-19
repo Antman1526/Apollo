@@ -18,13 +18,14 @@ Restore is destructive: it overwrites `data/` in place. Always pass
 """
 
 from __future__ import annotations
+import errno
+import os
 import sys
-import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "_lib"))
 from cli import quiet_logs, emit, fail, common_parser, run, REPO_ROOT as _REPO_ROOT
 quiet_logs()
 
-import argparse, json, logging, os, shutil, sqlite3, subprocess, sys, tarfile, tempfile
+import argparse, json, logging, shutil, sqlite3, subprocess, tarfile, tempfile
 from datetime import datetime
 from pathlib import Path, PurePosixPath
 
@@ -195,6 +196,47 @@ def _extract_restore_members(tar, members, root: Path) -> None:
             shutil.copyfileobj(src, dst)
 
 
+def _move_path(source: Path, target: Path) -> None:
+    """Move ``source`` to ``target``, copying only across filesystem mounts."""
+    try:
+        os.rename(source, target)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        shutil.move(str(source), str(target))
+
+
+def _restore_into_mounted_data_dir(tar, members, stash: Path) -> None:
+    """Restore in place when ``data/`` is a Docker bind mount.
+
+    A bind mount cannot be renamed. On Docker Desktop its children may also be
+    on a different filesystem from ``/app``, so preserve every direct child
+    with an atomic rename where possible and a copy-then-remove fallback where
+    required. If extraction fails, remove partial restore output and put the
+    original entries back before re-raising. Callers must stop the application
+    first, just as for the normal path.
+    """
+    stash.mkdir(parents=True, exist_ok=False)
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for source in list(_DATA_DIR.iterdir()):
+            target = stash / source.name
+            _move_path(source, target)
+            moved.append((source, target))
+        _extract_restore_members(tar, members, _DATA_DIR.parent)
+    except Exception:
+        # The root itself is the mount point and must stay in place. Only clear
+        # its direct children, then restore the entries moved to the stash.
+        for child in list(_DATA_DIR.iterdir()):
+            if child.is_dir() and not child.is_symlink():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+        for destination, source in reversed(moved):
+            _move_path(source, destination)
+        raise
+
+
 def cmd_restore(args):
     """Overwrite `data/` from a tarball. Destructive; requires --yes."""
     path = Path(args.path)
@@ -211,8 +253,26 @@ def cmd_restore(args):
         _validate_restore_members(members)
         # Save a safety copy of current data/ before extracting.
         if _DATA_DIR.exists() or _DATA_DIR.is_symlink():
-            stash = _DATA_DIR.parent / f"data.before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            os.rename(_DATA_DIR, stash)
+            stash = _DATA_DIR.parent / (
+                f"data.before-restore-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+            )
+            try:
+                os.rename(_DATA_DIR, stash)
+            except OSError as error:
+                if error.errno != errno.EBUSY or not _DATA_DIR.is_dir():
+                    raise
+                # Docker bind mounts cannot be renamed. Stash their contents
+                # and restore into the existing mount point instead.
+                try:
+                    _restore_into_mounted_data_dir(tar, members, stash)
+                except Exception as restore_error:
+                    fail(f"extract failed: {restore_error}")
+                emit({
+                    "ok": True,
+                    "restored_from": str(path),
+                    "previous_data_stashed_at": str(stash),
+                }, args)
+                return
         try:
             _extract_restore_members(tar, members, _DATA_DIR.parent)
         except Exception as e:
