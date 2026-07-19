@@ -526,3 +526,13 @@ No DOM, no `Math.random`, no browser globals at module top level.
   disconnected nodes don't drift off, then velocity integration with `damping`
   and clamping to `[0,width]×[0,height]`. Fine for ≤300 nodes (the graph's node
   cap). See doc 07 §(e) for the graph *builder* on the backend.
+
+## 13. 2026-07-19 frontend refresh
+
+The no-bundler delivery model remains intentional, but the main UI was split
+into testable ES-module seams: chat request lifecycle, document diff/export/
+state/suggestions/version history, notes drafts, email attachment and reader
+slots, settings model policy, and Paperclip floor layout. CSS is now divided
+into 23 feature/layout files under `static/css/`. Reconstructors must keep
+service-worker precache and cache-version changes synchronized with new static
+modules.

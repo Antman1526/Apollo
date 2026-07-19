@@ -567,3 +567,13 @@ surfaces Voicebox's voice tools to the agent alongside the built-in servers.
 - **Graceful degradation** is a theme: missing Node, absent crawl4ai package,
   uncached npx package, and a down SearXNG sidecar each degrade with a clear
   message instead of crashing the app.
+
+## 2026-07-19 integration refresh
+
+The default vector integration is now embedded ChromaDB, removing an external
+HTTP dependency from native and Docker default paths. Browser automation,
+Paperclip, Crawl4AI, email, CalDAV, and remote model endpoints remain optional
+and environment-dependent; system status should report their degraded state
+instead of treating absence as successful initialization. See the dated
+[current-state refresh](00-2026-07-19-current-state-refresh.md) for the
+package and dependency-audit boundary.

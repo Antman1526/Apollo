@@ -343,3 +343,13 @@ data/
 | Embedded browser | `browserPanel.js` | `routes/browser_routes.py` | `services/browser/embedded_browser.py` | Playwright |
 | Email / Calendar | `emailInbox.js`, `calendar.js` | `email_routes.py`, `calendar_routes.py` | `src/caldav_sync.py`, `email_thread_parser.py` | `EmailAccount`, `CalendarEvent` |
 | Auth | `login.html`, `admin.js` | `routes/auth_routes.py` | `core/auth.py`, `app.py:AuthMiddleware` | `auth.json`, `ApiToken` |
+
+## 11. 2026-07-19 organization refresh
+
+Current top-level counts are 55 Python files under `routes/`, 84 top-level
+modules under `src/`, 23 CSS files under `static/css/`, and 76 top-level JS
+modules under `static/js/`. The hardening pass made `src/runtime_paths.py`,
+`src/auth_helpers.py`, `src/observability.py`, and `src/subproc_env.py` core
+cross-cutting primitives. New code that persists state, scopes user data,
+reports handled errors, or spawns agent-visible processes should depend on
+those modules instead of creating parallel local conventions.

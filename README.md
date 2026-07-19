@@ -1,5 +1,9 @@
 # Apollo
 
+<p align="center">
+  <img src="static/icon-512.png" alt="Apollo desktop application icon" width="128">
+</p>
+
 ```
 ───────────────────────────────────────────────
  ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Apollo vers. 1.0
@@ -8,9 +12,11 @@
 
 ![Apollo](docs/apollo.jpg)
 
-**Apollo is a self-hosted, local-first AI workspace** — the ChatGPT/Claude UI experience
-running entirely on your own hardware, with your own data and your own models. But with
-more jank and fun. Privacy-first, no telemetry, no trojan.
+**Apollo is a self-hosted, local-first AI workspace** for chatting with local or
+remote language models while keeping the workspace, model configuration, and
+application data under operator control. It combines a full chat surface with
+agent tools, memory, web research, documents, browser automation, local-model
+serving, and optional personal integrations in one desktop-friendly system.
 
 Concretely, Apollo is one app that lets you **chat with language models** — local GGUF
 files served on demand through `llama.cpp` (one warm model at a time, swapped automatically),
@@ -36,6 +42,28 @@ Everything runs as that one process plus on-demand `llama-server` subprocesses, 
 SearXNG sidecar, and the optional Paperclip Node sidecar. See [Architecture](#architecture)
 for enough detail to rebuild it, and [docs/recreation/](#recreation--full-technical-docs)
 for the complete reconstruction spec.
+
+## Current Operational Contract
+
+Apollo resolves runtime state through `APOLLO_DATA_DIR`, then `DATA_DIR`, then a
+verified platform-data migration or the existing checkout-local `data/`
+directory. This keeps installed macOS bundles writable even when launched from
+a read-only DMG and gives tests a safe isolated-data switch. Native and default
+Docker deployments use embedded ChromaDB under that data root; a Chroma HTTP
+server is not part of the default topology.
+
+The local quality gate is:
+
+```bash
+APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh
+bash scripts/run-e2e.sh
+```
+
+As of 2026-07-19, the first command completed 1,934 Python tests (3 skipped),
+134 JavaScript tests, and an isolated startup smoke. The self-contained macOS
+bundle also passed a read-only mounted-DMG startup test. See
+[Production Readiness](docs/PRODUCTION_READINESS.md) for exact artifact,
+dependency-audit, Docker-recovery, and remaining-platform evidence.
 
 > Apollo is a renamed distribution of **[Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)** by **pewdiepie-archdaemon**. All the original work is theirs — Apollo only changes the name. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for full credits.
 
@@ -678,6 +706,10 @@ The [`docs/recreation/`](docs/recreation/) directory contains **15 deep technica
 documents plus a technology audit** intended to let a skilled engineer reconstruct
 Apollo from scratch — each grounded in real file paths and line references:
 
+Start with the [2026-07-19 current-state refresh](docs/recreation/00-2026-07-19-current-state-refresh.md)
+when reading the numbered reconstruction documents; it records the current
+storage, Docker, package, security, CI, and frontend-modularity deltas.
+
 | # | Document |
 |---|---|
 | 01 | [Project Overview & Architecture](docs/recreation/01-project-overview-architecture.md) |
@@ -693,7 +725,7 @@ Apollo from scratch — each grounded in real file paths and line references:
 | 11 | [Build & Deployment Pipeline](docs/recreation/11-build-deployment-pipeline.md) |
 | 12 | [Error Handling & Logging](docs/recreation/12-error-handling-logging.md) |
 | 13 | [Performance Optimization & Caching](docs/recreation/13-performance-optimization-caching.md) |
-| 14 | Security Implementation *(kept local-only — enumerates specific residual weaknesses; not published to this public repo)* |
+| 14 | Security Implementation *(kept local-only because it enumerates residual weaknesses)* |
 | 15 | [File Structure & Code Organization](docs/recreation/15-file-structure-code-organization.md) |
 | — | [Technology Audit](docs/recreation/TECHNOLOGY-AUDIT.md) |
 

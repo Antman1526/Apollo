@@ -412,3 +412,11 @@ SSE token stream  → chatStream.js → rendered with "Searched the web" + provi
 | Agent env scrub        | `src/subproc_env.py` (`build_agent_env`) |
 | Desktop builds         | `build-macos-app.sh` (launcher), `build-macos-bundle.sh` + `packaging/apollo.spec` + `packaging/apollo_boot.py` (self-contained PyInstaller) |
 | Frontend entry         | `static/index.html`, `static/app.js`, `static/js/` |
+
+## 8. 2026-07-19 architecture refresh
+
+The durable architecture boundary is now the resolved runtime-data root, not
+the checkout. See [the current-state refresh](00-2026-07-19-current-state-refresh.md)
+for the exact precedence contract and the packaged-app consequence. Docker and
+native default to embedded ChromaDB; an HTTP Chroma service is now an explicit
+operator choice rather than a required architecture component.

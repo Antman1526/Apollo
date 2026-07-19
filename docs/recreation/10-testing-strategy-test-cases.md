@@ -352,3 +352,14 @@ Triggers on every `pull_request` and on `push` to `main` (`ci.yml:3-7`). One
 
 The whole pipeline runs with no external services because of the `conftest.py` stubs
 and the dependency-injected fakes in the runtime/search tests.
+
+## 2026-07-19 current verification gates
+
+The CI matrix now installs `requirements-dev.txt`, compiles Python sources,
+runs runtime-path and module-size guards, then runs the Python suite across
+Ubuntu, macOS, and Windows. A separate Ubuntu E2E job installs Chromium and
+runs `scripts/run-e2e.sh` in an isolated application-data root. Fresh local
+evidence: `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh` produced 1,934 passed
+and 3 skipped Python tests plus 134 JavaScript tests; the browser runner
+completed four journeys. Do not use a developer's live `APOLLO_DATA_DIR` for
+any test or preview run.
