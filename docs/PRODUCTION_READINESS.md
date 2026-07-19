@@ -37,12 +37,15 @@ access and console piping, and preview/live agent-floor rendering.
 
 Verified on 2026-07-18 from this branch:
 
-- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,933 passed, 3 skipped;
+- `APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh`: 1,934 passed, 3 skipped;
   134 JavaScript tests passed; startup smoke passed.
 - `bash scripts/run-e2e.sh`: 4 browser journeys passed in an isolated runtime.
 - `dist/Apollo.app` was built and passed `codesign --verify --deep --strict`.
   `dist/Apollo.dmg` is a UDZO image with SHA-256
-  `8660656055bcb0aac172214e60ddcbb587a40624e0ac382551a770e482042946`.
+  `3f1ed8f3ead88929431814ba19716015ae07e32bfb1f06d4ca345c18f52edfee`.
+- The packaged server passed `/api/health` from the DMG mounted read-only, with
+  search caches, analytics, and logs created under the writable application
+  data root rather than inside the application bundle.
 - A clean packaged macOS profile passed first-run setup, local-model chat,
   embedded browser navigation and text extraction, native Paperclip startup
   and Floor events, document editing, backup verification, restore, and
