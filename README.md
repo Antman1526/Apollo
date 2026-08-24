@@ -92,6 +92,34 @@ dependency-audit, Docker-recovery, and remaining-platform evidence.
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor (24 themes, dark + light) · file uploads (vision + PDF) · presets · sessions · 2FA</sub>
 
+## Why local: privacy as capability
+
+Privacy in Apollo is not a compliance checkbox — it is what unlocks the
+product. Because models, memory, search, and files all run on the operator's
+own machine, Apollo can be trusted with the material cloud AI tools
+structurally cannot touch: the full email archive, health and finance
+documents, contracts, private notes. **The AI that can read everything,
+because nothing leaves.**
+
+What backs that claim, concretely:
+
+- **Local models** — GGUF files served by `llama.cpp` on demand; nothing is
+  sent to a vendor unless you explicitly add a remote endpoint.
+- **A user-owned brain** — memories are distilled, stored, and vector-indexed
+  locally, exportable as portable packs (`/api/memory/export-pack`) and
+  syncable between your own machines through a folder you control
+  (`memory_pack_sync_dir`) with no server in between. Each memory can be
+  traced to the conversation that produced it (`/api/memory/{id}/provenance`).
+- **Local search** — the managed SearXNG sidecar metasearches from your
+  machine; queries aren't attached to an account.
+- **A flight recorder for the agent** — the activity ledger records every
+  tool execution (Agent History in the sidebar), file writes are undoable
+  individually or as whole-session rollbacks, and an **autonomy dial** can
+  hold the agent to observe-only. Trust here is verified, not promised.
+- **Model-neutral routing** — the optional Fast Lane routes messages between
+  your own models purely on task fit; there is no vendor margin steering the
+  choice.
+
 ## New this session
 
 A batch of features landed recently. Each is grounded in real code (file paths in
