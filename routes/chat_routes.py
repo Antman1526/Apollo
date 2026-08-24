@@ -923,9 +923,22 @@ def setup_chat_routes(
                 )
                 _fallback_candidates = []
 
+            # Mixture routing (chat mode only): short conversational messages
+            # go to the configured "light" model; the session's model stays
+            # first fallback so a light-lane failure degrades to old behavior.
+            _routed_light = None
+            if chat_mode == "chat" and not do_research:
+                try:
+                    from services.model_router import route_chat
+                    _routed_light = route_chat(message or "", owner=_user)
+                except Exception:
+                    _routed_light = None
+
             # Send model name early so the frontend can show it during streaming
             _model_suffix = "Research" if do_research else None
-            _model_info = {"type": "model_info", "model": sess.model}
+            _model_info = {"type": "model_info", "model": _routed_light[1] if _routed_light else sess.model}
+            if _routed_light:
+                _model_info["suffix"] = "Fast lane"
             if _model_suffix:
                 _model_info["suffix"] = _model_suffix
             if ctx.preset.character_name:
@@ -971,6 +984,12 @@ def setup_chat_routes(
                 # ── Chat mode: call stream_llm directly, NO tools, NO document access ──
                 try:
                     _chat_candidates = [(sess.endpoint_url, sess.model, sess.headers)] + _fallback_candidates
+                    if _routed_light:
+                        # Light lane first; the session's model is now the
+                        # immediate fallback. Attribute metrics to the light
+                        # model unless a fallback event later overrides it.
+                        _chat_candidates = [_routed_light] + _chat_candidates
+                        _answered_by = _routed_light[1]
                     async for chunk in stream_llm_with_fallback(
                         _chat_candidates,
                         messages,

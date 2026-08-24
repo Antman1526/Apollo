@@ -925,6 +925,63 @@ async function initReviewerModel() {
   });
 }
 
+/* ── Fast Lane (mixture routing) ── */
+// Small model that answers short conversational chat messages; the session
+// model stays first fallback. Backend: services/model_router.py.
+async function initLightModel() {
+  var toggle = el('set-mixtureRoutingToggle');
+  var epSel = el('set-lightEpSelect');
+  var modelSel = el('set-lightModelSelect');
+  var msg = el('set-lightMsg');
+  if (!epSel || !modelSel) return;
+  var _endpoints = [];
+
+  try {
+    _endpoints = await _fetchModelEndpoints();
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+  } catch (e) { console.warn('Failed to load endpoints for fast lane', e); }
+
+  function refreshModels(selectedModel) {
+    var epId = epSel.value;
+    var ep = _endpoints.find(function(e) { return e.id === epId; });
+    _fillModelSelect(modelSel, ep ? ep.models : [], selectedModel, true,
+      { chatOnly: true, modelMeta: ep && ep.model_meta });
+  }
+
+  try {
+    var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+    var settings = await res.json();
+    if (toggle) toggle.checked = !!settings.mixture_routing_enabled;
+    if (settings.light_endpoint_id) epSel.value = settings.light_endpoint_id;
+    refreshModels(settings.light_model || '');
+  } catch (e) { console.warn('Failed to load fast lane settings', e); }
+
+  async function saveLight() {
+    try {
+      await fetch('/api/auth/settings', { method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mixture_routing_enabled: toggle ? toggle.checked : false,
+          light_endpoint_id: epSel.value || '',
+          light_model: modelSel.value || ''
+        })
+      });
+      msg.textContent = 'Saved'; msg.style.color = 'var(--fg)';
+      setTimeout(function() { msg.textContent = ''; }, 1500);
+    } catch (e) { msg.textContent = 'Failed to save'; msg.style.color = 'var(--red)'; }
+  }
+
+  if (toggle) toggle.addEventListener('change', saveLight);
+  epSel.addEventListener('change', function() { refreshModels(''); saveLight(); });
+  modelSel.addEventListener('change', saveLight);
+
+  _registerAiEndpointRefresh(function(endpoints) {
+    _endpoints = endpoints;
+    _fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+    refreshModels(modelSel.value);
+  });
+}
+
 /* ── Teacher Model ── */
 // SOTA model called automatically when a self-hosted student model
 // fails an agent-mode task. Stored as a single `teacher_model` string
@@ -2756,6 +2813,7 @@ function initAll() {
   initTeacherModel();
   initUtilityModel();
   initReviewerModel();
+  initLightModel();
   initImageSettings();
   initVisionSettings();
   initTtsSettings();

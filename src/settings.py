@@ -41,6 +41,12 @@ DEFAULT_SETTINGS = {
     # Folder shared between machines (iCloud/OneDrive/Syncthing) for the
     # Memory Sync housekeeping task; empty = sync disabled.
     "memory_pack_sync_dir": "",
+    # Mixture routing: answer short conversational chat messages with the
+    # small "light" model below instead of the session's model (chat mode
+    # only; the session model is the automatic fallback). Opt-in.
+    "mixture_routing_enabled": False,
+    "light_endpoint_id": "",
+    "light_model": "",
     # Context budget: caps on memory injection into the prompt preface.
     # Pinned memories were previously unbounded — a large pinned set could
     # eat a small local model's context before the request started.
