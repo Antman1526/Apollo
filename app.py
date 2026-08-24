@@ -39,7 +39,7 @@ import uuid
 import asyncio
 import logging
 import secrets
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict
 
 from fastapi import FastAPI, Request, HTTPException
@@ -360,7 +360,7 @@ if AUTH_ENABLED:
                                 _db = SessionLocal()
                                 try:
                                     _db.query(ApiToken).filter(ApiToken.id == tid).update(
-                                        {"last_used_at": datetime.utcnow()}
+                                        {"last_used_at": datetime.now(timezone.utc).replace(tzinfo=None)}
                                     )
                                     _db.commit()
                                 finally:
@@ -1005,7 +1005,7 @@ async def get_version():
 
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()}
 
 @app.get("/api/ready")
 async def readiness_check() -> JSONResponse:

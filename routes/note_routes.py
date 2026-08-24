@@ -271,7 +271,7 @@ async def dispatch_reminder(
             from routes.email_routes import _get_email_config
             from email.mime.text import MIMEText
             from email.mime.multipart import MIMEMultipart
-            from datetime import datetime as _dt
+            from datetime import datetime as _dt, timezone as _tz
             # `reminder_email_account_id` lets the user pick WHICH email
             # account to send reminders from (when they have several
             # configured in Integrations). Falls back to the default
@@ -332,7 +332,7 @@ async def dispatch_reminder(
                 _t = title or 'Note'
                 _t = _t[len('Reminder:'):].strip() if _t.lower().startswith('reminder:') else _t
                 msg["Subject"] = f"Reminder (Apollo): {_t}"
-                msg["Date"] = _dt.utcnow().strftime("%a, %d %b %Y %H:%M:%S +0000")
+                msg["Date"] = _dt.now(_tz.utc).replace(tzinfo=None).strftime("%a, %d %b %Y %H:%M:%S +0000")
                 msg["X-Apollo-Origin"] = "apollo-ui"
                 msg["X-Apollo-Kind"] = "reminder"
                 msg["X-Apollo-Ref"] = str(note_id)

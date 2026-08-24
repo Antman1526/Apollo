@@ -729,7 +729,7 @@ async def action_tidy_calendar(owner: str, **kwargs) -> Tuple[str, bool]:
                 if newest is not None:
                     STATE_FILE.write_text(json.dumps({
                         "last_created_at": newest.isoformat(),
-                        "last_run_at": datetime.utcnow().isoformat(),
+                        "last_run_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
                         "scanned": len(events),
                         "removed": len(removed),
                     }, indent=2), encoding="utf-8")
@@ -864,7 +864,7 @@ async def action_classify_events(owner: str, **kwargs) -> Tuple[str, bool]:
 
         db = SessionLocal()
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             horizon = now + timedelta(days=30)
             events = db.query(CalendarEvent).filter(
                 CalendarEvent.dtstart >= now,
@@ -1057,7 +1057,7 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
         import re as _re
         import email as _email_mod
         import asyncio as _aio
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timezone as _tz
         from routes.email_helpers import _imap_connect, _decode_header, SCHEDULED_DB
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
@@ -1228,7 +1228,7 @@ async def action_mark_email_boundaries(owner: str, **kwargs) -> Tuple[str, bool]
                     "INSERT OR REPLACE INTO email_boundaries "
                     "(message_id, uid, folder, sig_start, quote_start, model_used, created_at, turns_json) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (mid, str(uid), "INBOX", sig, quote, model, _dt.utcnow().isoformat(), turns_json),
+                    (mid, str(uid), "INBOX", sig, quote, model, _dt.now(_tz.utc).replace(tzinfo=None).isoformat(), turns_json),
                 )
                 c.commit()
                 c.close()
@@ -1257,7 +1257,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
         import re as _re
         import email as _email_mod
         import asyncio as _aio
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         from routes.email_helpers import _imap_connect, SCHEDULED_DB
         from src.endpoint_resolver import resolve_endpoint
         from src.llm_core import llm_call_async
@@ -1335,7 +1335,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
             report_exception(logger, "builtin_signature_cache_read_failed", error, outcome="best_effort")
             cached = {}
 
-        cutoff_iso = (_dt.utcnow() - _td(days=30)).isoformat()
+        cutoff_iso = (_dt.now(_tz.utc).replace(tzinfo=None) - _td(days=30)).isoformat()
         eligible: list[tuple[str, list[dict]]] = []
         for addr, msgs in by_sender.items():
             if len(msgs) < 3:
@@ -1443,7 +1443,7 @@ async def action_learn_sender_signatures(owner: str, **kwargs) -> Tuple[str, boo
                     "INSERT OR REPLACE INTO sender_signatures "
                     "(from_address, signature_text, sample_count, last_built_at, model_used, source) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
-                    (addr, cached_sig, len(bodies), _dt.utcnow().isoformat(), model, "llm"),
+                    (addr, cached_sig, len(bodies), _dt.now(_tz.utc).replace(tzinfo=None).isoformat(), model, "llm"),
                 )
                 conn.commit()
                 conn.close()
@@ -1944,7 +1944,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         import re as _re
         import time as _time
         import httpx
-        from datetime import datetime as _dt, timedelta as _td
+        from datetime import datetime as _dt, timedelta as _td, timezone as _tz
         from pathlib import Path as _P
         from core.database import SessionLocal as _SL, EmailAccount as _EA
         from routes.email_helpers import _imap_connect, _decode_header
@@ -1959,7 +1959,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         CACHE_DIR = _P("data/email_urgency_cache")
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        AGE_CUTOFF = _dt.utcnow() - _td(days=7)
+        AGE_CUTOFF = _dt.now(_tz.utc).replace(tzinfo=None) - _td(days=7)
         TRIAGE_VERSION = 3
         CATEGORY_TAGS = {
             "newsletter", "marketing", "notification", "finance", "bills",
@@ -2264,7 +2264,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
         try:
             import sqlite3 as _sql3
             from routes.email_helpers import SCHEDULED_DB, _init_scheduled_db
-            from datetime import datetime as _dt2
+            from datetime import datetime as _dt2, timezone as _tz2
             _init_scheduled_db()
             _conn = _sql3.connect(SCHEDULED_DB)
             try:
@@ -2325,7 +2325,7 @@ async def action_check_email_urgency(owner: str, **kwargs) -> Tuple[str, bool]:
                             "VALUES (?, ?, ?, 'INBOX', ?, ?, ?, ?, ?, ?)",
                             (_msg_id, _owner_key, _uid_only, _v.get("subject", ""),
                              _v.get("from", ""), _json.dumps(_new_tags), _spam, _v.get("reason", ""),
-                             _dt2.utcnow().isoformat()),
+                             _dt2.now(_tz2.utc).replace(tzinfo=None).isoformat()),
                         )
                 _conn.commit()
             finally:

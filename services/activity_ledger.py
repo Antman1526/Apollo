@@ -178,9 +178,9 @@ def recent_tool_events(
     days: int = 7, tools: tuple = ("bash",), only_success: bool = True
 ) -> List[Dict[str, Any]]:
     """Recent events for pattern mining: (session_id, tool, input) triples."""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
-    cutoff = datetime.utcnow() - timedelta(days=max(1, days))
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=max(1, days))
     db = SessionLocal()
     try:
         q = db.query(ActivityEvent).filter(

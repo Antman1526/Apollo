@@ -510,7 +510,7 @@ async def do_manage_documents(content: str, owner: Optional[str] = None) -> Dict
         if not ts:
             return 'never'
         try:
-            now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.utcnow()
+            now = datetime.now(timezone.utc) if ts.tzinfo is not None else datetime.now(timezone.utc).replace(tzinfo=None)
             diff = (now - ts).total_seconds()
         except (AttributeError, TypeError, ValueError):
             return 'unknown'

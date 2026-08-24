@@ -480,7 +480,7 @@ async def do_list_sessions(content: str, session_id: Optional[str] = None, owner
         def _rel(ts):
             if not ts:
                 return 'never'
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             try:
                 if ts.tzinfo is not None:
                     now = datetime.now(timezone.utc)
