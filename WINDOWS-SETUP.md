@@ -20,6 +20,41 @@ For the bare install/launch steps see the **Native Windows** section of the
     (pick the CUDA build if you have an NVIDIA GPU) and unzip it anywhere,
     e.g. `C:\llama.cpp\`.
 
+  **Get a RECENT build.** Newer model architectures need newer llama.cpp, and a
+  stale package manager copy is the single most confusing failure here: the
+  model appears in the picker, then refuses to start with
+
+  ```
+  llama_model_load: error loading model: missing tensor 'blk.64.ssm_conv1d.weight'
+  ```
+
+  That is not an Apollo bug and not a corrupt download — it means this
+  `llama-server` predates support for that architecture. `ssm_*` tensors are
+  state-space (Mamba-style) layers used by the hybrid attention+SSM models
+  (Qwen 3.5 / 3.6 / 3.8 and similar); older builds simply cannot load them.
+
+  Fix: upgrade llama.cpp (`winget upgrade llama.cpp`, or grab the latest
+  release build) and start the model again. If Apollo still picks up an old
+  copy from your PATH, set the exact binary in **Settings → AI → Local Models →
+  llama-server Binary** (e.g. `C:\llama.cpp\llama-server.exe`) — the status
+  line under that field shows which binary is actually in use.
+
+### Do I need Ollama or LM Studio?
+
+**No — neither is required.** Apollo serves local GGUF files itself by launching
+`llama-server` on demand, so llama.cpp above is the only local-model dependency.
+
+They are optional, and only useful if you already run them:
+
+- **LM Studio** — if you have it, Apollo scans its model folder
+  (`%USERPROFILE%\.lmstudio\models`) by default, so downloads you already made
+  show up without copying anything. That is a convenience, not a requirement.
+- **Ollama** — supported as an *additional* endpoint. Add it under
+  **Settings → AI → Add Models** to use models it already serves; Apollo talks
+  to it over HTTP and never installs or manages it.
+
+Everything in this guide works with neither installed.
+
 ## 2. Launch
 
 From PowerShell in this folder:
