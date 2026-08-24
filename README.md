@@ -664,6 +664,10 @@ semantic memory (and now the knowledge graph's semantic edges) — embedded on-d
   `packaging/apollo.spec`/`apollo_boot.py` produce a **self-contained PyInstaller** bundle that
   runs without the repo. A small C launcher (`scripts/windows-launcher/`) cross-compiles to
   `Apollo.exe`, which opens `launch-windows.ps1` beside it.
+  `scripts/build-windows-zip.sh [ref] [dest]` packages the source tree as
+  `Apollo-Windows.zip` for a native Windows install — built via `git archive`, so only tracked
+  files ship and untracked secrets (`.env`) cannot leak in; it refuses to build if a required
+  runtime file is missing.
 
 **Stack:** Python 3.11+ · FastAPI/Starlette/uvicorn · httpx (all outbound HTTP incl. streaming
 proxies) · websockets · SQLAlchemy/SQLite · ChromaDB + fastembed · llama.cpp · faster-whisper ·
