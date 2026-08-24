@@ -66,6 +66,8 @@ BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
     "web_search": "Quick single web lookup for a fact, current event, or doc mid-task. NOT for 'research X' / 'do research on X' requests — those are deep-research jobs (use trigger_research). web_search = one query; trigger_research = a full researched report in the sidebar.",
     "web_fetch": "Fetch and read the text content of a specific URL/website the user names (e.g. 'check example.com', 'open this link'). Use when you have a concrete URL; for open-ended lookups use web_search instead.",
     "browser": "Drive Apollo's integrated browser for JavaScript-rendered pages, localhost dev servers, live UI checks, DOM extraction, visible text, HTML, screenshots, clicking, typing, waiting for selectors, and executing page JavaScript. Use when web_fetch cannot read a client-rendered page or when the user wants to open/control a page visually.",
+    "reference_search": "Search the local Reference Library catalogs: free public APIs (with auth/HTTPS/CORS requirements), free programming books and courses, build-from-scratch tutorials, and learning roadmaps. Use FIRST when live data needs a real free API — weather, currency exchange, geolocation, news, crypto prices — to find a keyless endpoint instead of guessing one; also answers 'find me a book/tutorial/roadmap about X'.",
+    "python_session": "Execute Python in a persistent per-conversation session where variables, imports, and loaded data survive across calls. Use for multi-step data work: load a dataset once, then filter, analyze, and plot it across several tool calls without reloading.",
     "read_file": "Read a file from disk and return its contents. View source code, config files, logs.",
     "write_file": "Write content to a file on disk. Create new files, save output, update configs.",
     "create_document": "Create a new document in the editor panel. For code, articles, text content longer than 15 lines, unless an already-open document/email draft is the obvious target. If an email compose draft is open, edit that draft instead of creating another document.",
@@ -307,6 +309,10 @@ class ToolIndex:
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
+        # Reference Library lookups. "api" alone is too broad; these phrases
+        # signal catalog intent (find a free/public API, a book, a roadmap).
+        frozenset({"free api", "public api", "reference library", "reference_search", "an api for", "api that"}):
+            {"reference_search"},
         frozenset({"email", "mail", "gmail", "googlemail", "message", "send", "reply", "inbox", "unread", "tell"}):
             {"list_email_accounts", "list_emails", "read_email", "send_email", "reply_to_email", "bulk_email", "delete_email", "archive_email", "mark_email_read", "resolve_contact", "ui_control"},
         frozenset({"calendar", "event", "meeting", "schedule", "appointment"}):

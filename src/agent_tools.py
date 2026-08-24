@@ -55,6 +55,11 @@ TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "browser", "builtin_br
              "list_cookbook_servers",
              # Other tools the agent reaches for that were also missing.
              "edit_image", "trigger_research", "manage_research",
+             # Reference Library + persistent Python. TOOL_TAGS is the FOURTH
+             # place a tool must be registered (schemas, TOOL_SECTIONS,
+             # tool_index descriptions, and here) — the fenced-block regex is
+             # built from this set, so an unlisted tag can never parse.
+             "reference_search", "python_session",
              # Generic loopback to any UI-button endpoint (cookbook,
              # gallery, email folders, etc.) — agent uses this when
              # there's no named tool wrapper for the action.

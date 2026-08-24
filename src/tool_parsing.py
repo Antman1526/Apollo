@@ -84,6 +84,30 @@ def _normalize_dsml(text: str) -> str:
     t = re.sub(rf"<\s*/\s*{_DSML_PIPES}\s*DSML\s*{_DSML_PIPES}\s*parameter\s*>", "</parameter>", t, flags=re.IGNORECASE)
     return t
 
+def _normalize_function_eq(text: str) -> str:
+    """Normalize the Qwen/Llama-3 native function-call dialect to <invoke> form.
+
+    Models whose chat template teaches `<function=NAME><parameter=KEY>value
+    </parameter></function>` (Qwen 3.x, Llama 3.1+ official templates) emit
+    exactly that when driven through the fenced-block prompt — observed live
+    from Qwen3-365-A3B, whose reference_search call fell through as plain
+    text. Rewrites into the standard <invoke name=...> form so the existing
+    parser (with its known-tool guard) handles it; a stray </tool_call>
+    closer some models append is dropped when unopened.
+    """
+    if not isinstance(text, str) or "<function=" not in text:
+        return text
+    t = text
+    t = re.sub(r'<function=["\']?(\w+)["\']?\s*>', r'<invoke name="\1">', t, flags=re.IGNORECASE)
+    t = re.sub(r"</function>", "</invoke>", t, flags=re.IGNORECASE)
+    t = re.sub(r'<parameter=["\']?(\w+)["\']?\s*>', r'<parameter name="\1">', t, flags=re.IGNORECASE)
+    # Some emissions close with </tool_call> without ever opening one; a
+    # dangling closer would otherwise confuse the XML wrapper scan.
+    if "<tool_call>" not in t.lower():
+        t = re.sub(r"</tool_call>", "", t, flags=re.IGNORECASE)
+    return t
+
+
 # Map model tool names to our tool types
 _TOOL_NAME_MAP = {
     "shell": "bash",
@@ -166,6 +190,9 @@ _TOOL_NAME_MAP = {
     "manage_documents": "manage_documents",
     "documents": "manage_documents",
     "manage_research": "manage_research",
+    "reference_search": "reference_search",
+    "reference_library": "reference_search",
+    "python_session": "python_session",
     "list_research": "manage_research",
     "read_research": "manage_research",
     "open_research": "manage_research",
@@ -347,6 +374,8 @@ def parse_tool_blocks(text: str) -> List[ToolBlock]:
     # Normalize DeepSeek DSML markup into standard <invoke> form so the
     # XML patterns below catch it.
     text = _normalize_dsml(text)
+    # Same for the Qwen/Llama-3 `<function=NAME><parameter=KEY>` dialect.
+    text = _normalize_function_eq(text)
 
     # Pattern 1: fenced code blocks
     for m in _TOOL_BLOCK_RE.finditer(text):
