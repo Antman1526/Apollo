@@ -1668,6 +1668,28 @@
             </div>
           </div>
           <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Model Hub</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">Free cloud models and the Codex Router gateway.</div>
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Free Cloud Models</div>
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+                <select id="set-hubProvider" class="settings-select" style="width:150px;">
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="opencode">OpenCode Zen</option>
+                </select>
+                <input id="set-hubApiKey" type="password" placeholder="Provider API key" class="settings-select" style="flex:1;min-width:160px;">
+                <button type="button" id="set-hubAddFree" class="admin-btn-sm">Add free models</button>
+              </div>
+              <div id="set-hubFreeMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
+            </div>
+            <div>
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Codex Router <span style="font-weight:normal;opacity:0.7;">(for the OpenAI Codex CLI)</span></div>
+              <div id="set-hubCodexStatus" style="font-size:11px;margin-bottom:4px;"></div>
+              <pre id="set-hubCodexInstall" style="display:none;font-size:10px;white-space:pre-wrap;word-break:break-all;background:color-mix(in srgb, var(--fg) 6%, transparent);padding:6px;border-radius:6px;user-select:all;"></pre>
+              <div id="set-hubCodexNote" style="font-size:10px;opacity:0.6;"></div>
+            </div>
+          </div>
+          <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Vision<span style="flex:1"></span><label class="admin-switch" title="Analyze images with a vision-capable model"><input type="checkbox" id="set-visionEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Analyze images with a vision-capable model.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
@@ -1908,6 +1930,17 @@
                 <button type="button" id="set-localModelBinSave" class="admin-btn-sm" style="flex-shrink:0;">Save</button>
               </div>
               <div id="set-localModelBinMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
+            </div>
+            <!-- Pull from Hugging Face -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Pull from Hugging Face</div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <input id="set-hubGgufQuery" type="text" placeholder="Search GGUF models (e.g. qwen3 7b instruct)" class="settings-select" style="flex:1;">
+                <button type="button" id="set-hubGgufSearch" class="admin-btn-sm" style="flex-shrink:0;">Search</button>
+              </div>
+              <div id="set-hubGgufResults" style="display:flex;flex-direction:column;gap:3px;margin-top:6px;max-height:180px;overflow-y:auto;"></div>
+              <div id="set-hubGgufDownloads" style="display:flex;flex-direction:column;gap:3px;margin-top:6px;"></div>
+              <div id="set-hubGgufMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
             </div>
             <!-- Rescan -->
             <div style="margin-bottom:14px;">

@@ -565,6 +565,7 @@ upload_cleanup_task = None
 # emojis as flat SVG instead of system color glyphs.
 from routes.emoji_routes import setup_emoji_routes
 from routes.activity_routes import setup_activity_routes
+from routes.hub_routes import setup_hub_routes
 from routes.session_routes import setup_session_routes
 from routes.admin_wipe_routes import setup_admin_wipe_routes
 from routes.memory_routes import setup_memory_routes
@@ -586,6 +587,7 @@ session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_A
 register_router_specs(app, [
     RouterSpec("Emoji", setup_emoji_routes),
     RouterSpec("Activity", setup_activity_routes),
+    RouterSpec("ModelHub", setup_hub_routes),
     RouterSpec("Sessions", setup_session_routes, args=(session_manager, session_config), kwargs={"webhook_manager": webhook_manager}),
     RouterSpec("Admin wipe", setup_admin_wipe_routes, args=(session_manager,)),
     RouterSpec("Memory", setup_memory_routes, args=(memory_manager, session_manager), kwargs={"memory_vector": memory_vector}),
