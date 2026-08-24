@@ -10,34 +10,88 @@ For the bare install/launch steps see the **Native Windows** section of the
 
 ## 1. Prerequisites
 
-- **Python 3.11+** — install from https://www.python.org/downloads/ and check
-  "Add python.exe to PATH" in the installer.
-- **Git for Windows** — https://git-scm.com/download/win (the launcher uses its
-  bundled bash for first-time setup scripts).
-- **llama.cpp** (for local GGUF models) — either:
-  - `winget install llama.cpp`, or
-  - download a release build from https://github.com/ggml-org/llama.cpp/releases
-    (pick the CUDA build if you have an NVIDIA GPU) and unzip it anywhere,
-    e.g. `C:\llama.cpp\`.
+Apollo needs exactly three things: **Python 3.11+**, **Git for Windows**, and a
+**recent llama.cpp**. Check what you already have — open PowerShell
+(<kbd>Win</kbd>+<kbd>X</kbd> → *Terminal*) and run:
 
-  **Get a RECENT build.** Newer model architectures need newer llama.cpp, and a
-  stale package manager copy is the single most confusing failure here: the
-  model appears in the picker, then refuses to start with
+```powershell
+python --version
+git --version
+llama-server --version
+```
 
-  ```
-  llama_model_load: error loading model: missing tensor 'blk.64.ssm_conv1d.weight'
-  ```
+Each line prints a version if the tool is installed. For anything missing (or
+erroring), install it below. Two rules that save the most head-scratching:
 
-  That is not an Apollo bug and not a corrupt download — it means this
-  `llama-server` predates support for that architecture. `ssm_*` tensors are
-  state-space (Mamba-style) layers used by the hybrid attention+SSM models
-  (Qwen 3.5 / 3.6 / 3.8 and similar); older builds simply cannot load them.
+- **After installing anything, open a NEW PowerShell window.** PATH changes
+  don't reach windows that are already open, so a just-installed tool looks
+  "not found" until you do.
+- The `winget` commands below use Windows' built-in package manager — nothing
+  extra to install on Windows 10/11. If a `winget` command isn't recognized,
+  use the download link given for each tool instead.
 
-  Fix: upgrade llama.cpp (`winget upgrade llama.cpp`, or grab the latest
-  release build) and start the model again. If Apollo still picks up an old
-  copy from your PATH, set the exact binary in **Settings → AI → Local Models →
-  llama-server Binary** (e.g. `C:\llama.cpp\llama-server.exe`) — the status
-  line under that field shows which binary is actually in use.
+### Python 3.11+ (not installed?)
+
+Either:
+
+- `winget install --id Python.Python.3.12 -e`, or
+- download the installer from https://www.python.org/downloads/windows/ and run
+  it — **check "Add python.exe to PATH"** on the first screen (it is unchecked
+  by default, and missing it is the #1 Python-on-Windows problem).
+
+Verify in a new window: `python --version` → `Python 3.12.x`.
+
+> **Gotcha — Microsoft Store alias:** on a fresh Windows install, typing
+> `python` may open the Microsoft Store instead of running Python. Either
+> install from the Store prompt, or disable the alias under
+> **Settings → Apps → Advanced app settings → App execution aliases** (turn off
+> both `python.exe` entries) so the python.org install wins.
+
+### Git for Windows (not installed?)
+
+Either:
+
+- `winget install --id Git.Git -e`, or
+- download from https://git-scm.com/download/win and run the installer — the
+  defaults are fine on every screen (Apollo's launcher uses Git's bundled bash
+  for first-time setup scripts, which the default install includes).
+
+Verify in a new window: `git --version`.
+
+### llama.cpp (for local GGUF models)
+
+Either:
+
+- `winget install llama.cpp` — then immediately `winget upgrade llama.cpp` to
+  make sure you have a current build (see the warning below), or
+- download a release build from https://github.com/ggml-org/llama.cpp/releases:
+  on the latest release, expand **Assets** and pick the file for your machine —
+  the **`cudart`/CUDA** zip if you have an NVIDIA GPU (most gaming laptops,
+  e.g. ROG), otherwise the plain **`win-x64`** CPU zip. Unzip it anywhere,
+  e.g. `C:\llama.cpp\`, so that `C:\llama.cpp\llama-server.exe` exists.
+
+Verify: `llama-server --version` (or run
+`C:\llama.cpp\llama-server.exe --version` if it isn't on PATH — Apollo can be
+pointed at the exact file either way, see step 3).
+
+**Get a RECENT build.** Newer model architectures need newer llama.cpp, and a
+stale package-manager copy is the single most confusing failure here: the
+model appears in the picker, then refuses to start with
+
+```
+llama_model_load: error loading model: missing tensor 'blk.64.ssm_conv1d.weight'
+```
+
+That is not an Apollo bug and not a corrupt download — it means this
+`llama-server` predates support for that architecture. `ssm_*` tensors are
+state-space (Mamba-style) layers used by the hybrid attention+SSM models
+(Qwen 3.5 / 3.6 / 3.8 and similar); older builds simply cannot load them.
+
+Fix: upgrade llama.cpp (`winget upgrade llama.cpp`, or grab the latest
+release build) and start the model again. If Apollo still picks up an old
+copy from your PATH, set the exact binary in **Settings → AI → Local Models →
+llama-server Binary** (e.g. `C:\llama.cpp\llama-server.exe`) — the status
+line under that field shows which binary is actually in use.
 
 ### Do I need Ollama or LM Studio?
 
