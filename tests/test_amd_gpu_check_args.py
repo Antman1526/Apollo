@@ -1,8 +1,16 @@
+import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check-docker-amd-gpu.sh"
+
+# The script diagnoses AMD GPU passthrough on Linux Docker hosts — genuinely
+# POSIX-only. On the Windows runner a bare `bash` resolves to the WSL stub in
+# System32, which fails without an installed distribution.
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="requires a POSIX bash")
 
 
 def test_amd_gpu_check_rejects_unknown_extra_arg_before_diagnostics():

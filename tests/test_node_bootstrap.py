@@ -25,15 +25,17 @@ def test_dist_url():
 
 
 def test_bin_paths_unix():
+    # bin_paths joins with the native separator, so normalize before comparing
+    # (a Windows host produces backslashes for the same layout).
     node, npx = nb.bin_paths("/x/node-v22.13.0-darwin-arm64", "darwin")
-    assert node == "/x/node-v22.13.0-darwin-arm64/bin/node"
-    assert npx == "/x/node-v22.13.0-darwin-arm64/bin/npx"
+    assert node.replace(os.sep, "/") == "/x/node-v22.13.0-darwin-arm64/bin/node"
+    assert npx.replace(os.sep, "/") == "/x/node-v22.13.0-darwin-arm64/bin/npx"
 
 
 def test_bin_paths_windows():
     node, npx = nb.bin_paths("/x/node-v22.13.0-win-x64", "windows")
-    assert node.endswith("node-v22.13.0-win-x64/node.exe")
-    assert npx.endswith("node-v22.13.0-win-x64/npx.cmd")
+    assert node.replace(os.sep, "/").endswith("node-v22.13.0-win-x64/node.exe")
+    assert npx.replace(os.sep, "/").endswith("node-v22.13.0-win-x64/npx.cmd")
 
 
 def test_pick_lts_picks_highest_lts():

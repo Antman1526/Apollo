@@ -271,15 +271,20 @@ class TestPackageProbeStatus:
 
     def test_local_user_install_bin_is_added_to_path(self, monkeypatch, tmp_path):
         user_base = tmp_path / "user-base"
+        home = tmp_path / "home"
         monkeypatch.setattr("site.USER_BASE", str(user_base))
-        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        # os.path.expanduser("~") reads HOME on POSIX but USERPROFILE first
+        # on Windows (ntpath.expanduser checks USERPROFILE before HOME) —
+        # set both so "~" resolves to the same fake home on every platform.
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.setenv("USERPROFILE", str(home))
         monkeypatch.setenv("PATH", "/usr/bin")
 
         _prepend_user_install_bins_to_path()
 
         parts = os.environ["PATH"].split(os.pathsep)
         assert str(user_base / "bin") in parts
-        assert str(tmp_path / "home" / ".local" / "bin") in parts
+        assert str(home / ".local" / "bin") in parts
 
     def test_remote_package_probe_checks_user_install_bin(self):
         script = _package_probe_script(["vllm"])
