@@ -338,7 +338,17 @@ login (`README.md:109-117`).
 | **7000** | Apollo web UI (Windows / Docker default) | `127.0.0.1` |
 | **8893** | Managed SearXNG sidecar (native) | `127.0.0.1` only (`searxng/config.py:16`) |
 | **8080** | SearXNG (Docker) | `127.0.0.1` |
-| **8100→8000** | ChromaDB (Docker) | `127.0.0.1` |
+| — | ChromaDB (Docker default) | Embedded `PersistentClient` under `/app/data/chroma`; no HTTP port is published |
 | **8091→80** | ntfy (Docker) | `127.0.0.1` |
 | **3100** | Paperclip (Docker, internal only — no host port) | internal network |
 | ephemeral | `llama-server` per warm model | `127.0.0.1` (`_free_port`) |
+
+## 12. 2026-07-19 environment refresh
+
+Use `requirements.in` and `requirements-dev.in` as the editable dependency
+inputs; `requirements.txt` and `requirements-dev.txt` are generated Python
+3.12 locks and are checked by `scripts/check_dependency_locks.py`. The current
+critical lock versions include FastAPI 0.139.2, SQLAlchemy 2.0.51, ChromaDB
+1.5.9, FastEmbed 0.8.0, MCP 1.28.1, Patchright 1.61.2, Playwright 1.61.0, and
+pytest 9.1.1. See the dated [current-state refresh](00-2026-07-19-current-state-refresh.md)
+for packaging and data-root requirements.

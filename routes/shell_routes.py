@@ -40,6 +40,7 @@ from core.platform_compat import (
 )
 from src.auth_helpers import resolve_identity
 from src.observability import report_exception
+from src.tool_execution import _env_timeout
 
 
 def _require_admin(request: Request):
@@ -351,8 +352,12 @@ def _find_line_break(buf):
     return ni, 1
 
 
-EXEC_TIMEOUT = 30  # seconds — shorter than agent's 60s
-STREAM_TIMEOUT = 120  # default for short commands
+# UI-shell timeouts are intentionally much tighter than the agent's
+# bash tool (src/tool_execution.py, 1h default): these serve synchronous
+# terminal commands, not long agent workloads. Env-tunable so operators
+# can reconcile both surfaces without code edits.
+EXEC_TIMEOUT = _env_timeout("APOLLO_SHELL_EXEC_TIMEOUT", 30)  # seconds
+STREAM_TIMEOUT = _env_timeout("APOLLO_SHELL_STREAM_TIMEOUT", 120)  # default for short commands
 MAX_OUTPUT = 200_000  # truncate limit
 TMUX_LOG_DIR = Path(tempfile.gettempdir()) / "apollo-tmux"
 PTY_UNSUPPORTED_ERROR = "pty_unsupported"

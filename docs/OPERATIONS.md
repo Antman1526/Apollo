@@ -72,6 +72,18 @@ Use `scripts/apollo-backup snapshot` before upgrade or migration. The backup
 tool has a separate verification command; restoration overwrites current
 runtime data and should only be performed with Apollo stopped.
 
+For Docker Compose, snapshots are persisted under `./backups/` on the host.
+Use a stopped one-shot container for restore so the mounted data directory is
+not being written by the running application:
+
+```bash
+docker compose exec apollo scripts/apollo-backup snapshot
+docker compose exec apollo scripts/apollo-backup list
+docker compose stop apollo
+docker compose run --rm --no-deps apollo scripts/apollo-backup restore /app/backups/<snapshot>.tar.gz --yes
+docker compose up -d apollo
+```
+
 ## Logs
 
 List known logs:

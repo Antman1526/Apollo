@@ -46,6 +46,37 @@ for dir in /app /app/data /app/logs; do
     fi
 done
 
+# A Compose operator can pre-seed the initial account with
+# APOLLO_ADMIN_USER/APOLLO_ADMIN_PASSWORD. Previously Compose exposed those
+# variables but started Uvicorn directly, so the documented password was
+# silently ignored and the deployment stayed in first-run mode. Seed only when
+# a password is explicitly supplied; interactive first-run setup remains the
+# default when it is unset. Run as the final application UID so auth.json stays
+# writable from the host bind mount.
+if [ -n "${APOLLO_ADMIN_PASSWORD:-}" ]; then
+    if [ "${#APOLLO_ADMIN_PASSWORD}" -lt 8 ]; then
+        echo "APOLLO_ADMIN_PASSWORD must be at least 8 characters" >&2
+        exit 1
+    fi
+    gosu "$PUID:$PGID" python - <<'PY'
+import os
+import sys
+
+from core.auth import AuthManager
+
+manager = AuthManager()
+if manager.is_configured:
+    sys.exit(0)
+
+username = os.environ.get("APOLLO_ADMIN_USER", "admin").strip().lower() or "admin"
+password = os.environ["APOLLO_ADMIN_PASSWORD"]
+if not manager.setup(username, password):
+    print("could not create the configured initial admin account", file=sys.stderr)
+    sys.exit(1)
+print("configured initial Docker admin account")
+PY
+fi
+
 # Cookbook installs vllm/etc. via `pip install --user`, which pulls
 # nvidia-cuda-* wheels into /app/.local but does not set CUDA_HOME or
 # symlink /usr/local/cuda. vllm 0.22+ then crashes during engine init

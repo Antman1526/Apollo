@@ -2,6 +2,24 @@
 
 Source of truth: `requirements.txt`, `requirements-optional.txt`, `requirements-browser-use.txt`, `pyproject.toml`, `package.json`, `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml`, `scripts/`, `mcp_servers/`, `static/`, and import statements across `app.py`, `core/`, `src/`, `services/`, `routes/`, `companion/`.
 
+## Current lock snapshot (refreshed 2026-07-19)
+
+The editable Python inputs are `requirements.in` and `requirements-dev.in`; the
+checked-in Python 3.12 locks provide these reconstruction-critical exact
+versions: FastAPI 0.139.2, Uvicorn 0.51.0, Pydantic 2.13.4, SQLAlchemy 2.0.51,
+ChromaDB 1.5.9, FastEmbed 0.8.0, HTTPX 0.28.1, OpenAI 2.46.0, MCP 1.28.1,
+Crawl4AI 0.9.2, Patchright 1.61.2, Playwright 1.61.0, pytest 9.1.1, and
+pip-tools 7.6.0. Node package lock entries pin `@anthropic-ai/sdk` 0.98.0 and
+`@antithesishq/bombadil` 0.3.2. `scripts/check_dependency_locks.py` verifies
+the locks in CI and locally.
+
+Deployment refresh: native and Docker defaults use ChromaDB's embedded
+`PersistentClient`, not a published Chroma HTTP service. The only recorded
+dependency-audit exception is `chromadb==1.5.9` / `PYSEC-2026-311`, scoped to
+the unexposed HTTP-server advisory and expiring on 2026-08-31. See
+`security/dependency-audit-exceptions.json` and
+`docs/PRODUCTION_READINESS.md` for the current mitigation and evidence.
+
 Apollo is a self-hosted, multi-provider AI assistant: a FastAPI backend serving a vanilla-JS single-page UI, with an agent/tool loop, local-and-remote LLM serving (llama.cpp "Cookbook"), RAG, semantic memory, web search, research, podcasts/TTS/STT, calendar/mail integrations, browser automation, and an optional bundled "Paperclip" agent-management sidecar. Ships natively (macOS `.app`/`.dmg`, Windows PowerShell launcher) and via Docker Compose.
 
 Conventions: **Version** is shown only when pinned in a manifest; `unpinned` means the dependency is listed without a version constraint; `transitive`/`runtime-detected` means it is discovered/used but not declared in a manifest.

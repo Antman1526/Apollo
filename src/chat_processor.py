@@ -35,6 +35,13 @@ _STOPWORDS = frozenset(
     "that's there's here's what's who's how's let's can't".split()
 )
 
+def _cap_pinned(pinned: list, cap: int) -> list:
+    """Bound the pinned-memory injection; newest pins win. cap<=0 = no cap."""
+    if cap <= 0 or len(pinned) <= cap:
+        return pinned
+    return sorted(pinned, key=lambda m: m.get("timestamp", 0), reverse=True)[:cap]
+
+
 def _content_tokens(text: str) -> list:
     """Extract meaningful content words: no stopwords, min 3 chars, lowercase."""
     words = re.findall(r'[a-z0-9]+(?:[-_][a-z0-9]+)*', text.lower())
@@ -198,6 +205,12 @@ class ChatProcessor:
             pinned = [m for m in mem_entries if m.get("pinned")]
             extended = [m for m in mem_entries if not m.get("pinned")]
 
+            # Cap pinned injection — previously unbounded, so a large pinned
+            # set could consume a small local model's context before the
+            # request started. Newest pins win; 0 or negative = no cap.
+            from src.settings import get_setting
+            pinned = _cap_pinned(pinned, int(get_setting("memory_pinned_max", 15) or 0))
+
             _used_ids: list = []
             if pinned:
                 pinned_text = "\n- ".join([m["text"] for m in pinned])
@@ -211,7 +224,13 @@ class ChatProcessor:
                         _used_ids.append(m["id"])
 
             if extended:
-                relevant = self._hybrid_retrieve(message, extended, k=3)
+                # Same boundary semantics as memory_pinned_max: 0 disables
+                # extended recall entirely (pinned facts still inject).
+                recall_k = int(get_setting("memory_recall_max", 3))
+                relevant = (
+                    self._hybrid_retrieve(message, extended, k=recall_k)
+                    if recall_k > 0 else []
+                )
                 if relevant:
                     ext_text = "\n".join([f"- {m['text']}" for m in relevant])
                     preface.append(untrusted_context_message(

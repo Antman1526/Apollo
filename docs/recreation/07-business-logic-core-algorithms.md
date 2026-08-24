@@ -1024,3 +1024,13 @@ case-insensitive regex: a `Verdict:` line, a `Suggestion:` line (`"none"` →
 empty), and any bullet/numbered line becomes an issue. Returns
 `{verdict, issues, suggestion, raw}`; the route adds `model`. The frontend
 `review.js` renders the verdict as a color-coded badge (§05).
+
+## (k) 2026-07-19 Ralph quality-loop refresh
+
+`src/ralph_loop.py` and `scripts/apollo-ralph` provide an opt-in project loop,
+not a background daemon. It chooses the next dependency-satisfied PRD story,
+captures bounded agent/check output, records append-only progress and
+learnings, and only auto-marks a story when the configured quality and
+story-specific verification commands pass and the agent emits `EXIT_SIGNAL:
+true`. It inherits the scrubbed subprocess environment through
+`build_agent_env`; do not replace that with raw environment inheritance.

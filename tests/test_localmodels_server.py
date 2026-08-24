@@ -138,3 +138,29 @@ def test_serving_context_uses_known_window_capped(monkeypatch):
     # A bogus env value falls back without crashing.
     monkeypatch.setenv("APOLLO_LLAMA_CONTEXT", "not-a-number")
     assert srv._serving_context(big) == 16384
+
+
+def test_find_binary_prefers_configured(tmp_path, monkeypatch):
+    import services.localmodels.server_manager as sm
+    fake = tmp_path / "llama-server"
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(sm, "get_llama_server_path", lambda: str(fake))
+    srv = LocalModelServer(dirs_provider=lambda: [])
+    assert srv.find_binary() == str(fake)
+
+
+def test_find_binary_configured_missing_returns_none(tmp_path, monkeypatch):
+    import services.localmodels.server_manager as sm
+    monkeypatch.setattr(sm, "get_llama_server_path", lambda: str(tmp_path / "nope"))
+    srv = LocalModelServer(dirs_provider=lambda: [])
+    assert srv.find_binary() is None
+
+
+def test_windows_bin_candidates(monkeypatch):
+    import os as _os
+    import services.localmodels.server_manager as sm
+    monkeypatch.setattr(_os, "name", "nt")
+    cands = sm._bin_candidates()
+    assert cands[0] == "llama-server"
+    assert sum(1 for c in cands if c.endswith("llama-server.exe")) >= 3

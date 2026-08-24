@@ -339,3 +339,12 @@ empty/neutral result instead of raising**:
 | Skill-pack installer | `ValueError` → HTTP 400 | SSRF URL allowlist, `filter="data"` tar extraction, member/byte caps, category sanitize (`pack_installer.py:176-227`). |
 | Call-mode machine | stray/re-entrant event | Empty transcript / synchronous `speakEnd` don't deadlock (`voiceCall.js`). |
 | Import / frontmatter parse | `[]` / best-effort dict | Tolerant JSON + PyYAML→regex frontmatter fallback (`chat_import.py`, `pack_installer.py:35-49`). |
+
+## 2026-07-19 observability refresh
+
+New handled-failure code should call `src.observability.report_exception` with
+`critical`, `degraded`, or `best_effort`. Its context sanitizer rejects keys
+that imply secrets or payload content and the structured return record omits
+exception messages. This is the preferred replacement for broad `except:
+logger.warning(...)` handling when an operation needs a user-visible degraded
+state or a machine-readable health record.

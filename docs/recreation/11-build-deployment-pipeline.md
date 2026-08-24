@@ -382,3 +382,14 @@ are produced locally by `build-macos-app.sh` (launcher) and `build-macos-bundle.
 (self-contained). The one build job that *does* publish an artifact is the
 **manual-only** `build-windows-exe.yml` (§1b), which compiles `Apollo.exe` on
 `windows-latest` on demand.
+
+## 8. 2026-07-19 release-path refresh
+
+The self-contained macOS bundle was verified from a mounted read-only DMG:
+runtime state, search cache, analytics, and logs write below the application
+data root, not the bundle. `build-macos-bundle.sh` remains Apple-Silicon and
+ad-hoc signed for local use; Developer ID signing/notarization is still a
+separate public-distribution gate. Docker default deployments persist data,
+logs, and backups as host bind mounts, use embedded ChromaDB, and were tested
+through seeded login, `/api/ready`, backup verify/restore, and restart
+persistence. See `docs/PRODUCTION_READINESS.md` for checksums and evidence.

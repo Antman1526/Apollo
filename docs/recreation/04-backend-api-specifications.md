@@ -831,3 +831,13 @@ non-admin settings are passed through `scrub_settings` (`auth_routes.py:412`);
 integrations are masked via `mask_integration_secret` (`auth_routes.py:441`); the
 internal-tool token and session cookie are never persisted or returned in responses
 (`core/middleware.py:16`, `auth_routes.py:138`).
+
+## 16. 2026-07-19 API-contract refresh
+
+Owner-sensitive handlers now resolve the principal through
+`src.auth_helpers.resolve_identity` / `effective_user` and should use
+`owner_filter` for query scoping. A route must honor `AUTH_ENABLED=false` as a
+local single-user deployment mode without accidentally making an authenticated
+deployment anonymous. `/api/health` is a liveness probe, `/api/ready` verifies
+critical local storage, and `/api/system/status` is the operator-facing
+diagnostic surface.

@@ -67,6 +67,278 @@ async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def action_auto_distill_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Distill recent chat sessions into durable memories automatically.
+
+    Finds sessions whose last message landed after the previous run's
+    watermark and runs the same distiller the manual "distill session"
+    button uses. Dedup inside `distill_and_store` makes re-distilling an
+    unchanged session a no-op for storage (it still costs an LLM call,
+    hence the watermark). Ships paused — enabling it is an explicit opt-in
+    because every run spends utility-model tokens.
+    """
+    try:
+        import asyncio
+        from datetime import timedelta
+
+        from core.database import SessionLocal, Session as DbSession
+        from src.constants import DATA_DIR
+        from src.memory import MemoryManager
+        from src.settings import load_settings, save_settings
+        from services.memory.brain import distill_session
+
+        # Per-owner watermarks: the scheduler seeds one of these tasks per
+        # owner, so a single global watermark would let owner A's run hide
+        # owner B's sessions. Keyed dict, "" key for the ownerless run.
+        _wm_key = (owner or "").strip() or "__all__"
+        settings = load_settings()
+        marks = settings.get("auto_distill_watermarks") or {}
+        raw = marks.get(_wm_key) or ""
+        try:
+            watermark = datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            watermark = datetime.utcnow() - timedelta(days=1)
+        now = datetime.utcnow()
+
+        db = SessionLocal()
+        try:
+            q = db.query(DbSession).filter(
+                DbSession.last_message_at.isnot(None),
+                DbSession.last_message_at > watermark,
+            )
+            if (owner or "").strip():
+                q = q.filter(DbSession.owner == owner)
+            rows = [
+                (s.id, s.owner)
+                for s in q.order_by(DbSession.last_message_at.desc()).limit(10).all()
+            ]
+        finally:
+            db.close()
+
+        if not rows:
+            raise TaskNoop("no sessions with new messages to distill")
+
+        manager = MemoryManager(DATA_DIR)
+        try:
+            from services.memory.memory_vector import MemoryVectorStore
+            memory_vector = MemoryVectorStore(DATA_DIR)
+        except Exception:
+            memory_vector = None  # distill_and_store degrades gracefully
+
+        distilled = 0
+        added = 0
+        for sid, sowner in rows:
+            try:
+                res = await asyncio.to_thread(
+                    distill_session, sid, sowner, manager, memory_vector
+                )
+                added += int(res.get("added", 0))
+                distilled += 1
+            except Exception as e:
+                logger.warning("auto-distill failed for session %s: %s", sid, e)
+
+        settings = load_settings()
+        marks = dict(settings.get("auto_distill_watermarks") or {})
+        marks[_wm_key] = now.isoformat()
+        settings["auto_distill_watermarks"] = marks
+        save_settings(settings)
+        return f"Distilled {distilled} session(s); {added} new memories", True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"auto_distill_sessions action failed: {e}")
+        return str(e), False
+
+
+def _normalize_command(cmd: str) -> str:
+    """First two meaningful tokens of a shell command — its "shape"."""
+    tokens = [t for t in (cmd or "").strip().split() if t]
+    if not tokens:
+        return ""
+    # Skip leading env assignments (FOO=bar cmd ...)
+    while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+        tokens = tokens[1:]
+    return " ".join(tokens[:2]).lower()
+
+
+async def action_suggest_skills_from_history(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Self-writing skills: mine the activity ledger for repeated commands.
+
+    A command shape (first two tokens) the agent has run successfully in 3+
+    distinct sessions this week is a workflow worth remembering. Each new
+    pattern becomes a DRAFT skill (never auto-published) built from real
+    examples — the user reviews it in the Skills UI. Deterministic: no LLM
+    call, so it's free to run daily.
+    """
+    try:
+        from src.constants import DATA_DIR
+        from services.activity_ledger import recent_tool_events
+        from services.memory.skills import SkillsManager
+
+        events = recent_tool_events(days=7, tools=("bash",))
+        if not events:
+            raise TaskNoop("no recent successful commands to mine")
+
+        # pattern -> {sessions: set, examples: [full commands]}
+        patterns: dict = {}
+        for ev in events:
+            first_line = (ev["input"] or "").splitlines()[0] if ev["input"] else ""
+            shape = _normalize_command(first_line)
+            if not shape or ev["session_id"] is None:
+                continue
+            p = patterns.setdefault(shape, {"sessions": set(), "examples": []})
+            p["sessions"].add(ev["session_id"])
+            if first_line not in p["examples"]:
+                p["examples"].append(first_line)
+
+        candidates = sorted(
+            (
+                (shape, data)
+                for shape, data in patterns.items()
+                if len(data["sessions"]) >= 3
+            ),
+            key=lambda kv: len(kv[1]["sessions"]),
+            reverse=True,
+        )
+        if not candidates:
+            raise TaskNoop("no command pattern repeated across 3+ sessions")
+
+        manager = SkillsManager(DATA_DIR)
+        existing_names = {s.get("name") for s in manager.load_all()}
+        created = []
+        for shape, data in candidates[:3]:
+            from services.memory.skills import slugify
+            name = slugify(f"recurring {shape}")
+            if name in existing_names:
+                continue
+            examples = data["examples"][:5]
+            manager.add_skill(
+                name=name,
+                description=f"Recurring workflow: `{shape}` commands the agent has run in {len(data['sessions'])} recent sessions.",
+                category="learned",
+                when_to_use=f"When the user asks for something previously handled with `{shape}`.",
+                procedure=[f"Run: {ex}" for ex in examples],
+                pitfalls=["Auto-drafted from the activity ledger — review and edit before approving."],
+                source="learned",
+                status="draft",
+                owner=(owner or None),
+                session_id=None,
+                confidence=0.5,
+            )
+            created.append(name)
+        if not created:
+            raise TaskNoop("all repeated patterns already have skills")
+        return f"Drafted {len(created)} skill(s) from repeated workflows: {', '.join(created)}", True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"suggest_skills_from_history action failed: {e}")
+        return str(e), False
+
+
+async def action_sync_memory_packs(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Two-way memory sync through a shared folder (iCloud/OneDrive/Syncthing).
+
+    When `memory_pack_sync_dir` is set, each run (1) exports this machine's
+    memories to `memory-pack-<hostname>.json` in that folder and (2) imports
+    every other machine's pack found there, deduping by exact text — so two
+    Apollo installs pointed at the same synced folder converge on one brain.
+    No-ops (TaskNoop) until the setting names a directory.
+    """
+    try:
+        import json
+        import platform
+
+        from src.constants import DATA_DIR
+        from src.memory import MemoryManager
+        from src.settings import load_settings
+
+        sync_dir = (load_settings().get("memory_pack_sync_dir") or "").strip()
+        if not sync_dir:
+            raise TaskNoop("memory_pack_sync_dir not configured")
+        sync_dir = os.path.expanduser(sync_dir)
+        if not os.path.isdir(sync_dir):
+            return f"sync dir does not exist: {sync_dir}", False
+
+        manager = MemoryManager(DATA_DIR)
+        entries = manager.load_all()
+        host = (platform.node() or "apollo").split(".")[0]
+
+        # 1) Export this machine's pack (atomic: temp file + rename).
+        pack = {
+            "apollo_memory_pack": 1,
+            "host": host,
+            "count": len(entries),
+            "memories": [
+                {
+                    "text": m.get("text", ""),
+                    "category": m.get("category", "fact"),
+                    "pinned": bool(m.get("pinned")),
+                    "timestamp": m.get("timestamp"),
+                    "source": m.get("source", "unknown"),
+                    "owner": m.get("owner"),
+                }
+                for m in entries
+            ],
+        }
+        out_path = os.path.join(sync_dir, f"memory-pack-{host}.json")
+        tmp_path = out_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(pack, f, ensure_ascii=False)
+        os.replace(tmp_path, out_path)
+
+        # 2) Import every other machine's pack.
+        added = 0
+        skipped = 0
+        imported_from = []
+        dirty = False
+        for fn in sorted(os.listdir(sync_dir)):
+            if not (fn.startswith("memory-pack-") and fn.endswith(".json")):
+                continue
+            if fn == os.path.basename(out_path):
+                continue
+            try:
+                with open(os.path.join(sync_dir, fn), "r", encoding="utf-8") as f:
+                    other = json.load(f)
+            except (OSError, ValueError):
+                logger.warning("sync_memory_packs: unreadable pack %s", fn)
+                continue
+            memories = other.get("memories")
+            if not isinstance(memories, list):
+                continue
+            imported_from.append(fn)
+            for item in memories:
+                text = (item.get("text") or "").strip() if isinstance(item, dict) else ""
+                if not text or manager.find_duplicates(text, entries):
+                    skipped += 1
+                    continue
+                entry = manager.add_entry(
+                    text=text,
+                    source="import",
+                    category=(item.get("category") or "fact"),
+                    owner=item.get("owner") or None,
+                )
+                if item.get("pinned"):
+                    entry["pinned"] = True
+                entry["provenance"] = {"kind": "sync", "from": fn}
+                entries.append(entry)
+                added += 1
+                dirty = True
+        if dirty:
+            manager.save(entries)
+        if not imported_from and not added:
+            return f"Exported {len(pack['memories'])} memories to {out_path}; no peer packs found", True
+        return (
+            f"Exported {len(pack['memories'])} memories; imported {added} new "
+            f"({skipped} duplicates) from {', '.join(imported_from)}"
+        ), True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"sync_memory_packs action failed: {e}")
+        return str(e), False
+
+
 async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     """Consolidate/deduplicate memories for the owner."""
     try:
@@ -2229,6 +2501,9 @@ BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
     "consolidate_memory": action_consolidate_memory,
+    "auto_distill_sessions": action_auto_distill_sessions,
+    "sync_memory_packs": action_sync_memory_packs,
+    "suggest_skills_from_history": action_suggest_skills_from_history,
     "tidy_research": action_tidy_research,
     "summarize_emails": action_summarize_emails,
     "draft_email_replies": action_draft_email_replies,
@@ -2253,6 +2528,9 @@ BUILTIN_ACTION_INFO = {
     "tidy_sessions": "Clean up empty chat sessions and auto-sort into folders",
     "tidy_documents": "Remove junk/empty documents",
     "consolidate_memory": "Remove duplicate memories",
+    "auto_distill_sessions": "Auto-distill recent chats into durable memories (runs the second-brain distiller on sessions with new messages)",
+    "sync_memory_packs": "Sync memories with other Apollo installs through a shared folder (set memory_pack_sync_dir to an iCloud/OneDrive/Syncthing path)",
+    "suggest_skills_from_history": "Draft skills from workflows the agent repeats (mines the activity ledger for commands used across 3+ sessions; drafts only, you approve)",
     "tidy_research": "Remove orphaned research files (sessions that were deleted)",
     "summarize_emails": "Pre-generate AI summaries for new inbox emails",
     "draft_email_replies": "Pre-draft AI reply suggestions for new inbox emails",

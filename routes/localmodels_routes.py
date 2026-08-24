@@ -16,7 +16,12 @@ from pydantic import BaseModel
 from core.middleware import require_admin
 from services.localmodels import lifecycle
 from services.localmodels.scanner import scan_dirs, discover_piper_voices
-from services.localmodels.config import get_local_model_dirs, set_local_model_dirs
+from services.localmodels.config import (
+    get_llama_server_path,
+    get_local_model_dirs,
+    set_llama_server_path,
+    set_local_model_dirs,
+)
 from services.localmodels.server_manager import get_server
 from src.observability import report_exception
 
@@ -25,6 +30,10 @@ logger = logging.getLogger(__name__)
 
 class DirsBody(BaseModel):
     dirs: list[str]
+
+
+class BinaryBody(BaseModel):
+    path: str
 
 
 def setup_localmodels_routes() -> APIRouter:
@@ -68,6 +77,24 @@ def setup_localmodels_routes() -> APIRouter:
         dirs = set_local_model_dirs(body.dirs)
         lifecycle.rescan()
         return {"dirs": dirs}
+
+    @router.get("/binary")
+    def get_binary(request: Request):
+        """Configured llama-server path plus what actually resolves right now."""
+        require_admin(request)
+        return {
+            "path": get_llama_server_path(),
+            "resolved": get_server().find_binary() or "",
+        }
+
+    @router.put("/binary")
+    def put_binary(request: Request, body: BinaryBody):
+        require_admin(request)
+        path = set_llama_server_path(body.path)
+        return {
+            "path": path,
+            "resolved": get_server().find_binary() or "",
+        }
 
     @router.post("/{model_id}/start")
     def start(request: Request, model_id: str):

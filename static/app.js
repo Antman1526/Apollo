@@ -21,6 +21,7 @@ import voiceRecorderModule from './js/voiceRecorder.js';
 import censorModule from './js/censor.js';
 import galleryModule from './js/gallery.js';
 import tasksModule from './js/tasks.js';
+import activityModule from './js/activity.js';
 import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
@@ -898,6 +899,13 @@ function initializeEventListeners() {
     });
   }
 
+  const toolActivityBtn = el('tool-activity-btn');
+  if (toolActivityBtn) {
+    toolActivityBtn.addEventListener('click', () => {
+      if (activityModule) activityModule.openActivity();
+    });
+  }
+
   // Calendar tool button
   const toolCalendarBtn = el('tool-calendar-btn');
   if (toolCalendarBtn) {
@@ -1141,6 +1149,8 @@ function initializeEventListeners() {
     .then(d => {
       window._isAdmin = !!d.is_admin;
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
+      const toolActivity = el('tool-activity-btn');
+      if (d.is_admin && toolActivity) toolActivity.style.display = '';
       const userBarName = el('user-bar-name');
       const userBarAvatar = el('user-bar-avatar');
       if (userBarName && d.username) {

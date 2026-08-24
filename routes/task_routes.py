@@ -40,6 +40,13 @@ class TaskCreate(BaseModel):
     notifications_enabled: Optional[bool] = None  # None lets action-specific defaults apply
 
 
+class AssignBody(BaseModel):
+    prompt: str
+    name: Optional[str] = None
+    model: Optional[str] = None
+    endpoint_url: Optional[str] = None
+
+
 class TaskUpdate(BaseModel):
     name: Optional[str] = None
     prompt: Optional[str] = None
@@ -420,6 +427,48 @@ def setup_task_routes(task_scheduler) -> APIRouter:
             return _task_to_dict(task)
         finally:
             db.close()
+
+    @router.post("/assign")
+    async def assign_to_agent(request: Request, req: AssignBody):
+        """One-click cowork: create an agent task from a prompt and run it now.
+
+        Wraps create + run-now into a single call so the UI can offer
+        "assign this to the agent" without a scheduling dialog. The task is
+        webhook-triggered (i.e. manual-only — it never auto-reschedules) and
+        runs in the scheduler's background loop; progress and results land in
+        the normal task-run history and notifications.
+        """
+        user = _owner(request)
+        prompt = (req.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(400, "Prompt is required")
+        name = req.name or await _generate_task_name(prompt)
+        task_id = str(uuid.uuid4())
+        db = SessionLocal()
+        try:
+            task = ScheduledTask(
+                id=task_id,
+                owner=user,
+                name=name,
+                prompt=prompt,
+                task_type="llm",
+                trigger_type="webhook",
+                trigger_counter=0,
+                status="active",
+                output_target="session",
+                model=req.model or None,
+                endpoint_url=req.endpoint_url or None,
+                webhook_token=secrets.token_urlsafe(32),
+                notifications_enabled=True,
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            result = _task_to_dict(task)
+        finally:
+            db.close()
+        started = await task_scheduler.run_task_now(task_id)
+        return {"ok": True, "task": result, "started": bool(started)}
 
     @router.get("/notifications")
     async def get_notifications(request: Request):

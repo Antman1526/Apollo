@@ -152,3 +152,22 @@ test('synchronous speakEnd from speak() does not deadlock (TTS-unavailable path)
   m.dispatch('assistantComplete', { text: 'reply' });
   assert.equal(m.state, 'listening', 'must not be stuck in speaking after a synchronous speakEnd');
 });
+
+// ── Voice-assign phrase parsing ──
+import { parseVoiceAssign } from '../static/js/voiceCall.js';
+
+test('parseVoiceAssign extracts the task from trigger phrases', () => {
+  assert.equal(parseVoiceAssign('assign a task summarize my notes'), 'summarize my notes');
+  assert.equal(parseVoiceAssign('Assign task: clean up my downloads folder'), 'clean up my downloads folder');
+  assert.equal(parseVoiceAssign('hey apollo, have the agent research flights to Tokyo'), 'research flights to Tokyo');
+  assert.equal(parseVoiceAssign('background task check my calendar for conflicts'), 'check my calendar for conflicts');
+  assert.equal(parseVoiceAssign('assign to the agent draft a reply to Sam'), 'draft a reply to Sam');
+});
+
+test('parseVoiceAssign returns null for normal speech', () => {
+  assert.equal(parseVoiceAssign('what is the weather today'), null);
+  assert.equal(parseVoiceAssign('tell me about task scheduling'), null);
+  assert.equal(parseVoiceAssign('assign'), null);          // no task body
+  assert.equal(parseVoiceAssign(''), null);
+  assert.equal(parseVoiceAssign(null), null);
+});

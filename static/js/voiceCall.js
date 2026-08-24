@@ -6,6 +6,16 @@
 // Only the wiring touches the DOM/mic, and only when called, so this module
 // imports cleanly in Node for testing the machine.
 
+// Voice-assign: a spoken "assign a task …" / "have the agent …" hands the
+// rest of the utterance to a background agent task (POST /api/tasks/assign)
+// instead of the chat, so you can delegate work mid-call and keep talking.
+const _ASSIGN_RE = /^(?:hey[,\s]+)?(?:apollo[,!\s]+)?(?:assign\s+(?:a\s+)?task(?:\s+to)?(?:\s+the\s+agent)?|assign\s+to\s+(?:the\s+)?agent|background\s+task|have\s+the\s+agent)[:,]?\s+(.+)$/i;
+
+export function parseVoiceAssign(text) {
+  const m = _ASSIGN_RE.exec((text || '').trim());
+  return m ? m[1].trim() : null;
+}
+
 export function createCallMachine(effects = {}) {
   const eff = {
     startCapture() {},
@@ -224,7 +234,25 @@ export async function startCall() {
       const rec = _active && _active.recorder;
       if (rec && rec.state === 'recording') rec.stop();
     },
-    submitMessage(text) { window.apolloSendMessage?.(text); },
+    submitMessage(text) {
+      const task = parseVoiceAssign(text);
+      if (task) {
+        // Delegate to a background agent task; the confirmation rides the
+        // normal thinking → speaking path via assistantComplete.
+        fetch('/api/tasks/assign', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: task })
+        }).then((r) => { if (!r.ok) throw new Error('assign failed'); return r.json(); })
+          .then((d) => {
+            const name = (d.task && d.task.name) || 'Your task';
+            machine.dispatch('assistantComplete', { text: `${name} is running in the background. Check the Tasks panel for results.` });
+          })
+          .catch(() => machine.dispatch('assistantComplete', { text: 'Sorry, I could not assign that task.' }));
+        return;
+      }
+      window.apolloSendMessage?.(text);
+    },
     speak(text) {
       const mgr = window.aiTTSManager;
       if (!mgr || !mgr.available || mgr._provider === 'disabled') { machine.dispatch('speakEnd'); return; }

@@ -36,11 +36,15 @@ def client(monkeypatch):
         LocalModel("lm_a", "ModelA-Q4_K_M", "/m/a.gguf", "Q4_K_M", "chat", 4 * 1024**3, "/m"),
         LocalModel("lm_e", "nomic-embed", "/m/e.gguf", "F16", "embedding", 200 * 1024**2, "/m"),
     ]
-    state = {"dirs": ["/m"], "running": set(), "started": [], "stopped": []}
+    state = {"dirs": ["/m"], "running": set(), "started": [], "stopped": [],
+             "binary": ""}
 
     class _FakeServer:
         def status(self):
             return {mid: {"running": True} for mid in state["running"]}
+
+        def find_binary(self):
+            return state["binary"] or "/detected/llama-server"
 
         def ensure_running(self, ref):
             state["started"].append(ref)
@@ -59,6 +63,9 @@ def client(monkeypatch):
     monkeypatch.setattr(routes_mod, "get_local_model_dirs", lambda: state["dirs"])
     monkeypatch.setattr(routes_mod, "set_local_model_dirs",
                         lambda dirs: state.__setitem__("dirs", dirs) or dirs)
+    monkeypatch.setattr(routes_mod, "get_llama_server_path", lambda: state["binary"])
+    monkeypatch.setattr(routes_mod, "set_llama_server_path",
+                        lambda p: state.__setitem__("binary", p) or state["binary"])
     monkeypatch.setattr(routes_mod, "get_server", lambda: _FakeServer())
     monkeypatch.setattr(routes_mod.lifecycle, "rescan", lambda: catalog)
 
@@ -104,3 +111,14 @@ def test_start_and_stop(client):
     assert r2.status_code == 200
     assert r2.json()["ok"] is True
     assert "lm_a" in state["stopped"]
+
+
+def test_get_and_put_binary(client):
+    c, state = client
+    r = c.get("/api/local-models/binary")
+    assert r.status_code == 200
+    assert r.json() == {"path": "", "resolved": "/detected/llama-server"}
+    r2 = c.put("/api/local-models/binary", json={"path": "/opt/llama-server"})
+    assert r2.status_code == 200
+    assert r2.json() == {"path": "/opt/llama-server", "resolved": "/opt/llama-server"}
+    assert state["binary"] == "/opt/llama-server"

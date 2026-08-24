@@ -301,3 +301,12 @@ stray value inherited from the GUI/login environment would otherwise break start
 precache list or SW logic changes** — including when call-mode assets (`voiceCall.js`,
 `vad.js`) or other precached modules change — so clients pick up new code instead of serving a
 stale cached bundle. Old caches are deleted on `activate` (`sw.js:88`).
+
+## 7. 2026-07-19 storage and Docker refresh
+
+`APOLLO_DATA_DIR` is now the canonical runtime-state override, with `DATA_DIR`
+retained for compatibility. `CHROMA_PERSIST_DIR` selects an embedded Chroma
+directory; leave `CHROMADB_HOST` unset for the native and default Docker paths.
+Docker defaults it to `/app/data/chroma`, persists `/app/backups` to
+`./backups`, and accepts `APOLLO_ADMIN_USER` plus an optional minimum-eight-
+character `APOLLO_ADMIN_PASSWORD` for noninteractive first-run setup.

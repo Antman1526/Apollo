@@ -30,6 +30,28 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
+    # Activity ledger: append-only record of agent tool executions with
+    # per-write undo (Settings → surfaced via /api/activity).
+    "activity_ledger_enabled": True,
+    "activity_ledger_max_events": 10000,
+    # Autonomy dial: "auto" = agent acts freely (current behavior);
+    # "observe" = mutating tools (bash/python/write/browser/email/image)
+    # are blocked so the agent can only read, search, and propose.
+    "agent_autonomy": "auto",
+    # Folder shared between machines (iCloud/OneDrive/Syncthing) for the
+    # Memory Sync housekeeping task; empty = sync disabled.
+    "memory_pack_sync_dir": "",
+    # Mixture routing: answer short conversational chat messages with the
+    # small "light" model below instead of the session's model (chat mode
+    # only; the session model is the automatic fallback). Opt-in.
+    "mixture_routing_enabled": False,
+    "light_endpoint_id": "",
+    "light_model": "",
+    # Context budget: caps on memory injection into the prompt preface.
+    # Pinned memories were previously unbounded — a large pinned set could
+    # eat a small local model's context before the request started.
+    "memory_recall_max": 3,
+    "memory_pinned_max": 15,
     "image_gen_enabled": True,
     "image_model": "",
     "image_quality": "medium",

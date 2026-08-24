@@ -361,3 +361,15 @@ class TestRejectCrossSite:
 
     def test_missing_header_allowed(self):
         assert _reject_cross_site(self._req({})) is None
+
+
+def test_env_timeout_override(monkeypatch):
+    from src.tool_execution import _env_timeout
+    monkeypatch.setenv("APOLLO_SHELL_EXEC_TIMEOUT", "45")
+    assert _env_timeout("APOLLO_SHELL_EXEC_TIMEOUT", 30) == 45
+    monkeypatch.setenv("APOLLO_SHELL_EXEC_TIMEOUT", "not-a-number")
+    assert _env_timeout("APOLLO_SHELL_EXEC_TIMEOUT", 30) == 30
+    monkeypatch.setenv("APOLLO_SHELL_EXEC_TIMEOUT", "-5")
+    assert _env_timeout("APOLLO_SHELL_EXEC_TIMEOUT", 30) == 30
+    monkeypatch.delenv("APOLLO_SHELL_EXEC_TIMEOUT")
+    assert _env_timeout("APOLLO_SHELL_EXEC_TIMEOUT", 30) == 30

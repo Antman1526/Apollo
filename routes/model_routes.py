@@ -41,6 +41,7 @@ _ENDPOINT_SETTING_FIELDS = {
     "research_endpoint_id": ("research_model",  "Deep Research"),
     "task_endpoint_id":     ("task_model",       "Background Tasks"),
     "reviewer_endpoint_id": ("reviewer_model",  "Adversarial Reviewer"),
+    "light_endpoint_id":    ("light_model",     "Fast Lane"),
 }
 
 _ENDPOINT_FALLBACK_FIELDS = {

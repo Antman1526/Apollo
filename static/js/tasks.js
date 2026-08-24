@@ -2430,6 +2430,11 @@ function _renderMainView() {
         <button class="memory-toolbar-btn" id="tasks-pause-all-btn" title="Pause all active tasks" style="margin-left:auto;">Pause all</button>
       </div>
       <p class="memory-desc" style="position:relative;top:-4px;">Scheduled prompts and actions that run automatically. Results appear in a dedicated session.</p>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;position:relative;top:-4px;">
+        <input type="text" id="tasks-assign-input" placeholder="Assign a task to the agent — it runs in the background…" class="memory-search-input" style="flex:1;" />
+        <button class="memory-toolbar-btn" id="tasks-assign-btn" title="Create an agent task from this prompt and run it now">Assign to agent</button>
+      </div>
+      <div id="tasks-assign-msg" style="font-size:11px;margin-bottom:4px;position:relative;top:-4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
       <div class="memory-toolbar">
         <div class="memory-category-filters" style="display:flex;align-items:center;gap:6px;">
           <select class="memory-sort-select" id="tasks-sort" aria-label="Sort tasks" title="Sort tasks" style="position:relative;top:-4px;width:86px;font-size:11px;height:24px;">
@@ -2451,6 +2456,40 @@ function _renderMainView() {
       <div id="tasks-list" class="memory-list" style="flex:1;gap:4px;position:relative;top:-4px;"></div>
     </div>
   `;
+
+  const assignInput = document.getElementById('tasks-assign-input');
+  const assignBtn = document.getElementById('tasks-assign-btn');
+  const assignMsg = document.getElementById('tasks-assign-msg');
+  if (assignBtn && assignInput) {
+    const doAssign = () => {
+      const prompt = assignInput.value.trim();
+      if (!prompt) return;
+      assignBtn.disabled = true;
+      if (assignMsg) assignMsg.textContent = 'Assigning…';
+      fetch('/api/tasks/assign', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt })
+      }).then(r => {
+        if (!r.ok) return r.json().then(d => { throw new Error(d.detail || ('HTTP ' + r.status)); });
+        return r.json();
+      }).then(data => {
+        assignInput.value = '';
+        if (assignMsg) assignMsg.textContent = data.started
+          ? `"${(data.task && data.task.name) || 'Task'}" is running in the background — watch the Activity tab.`
+          : 'Task created (already running — see Activity).';
+        _fetchTasks().then(() => _renderList());
+        setTimeout(() => { if (assignMsg) assignMsg.textContent = ''; }, 6000);
+      }).catch(e => {
+        if (assignMsg) assignMsg.textContent = 'Assign failed: ' + e.message;
+      }).finally(() => { assignBtn.disabled = false; });
+    };
+    assignBtn.addEventListener('click', doAssign);
+    assignInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); doAssign(); }
+    });
+  }
 
   const searchEl = document.getElementById('tasks-search');
   if (searchEl) searchEl.addEventListener('input', () => { _taskSearch = searchEl.value; _renderList(); });

@@ -509,3 +509,11 @@ the cookie must validate and (for the browser) the privilege must hold.
   `THREAT_MODEL.md` "Known Gaps" #4).
 - `require_privilege` fails open on unknown keys; new privileges must be added
   to `DEFAULT_PRIVILEGES` to be enforced server-side rather than only in the UI.
+
+## 11. 2026-07-19 identity refresh
+
+The canonical request-identity contract now lives in `src/auth_helpers.py`.
+Use `effective_user(request)` for ownership, `require_user(request)` for a
+route dependency, and `owner_filter(...)` for ORM query scoping. This avoids
+the older pattern of reading middleware-specific request fields directly and
+keeps explicit single-user desktop mode consistent across routes.

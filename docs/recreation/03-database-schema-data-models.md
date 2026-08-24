@@ -503,3 +503,13 @@ data backfills/encryption passes run on every startup.
 - **ChromaDB embedded** is an on-disk HNSW index in-process — no network, but
   also no horizontal scaling; it shares the process's memory and the `data/`
   disk.
+
+## 7. 2026-07-19 data-root and vector-store refresh
+
+`data/` now means the root resolved by `src.runtime_paths.data_root`, not
+necessarily a directory beside the checkout. New packaged installs use the
+platform application-data location; existing checkouts remain on their legacy
+directory until a verified migration activates the new target. Docker uses
+embedded ChromaDB at `/app/data/chroma` and does not publish an HTTP Chroma
+service by default. Treat SQLite rows as primary records and Chroma collections
+as derived indexes; back up both through `scripts/apollo-backup`.

@@ -1,5 +1,9 @@
 # Apollo
 
+<p align="center">
+  <img src="static/icon-512.png" alt="Apollo desktop application icon" width="128">
+</p>
+
 ```
 ───────────────────────────────────────────────
  ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Apollo vers. 1.0
@@ -8,9 +12,11 @@
 
 ![Apollo](docs/apollo.jpg)
 
-**Apollo is a self-hosted, local-first AI workspace** — the ChatGPT/Claude UI experience
-running entirely on your own hardware, with your own data and your own models. But with
-more jank and fun. Privacy-first, no telemetry, no trojan.
+**Apollo is a self-hosted, local-first AI workspace** for chatting with local or
+remote language models while keeping the workspace, model configuration, and
+application data under operator control. It combines a full chat surface with
+agent tools, memory, web research, documents, browser automation, local-model
+serving, and optional personal integrations in one desktop-friendly system.
 
 Concretely, Apollo is one app that lets you **chat with language models** — local GGUF
 files served on demand through `llama.cpp` (one warm model at a time, swapped automatically),
@@ -36,6 +42,28 @@ Everything runs as that one process plus on-demand `llama-server` subprocesses, 
 SearXNG sidecar, and the optional Paperclip Node sidecar. See [Architecture](#architecture)
 for enough detail to rebuild it, and [docs/recreation/](#recreation--full-technical-docs)
 for the complete reconstruction spec.
+
+## Current Operational Contract
+
+Apollo resolves runtime state through `APOLLO_DATA_DIR`, then `DATA_DIR`, then a
+verified platform-data migration or the existing checkout-local `data/`
+directory. This keeps installed macOS bundles writable even when launched from
+a read-only DMG and gives tests a safe isolated-data switch. Native and default
+Docker deployments use embedded ChromaDB under that data root; a Chroma HTTP
+server is not part of the default topology.
+
+The local quality gate is:
+
+```bash
+APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh
+bash scripts/run-e2e.sh
+```
+
+As of 2026-07-19, the first command completed 1,934 Python tests (3 skipped),
+134 JavaScript tests, and an isolated startup smoke. The self-contained macOS
+bundle also passed a read-only mounted-DMG startup test. See
+[Production Readiness](docs/PRODUCTION_READINESS.md) for exact artifact,
+dependency-audit, Docker-recovery, and remaining-platform evidence.
 
 > Apollo is a renamed distribution of **[Odysseus](https://github.com/pewdiepie-archdaemon/odysseus)** by **pewdiepie-archdaemon**. All the original work is theirs — Apollo only changes the name. See [ACKNOWLEDGMENTS.md](ACKNOWLEDGMENTS.md) for full credits.
 
@@ -63,6 +91,34 @@ for the complete reconstruction spec.
   - **Calendar** -- Local-first calendar with CalDAV sync to Radicale / Nextcloud / Apple / Fastmail.<br>　<sub>CalDAV pull · .ics import/export · per-calendar colors · agent-aware</sub>
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor (24 themes, dark + light) · file uploads (vision + PDF) · presets · sessions · 2FA</sub>
+
+## Why local: privacy as capability
+
+Privacy in Apollo is not a compliance checkbox — it is what unlocks the
+product. Because models, memory, search, and files all run on the operator's
+own machine, Apollo can be trusted with the material cloud AI tools
+structurally cannot touch: the full email archive, health and finance
+documents, contracts, private notes. **The AI that can read everything,
+because nothing leaves.**
+
+What backs that claim, concretely:
+
+- **Local models** — GGUF files served by `llama.cpp` on demand; nothing is
+  sent to a vendor unless you explicitly add a remote endpoint.
+- **A user-owned brain** — memories are distilled, stored, and vector-indexed
+  locally, exportable as portable packs (`/api/memory/export-pack`) and
+  syncable between your own machines through a folder you control
+  (`memory_pack_sync_dir`) with no server in between. Each memory can be
+  traced to the conversation that produced it (`/api/memory/{id}/provenance`).
+- **Local search** — the managed SearXNG sidecar metasearches from your
+  machine; queries aren't attached to an account.
+- **A flight recorder for the agent** — the activity ledger records every
+  tool execution (Agent History in the sidebar), file writes are undoable
+  individually or as whole-session rollbacks, and an **autonomy dial** can
+  hold the agent to observe-only. Trust here is verified, not promised.
+- **Model-neutral routing** — the optional Fast Lane routes messages between
+  your own models purely on task fit; there is no vendor margin steering the
+  choice.
 
 ## New this session
 
@@ -170,8 +226,10 @@ docker compose up -d --build
 Open `http://localhost:7000` when the containers are healthy. Docker Compose
 binds the web UI to `127.0.0.1` by default. If the port is taken, set
 `APP_PORT=7001` in `.env` and recreate the container. Set `APP_BIND=0.0.0.0`
-only when you intentionally want LAN/reverse-proxy access. Compose also starts
-the bundled `chromadb`, `searxng`, and `ntfy` services (all `127.0.0.1`-bound).
+only when you intentionally want LAN/reverse-proxy access. Compose starts the
+bundled `searxng` and `ntfy` services; vector memory is persisted in
+`./data/chroma` inside Apollo rather than exposed through a separate ChromaDB
+HTTP service.
 
 ### Native Linux / macOS
 ```bash
@@ -594,8 +652,8 @@ Key settings:
 | `LOCALHOST_BYPASS` | `false` | Development-only auth bypass for loopback requests. Keep false for shared/network deployments. |
 | `SECURE_COOKIES` | `false` | Set true when serving Apollo through HTTPS at a trusted proxy or private access gateway. |
 | `DATABASE_URL` | `sqlite:///./data/app.db` | Database connection string |
-| `CHROMADB_HOST` | `localhost` | ChromaDB host for vector memory. Docker overrides this to `chromadb`. |
-| `CHROMADB_PORT` | `8100` | ChromaDB port for manual host runs. Docker overrides this to `8000`. |
+| `CHROMADB_HOST` | -- | Optional trusted external ChromaDB host. Docker uses the embedded persisted store by default. |
+| `CHROMADB_PORT` | -- | Port for an explicitly configured external ChromaDB host. |
 | `FASTEMBED_MODEL` | `sentence-transformers/all-MiniLM-L6-v2` | Local ONNX embedding model. |
 | `EMBEDDING_URL` | -- | Optional OpenAI-compatible embeddings endpoint |
 | `PAPERCLIP_ENABLED` | `false` | Enable the Paperclip agent-management sidecar. |
@@ -636,7 +694,7 @@ Apollo/
 ├── app.py                 # Slim FastAPI orchestrator: middleware, manager init, ~40 routers
 ├── setup.py               # First-run: data dirs, DB, admin account + temp password
 ├── requirements*.txt      # Core / optional / browser-use dependency sets
-├── docker-compose.yml     # apollo + chromadb + searxng + ntfy + paperclip(+db) profile
+├── docker-compose.yml     # apollo + embedded vector store + searxng + ntfy + paperclip(+db) profile
 ├── start-macos.sh         # Native macOS quick-start (venv + brew + uvicorn)
 ├── launch-windows.ps1     # Native Windows launcher
 ├── build-macos-app.sh     # Launcher build: dist/Apollo.app + Apollo.dmg (drives repo venv)
@@ -676,6 +734,10 @@ The [`docs/recreation/`](docs/recreation/) directory contains **15 deep technica
 documents plus a technology audit** intended to let a skilled engineer reconstruct
 Apollo from scratch — each grounded in real file paths and line references:
 
+Start with the [2026-07-19 current-state refresh](docs/recreation/00-2026-07-19-current-state-refresh.md)
+when reading the numbered reconstruction documents; it records the current
+storage, Docker, package, security, CI, and frontend-modularity deltas.
+
 | # | Document |
 |---|---|
 | 01 | [Project Overview & Architecture](docs/recreation/01-project-overview-architecture.md) |
@@ -691,7 +753,7 @@ Apollo from scratch — each grounded in real file paths and line references:
 | 11 | [Build & Deployment Pipeline](docs/recreation/11-build-deployment-pipeline.md) |
 | 12 | [Error Handling & Logging](docs/recreation/12-error-handling-logging.md) |
 | 13 | [Performance Optimization & Caching](docs/recreation/13-performance-optimization-caching.md) |
-| 14 | Security Implementation *(kept local-only — enumerates specific residual weaknesses; not published to this public repo)* |
+| 14 | Security Implementation *(kept local-only because it enumerates residual weaknesses)* |
 | 15 | [File Structure & Code Organization](docs/recreation/15-file-structure-code-organization.md) |
 | — | [Technology Audit](docs/recreation/TECHNOLOGY-AUDIT.md) |
 
@@ -767,7 +829,6 @@ Common internal-only ports from the default setup:
 | `8080` | SearXNG (Docker-bundled instance) |
 | `8091` | ntfy |
 | `8893` | SearXNG managed sidecar (native installs; `searxng_port` setting) |
-| `8100` | ChromaDB host port for manual/compose access |
 | `11434` | Ollama |
 | `17493` | Voicebox (opt-in TTS/STT engine; `voicebox_url`) |
 | `8000-8020` | Common local model/provider APIs |

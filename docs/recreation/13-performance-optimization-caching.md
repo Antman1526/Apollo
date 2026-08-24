@@ -456,3 +456,12 @@ Net: the architecture is tuned for a responsive **single-user desktop**
 experience — cache the hot reads, probe sparingly, overlap I/O, keep exactly
 one model resident — and explicitly trades multi-tenant/concurrent throughput
 away to do it.
+
+## 10. 2026-07-19 cache-location refresh
+
+Search cache and analytics now live below the resolved application data root:
+`search_cache/{search,content}` and `search/{search_analytics.json,
+search_engine_error.log}`. This fixes packaged read-only mounts and keeps cache
+eviction behavior unchanged. The cache remains file-backed with in-memory LRU
+metadata, so it is process-local and intentionally optimized for the desktop
+single-user profile rather than distributed coordination.
