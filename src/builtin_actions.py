@@ -150,6 +150,92 @@ async def action_auto_distill_sessions(owner: str, **kwargs) -> Tuple[str, bool]
         return str(e), False
 
 
+def _normalize_command(cmd: str) -> str:
+    """First two meaningful tokens of a shell command — its "shape"."""
+    tokens = [t for t in (cmd or "").strip().split() if t]
+    if not tokens:
+        return ""
+    # Skip leading env assignments (FOO=bar cmd ...)
+    while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+        tokens = tokens[1:]
+    return " ".join(tokens[:2]).lower()
+
+
+async def action_suggest_skills_from_history(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Self-writing skills: mine the activity ledger for repeated commands.
+
+    A command shape (first two tokens) the agent has run successfully in 3+
+    distinct sessions this week is a workflow worth remembering. Each new
+    pattern becomes a DRAFT skill (never auto-published) built from real
+    examples — the user reviews it in the Skills UI. Deterministic: no LLM
+    call, so it's free to run daily.
+    """
+    try:
+        from src.constants import DATA_DIR
+        from services.activity_ledger import recent_tool_events
+        from services.memory.skills import SkillsManager
+
+        events = recent_tool_events(days=7, tools=("bash",))
+        if not events:
+            raise TaskNoop("no recent successful commands to mine")
+
+        # pattern -> {sessions: set, examples: [full commands]}
+        patterns: dict = {}
+        for ev in events:
+            first_line = (ev["input"] or "").splitlines()[0] if ev["input"] else ""
+            shape = _normalize_command(first_line)
+            if not shape or ev["session_id"] is None:
+                continue
+            p = patterns.setdefault(shape, {"sessions": set(), "examples": []})
+            p["sessions"].add(ev["session_id"])
+            if first_line not in p["examples"]:
+                p["examples"].append(first_line)
+
+        candidates = sorted(
+            (
+                (shape, data)
+                for shape, data in patterns.items()
+                if len(data["sessions"]) >= 3
+            ),
+            key=lambda kv: len(kv[1]["sessions"]),
+            reverse=True,
+        )
+        if not candidates:
+            raise TaskNoop("no command pattern repeated across 3+ sessions")
+
+        manager = SkillsManager(DATA_DIR)
+        existing_names = {s.get("name") for s in manager.load_all()}
+        created = []
+        for shape, data in candidates[:3]:
+            from services.memory.skills import slugify
+            name = slugify(f"recurring {shape}")
+            if name in existing_names:
+                continue
+            examples = data["examples"][:5]
+            manager.add_skill(
+                name=name,
+                description=f"Recurring workflow: `{shape}` commands the agent has run in {len(data['sessions'])} recent sessions.",
+                category="learned",
+                when_to_use=f"When the user asks for something previously handled with `{shape}`.",
+                procedure=[f"Run: {ex}" for ex in examples],
+                pitfalls=["Auto-drafted from the activity ledger — review and edit before approving."],
+                source="learned",
+                status="draft",
+                owner=(owner or None),
+                session_id=None,
+                confidence=0.5,
+            )
+            created.append(name)
+        if not created:
+            raise TaskNoop("all repeated patterns already have skills")
+        return f"Drafted {len(created)} skill(s) from repeated workflows: {', '.join(created)}", True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"suggest_skills_from_history action failed: {e}")
+        return str(e), False
+
+
 async def action_sync_memory_packs(owner: str, **kwargs) -> Tuple[str, bool]:
     """Two-way memory sync through a shared folder (iCloud/OneDrive/Syncthing).
 
@@ -2417,6 +2503,7 @@ BUILTIN_ACTIONS = {
     "consolidate_memory": action_consolidate_memory,
     "auto_distill_sessions": action_auto_distill_sessions,
     "sync_memory_packs": action_sync_memory_packs,
+    "suggest_skills_from_history": action_suggest_skills_from_history,
     "tidy_research": action_tidy_research,
     "summarize_emails": action_summarize_emails,
     "draft_email_replies": action_draft_email_replies,
@@ -2443,6 +2530,7 @@ BUILTIN_ACTION_INFO = {
     "consolidate_memory": "Remove duplicate memories",
     "auto_distill_sessions": "Auto-distill recent chats into durable memories (runs the second-brain distiller on sessions with new messages)",
     "sync_memory_packs": "Sync memories with other Apollo installs through a shared folder (set memory_pack_sync_dir to an iCloud/OneDrive/Syncthing path)",
+    "suggest_skills_from_history": "Draft skills from workflows the agent repeats (mines the activity ledger for commands used across 3+ sessions; drafts only, you approve)",
     "tidy_research": "Remove orphaned research files (sessions that were deleted)",
     "summarize_emails": "Pre-generate AI summaries for new inbox emails",
     "draft_email_replies": "Pre-draft AI reply suggestions for new inbox emails",

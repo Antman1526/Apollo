@@ -174,6 +174,29 @@ def _to_dict(r: ActivityEvent) -> Dict[str, Any]:
     }
 
 
+def recent_tool_events(
+    days: int = 7, tools: tuple = ("bash",), only_success: bool = True
+) -> List[Dict[str, Any]]:
+    """Recent events for pattern mining: (session_id, tool, input) triples."""
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(days=max(1, days))
+    db = SessionLocal()
+    try:
+        q = db.query(ActivityEvent).filter(
+            ActivityEvent.tool.in_(list(tools)),
+            ActivityEvent.created_at >= cutoff,
+        )
+        if only_success:
+            q = q.filter(ActivityEvent.exit_code == 0)
+        return [
+            {"session_id": r.session_id, "tool": r.tool, "input": r.input_preview}
+            for r in q.order_by(ActivityEvent.created_at.asc()).all()
+        ]
+    finally:
+        db.close()
+
+
 def undo_session(session_id: str) -> Dict[str, Any]:
     """Roll back every still-undoable file write from one session, as a bundle.
 
