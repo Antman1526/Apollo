@@ -49,7 +49,8 @@ def test_registry_mint_lookup_rotate_and_list(tmp_path):
 def test_registry_persists_and_restricts_permissions(tmp_path):
     path = tmp_path / "tokens.json"
     token = AgentTokenRegistry(path=str(path)).mint("agent-9", "Scribe")
-    assert oct(os.stat(path).st_mode & 0o777) == "0o600"
+    if os.name != "nt":  # POSIX mode bits are not meaningful on Windows
+        assert oct(os.stat(path).st_mode & 0o777) == "0o600"
     # A fresh instance reads the same mapping back.
     assert AgentTokenRegistry(path=str(path)).lookup(token)["agent_id"] == "agent-9"
 
