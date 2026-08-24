@@ -36,7 +36,7 @@ model critique answers; **email, calendar, notes, and tasks** the agent can act 
 installable **PWA**.
 
 It is a **three-tier system**: a **FastAPI backend** (Python 3.11+, one `uvicorn` process)
-exposing ~40 modular routers, a **framework-free vanilla-JS frontend** (ES modules,
+exposing ~50 modular routers, a **framework-free vanilla-JS frontend** (ES modules,
 server-sent events, no build step), and a **SQLite (SQLAlchemy) + ChromaDB data layer**.
 Everything runs as that one process plus on-demand `llama-server` subprocesses, a managed
 SearXNG sidecar, and the optional Paperclip Node sidecar. See [Architecture](#architecture)
@@ -59,9 +59,11 @@ APOLLO_STARTUP_SMOKE=1 bash scripts/check.sh
 bash scripts/run-e2e.sh
 ```
 
-As of 2026-07-19, the first command completed 1,934 Python tests (3 skipped),
-134 JavaScript tests, and an isolated startup smoke. The self-contained macOS
-bundle also passed a read-only mounted-DMG startup test. See
+As of 2026-08-24, the Python suite stands at **2,075 passed, 3 skipped** across
+all four CI jobs (ubuntu / macos / windows pytest + Ubuntu browser journeys —
+Windows CI has been green since the libmagic native-fault fix in PR #7), plus
+134 JavaScript tests and an isolated startup smoke. On 2026-07-19 the
+self-contained macOS bundle also passed a read-only mounted-DMG startup test. See
 [Production Readiness](docs/PRODUCTION_READINESS.md) for exact artifact,
 dependency-audit, Docker-recovery, and remaining-platform evidence.
 
@@ -155,10 +157,49 @@ What backs that claim, concretely:
   your own models purely on task fit; there is no vendor margin steering the
   choice.
 
-## New this session
+## Recently landed (August 2026)
 
-A batch of features landed recently. Each is grounded in real code (file paths in
-[Architecture](#architecture) and [docs/recreation/](#recreation--full-technical-docs)):
+Grounded in real code and merged PRs (#11–#20):
+
+- **Reference Library** — a fourth knowledge store of curated external catalogs
+  (public-apis, build-your-own-x, free-programming-books, developer-roadmap;
+  ~5,900 entries) reachable through the read-only `reference_search` agent tool.
+  See [Reference Library](#reference-library) above. (`services/reference_library.py`)
+- **Ecosystem integrations** — a community skill-pack/MCP catalog, an
+  agency-agents persona importer (271 real personas verified), a persistent
+  per-chat **`python_session`** kernel tool, and a lean MCP/skill config
+  security scanner. (PR #11)
+- **Agent flight recorder** — the activity ledger records every tool execution
+  with exit codes (**Agent History** in the sidebar); file writes are undoable
+  individually or as whole-session rollback bundles; an **autonomy dial**
+  (`agent_autonomy`: auto/observe) can hold the agent to observe-only.
+- **Local-model agent reliability** — every built-in tool is now reachable by
+  local models: tool sections injected for all model families, a dialect
+  normalizer (`src/tool_parsing.py::_normalize_function_eq`) that converts the
+  Qwen/Llama-3 `<function=NAME><parameter=KEY>` calling style into canonical
+  invoke blocks, and keyword-hint tool selection so e.g. "free public API"
+  surfaces `reference_search`. (PR #18)
+- **Desktop-mode settings fix** — admin settings routes now work correctly with
+  `AUTH_ENABLED=false` via a strict cookie-validating `_require_admin_user`
+  helper with an explicit desktop-mode bypass — closing a path that would have
+  let unauthenticated loopback callers enumerate users. (PR #19)
+- **Windows, first-class** — Windows-aware GGUF scan dirs + `llama-server.exe`
+  auto-detect + a binary-path setting; `launch-windows.ps1` now **detects
+  missing prerequisites (Python / Git / llama.cpp) and offers consent-gated
+  winget installs**; a scripted, secrets-can't-leak source zip
+  (`scripts/build-windows-zip.sh`) is published as the
+  [`windows-latest` release](https://github.com/Antman1526/Apollo/releases/tag/windows-latest);
+  [WINDOWS-SETUP.md](WINDOWS-SETUP.md) documents the llama.cpp
+  recent-build requirement (hybrid attention+SSM models like Qwen 3.5/3.6/3.8
+  need a current `llama-server`). (PRs #14–#17, #20)
+- **Memory portability** — export/import packs, per-memory provenance, and
+  folder-based Memory Sync (`memory_pack_sync_dir`) between your own machines.
+- **Fast Lane** — optional mixture routing that sends trivial chat messages to
+  a designated light model (`mixture_routing_enabled`, chat-mode only, off by
+  default).
+
+<details>
+<summary>July 2026 batch (voice, second brain, graph, reviewer, skill packs, env scrub)</summary>
 
 - **Hands-free voice call mode.** A "call" overlay drives a full listen → transcribe →
   think → speak loop with no button presses. A pure, unit-tested state machine
@@ -202,6 +243,8 @@ A batch of features landed recently. Each is grounded in real code (file paths i
   `SEARXNG_SECRET`, etc. `src/subproc_env.py` (`build_agent_env`) now hands those children a
   **minimal allowlisted, default-deny** environment with a denylist scrub layered on top, so a
   prompt-injected agent or malicious skill can't `env | curl` your secrets out.
+
+</details>
 
 ## Demo
 A full, hover-to-play tour lives on the landing page (`docs/index.html`).
@@ -333,14 +376,30 @@ readiness probe before opening the UI; it needs a working `./venv` with the app 
 
 ### Native Windows
 
-**One-command launcher** (creates the venv, installs deps, runs setup, starts the
-server; safe to re-run):
+**No-git path** — grab the prebuilt source zip from the
+[`windows-latest` release](https://github.com/Antman1526/Apollo/releases/tag/windows-latest)
+(built by `scripts/build-windows-zip.sh` from tracked files only, so secrets
+can't leak in by construction):
+
+```powershell
+curl.exe -LO https://github.com/Antman1526/Apollo/releases/download/windows-latest/Apollo-Windows.zip
+Expand-Archive Apollo-Windows.zip
+cd Apollo-Windows\Apollo-Windows
+powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
+```
+
+**Or the one-command launcher from a clone** (creates the venv, installs deps,
+runs setup, starts the server; safe to re-run):
 
 ```powershell
 git clone https://github.com/Antman1526/Apollo.git
 cd Apollo
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
+
+Either way, the launcher **detects missing prerequisites** (Python 3.11+, Git
+for Windows, llama.cpp) **and offers to install each via winget** — always
+behind an explicit `[Y/n]` prompt, never silently.
 
 Or do it by hand:
 
@@ -651,6 +710,11 @@ semantic memory (and now the knowledge graph's semantic edges) — embedded on-d
   agent-reachable child process (bash/python tools, background jobs, shell service, MCP stdio
   servers) a minimal **allowlisted, default-deny** environment plus a secret-shaped denylist
   scrub, mirroring the SearXNG sidecar allowlist pattern.
+- **Four-registry tool registration.** Adding an agent tool requires updating
+  ALL FOUR registries or the tool is silently unreachable to some model
+  families: `src/tool_schemas.py` (`FUNCTION_TOOL_SCHEMAS`), `src/agent_loop.py`
+  (`TOOL_SECTIONS`), `src/tool_index.py` (`BUILTIN_TOOL_DESCRIPTIONS` +
+  keyword hints), and `src/agent_tools.py` (`TOOL_TAGS`).
 - **Embedded browser.** `services/browser/embedded_browser.py` drives a shared Playwright
   Chromium page; the UI is a canvas screencast over `/api/browser/ws`. A scheme allowlist
   (`http`/`https` only) with a hard `BLOCKED_SCHEMES` set guards against SSRF/exfiltration.
@@ -777,9 +841,11 @@ The [`docs/recreation/`](docs/recreation/) directory contains **15 deep technica
 documents plus a technology audit** intended to let a skilled engineer reconstruct
 Apollo from scratch — each grounded in real file paths and line references:
 
-Start with the [2026-07-19 current-state refresh](docs/recreation/00-2026-07-19-current-state-refresh.md)
-when reading the numbered reconstruction documents; it records the current
-storage, Docker, package, security, CI, and frontend-modularity deltas.
+The full numbered set was **regenerated from the live codebase on 2026-08-24**;
+start with the [2026-08-24 current-state refresh](docs/recreation/00-2026-08-24-current-state-refresh.md)
+(the earlier [2026-07-19 refresh](docs/recreation/00-2026-07-19-current-state-refresh.md)
+is kept for history). A copy of the technology audit also sits at the repo root
+as [TECHNOLOGY-AUDIT.md](TECHNOLOGY-AUDIT.md).
 
 | # | Document |
 |---|---|

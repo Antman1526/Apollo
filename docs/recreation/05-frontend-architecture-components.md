@@ -1,538 +1,967 @@
-# Apollo Frontend — Architecture & Components
+# 05 — Frontend Architecture & Components
 
-> Scope: the browser-side UI of Apollo, a **framework-free, build-step-free** vanilla-JS application served as static files by FastAPI. There is no bundler, no transpiler, and no `node_modules` runtime dependency — the browser loads ES modules directly. This document describes the module system, the major modules, client-side state management, the tri-state web toggle, and the SSE event protocol that drives chat.
-
-All file/line references are of the form `path:line` against the repository at `/Users/Antman/Apollo`.
+Apollo's frontend is a **framework-free, no-build single page application**: one HTML document (`static/index.html`, 2,753 lines), a set of per-feature stylesheets under `static/css/`, and ~172 native browser **ES modules** under `static/js/` orchestrated by `static/app.js`. There is no bundler, no transpiler, no virtual DOM. Every `<script>` in `index.html` is `type="module"`, loaded directly by the browser; state lives in module-scope variables, `localStorage`, and a handful of `window.*` globals used as an escape hatch for cross-module calls that would otherwise create import cycles.
 
 ---
 
-## 1. Delivery model: static files, no build
+## 1. Module loading strategy (`static/index.html`)
 
-The entire frontend lives under `static/`:
+### 1.1 Head-level preloads and first-paint theming
 
-```
-static/
-  index.html        # app shell (Jinja-templated by FastAPI: {{CSP_NONCE}})
-  app.js            # bootstrap / orchestrator (~4200 lines, no exports)
-  style.css
-  manifest.json, sw.js, icons, fonts, lib/
-  js/               # ~90 ES modules (see `ls static/js` below)
-```
+Before any module script runs, `index.html` has two inline, CSP-nonced `<script nonce="{{CSP_NONCE}}">` blocks in `<head>` (`{{CSP_NONCE}}` is substituted server-side per request):
 
-`ls static/js` (top-level entries):
+- **Lines 17–96**: reads `localStorage.getItem('apollo-theme')`, applies `--bg/--fg/--panel/--border/--red` and derives `--hl-*` syntax-highlight colors via an inlined RGB→HSL→RGB converter (`h2hsl`/`hsl2h`), so the loading screen and first paint already match the saved theme instead of flashing a default and then swapping.
+- **Lines 100–192**: per-route favicon/title/PWA-manifest swap — reads `window.location.pathname`, looks up an SVG shape in a `SHAPES` map keyed by route (`/calendar`, `/notes`, `/cookbook`, `/email`, `/memory`, `/gallery`, `/tasks`, `/library`), and rewrites `<link rel="icon">`, `document.title`, and a Blob-URL PWA manifest so bookmarking a sub-route gets its own icon/name.
 
-```
-a11y.js          chatRenderer.js   document.js        memory.js        sessions.js
-admin.js         chatStream.js     documentLibrary.js modalManager.js  settings.js
-assistant.js     codeRunner.js     dragSort.js        modalSnap.js     signature.js
-browserPanel.js  cookbook*.js      editor/            modelPicker.js   skills.js
-calendar/        document*.js      emailInbox.js      modelSort.js     slashCommands.js
-calendar.js      ...               emailLibrary*.js   models.js        spinner.js
-censor.js        compare/          fileHandler.js     notes.js         storage.js
-chat.js          color/            gallery*.js        presets.js       systemStatus*.js
-                 colorPicker.js    group.js           providers.js     tasks.js
-                 cookbook*.js      init.js            rag.js           theme.js
-                 markdown/         research/          ...              ui.js / util/ ...
+`modulepreload` hints warm the module graph before the trailing `<script type="module">` tags execute:
+
+```html
+<!-- static/index.html:243-248 -->
+<link rel="modulepreload" href="/static/app.js">
+<link rel="modulepreload" href="/static/js/chat.js">
+<link rel="modulepreload" href="/static/js/ui.js">
+<link rel="modulepreload" href="/static/js/browserPanel.js">
+<link rel="modulepreload" href="/static/js/sessions.js">
+<link rel="modulepreload" href="/static/js/markdown.js">
 ```
 
-(Sub-bundles `calendar/`, `compare/`, `editor/`, `markdown/`, `research/`, `color/`, `util/` are folders of cooperating modules with their own `index.js`.)
+CSS is split into ~22 per-feature files loaded in a fixed order (specificity depends on it — `mobile-overrides.css` is deliberately last):
 
-The browser is pointed at the entry module by the shell. `index.html` declares a module preload and the page calls `startApolloApp()` on `DOMContentLoaded`:
+```html
+<!-- static/index.html:220-242 -->
+<link rel="stylesheet" href="/static/css/variables.css?v=split-20260708">
+<link rel="stylesheet" href="/static/css/base.css?v=split-20260708">
+...
+<link rel="stylesheet" href="/static/css/mobile-overrides.css?v=split-20260708">
+```
 
-- `static/index.html:217` — `<link rel="modulepreload" href="/static/app.js">`
-- `static/app.js:4207` — `document.addEventListener('DOMContentLoaded', startApolloApp, { once: true })` (falls through to an immediate call if the document is already parsed).
+External libraries (`highlight.min.js`, `katex.min.js`/`.css`, `mermaid.min.js`) are loaded with `defer`/`async` and CDN URLs pinned to a version (`katex@0.16.22`, `mermaid@11`); KaTeX's stylesheet loads with `media="print"` then flips to `all` on its own `load` event so it never blocks first paint.
 
-Because there is no bundler, **import specifiers are real URLs**. `app.js` imports modules with plain relative paths (`./js/chat.js`), and a recurring footgun is documented inline at `static/app.js:33-37`: a `?v=` cache-busting query on an import string makes the browser treat it as a *different* module and load the file twice (two separate module instances with two separate private states). The rule the codebase enforces is: keep a given module's specifier identical at every import site.
+### 1.2 The module tag order
 
----
+All feature modules are `<script type="module">` tags at the very end of `<body>` (`index.html:2696-2733`), loaded in this exact order:
 
-## 2. The module system
+```html
+<script type="module" src="/static/js/storage.js"></script>
+<script type="module" src="/static/js/ui.js"></script>
+<script type="module" src="/static/js/markdown.js"></script>
+<script type="module" src="/static/js/dragSort.js"></script>
+<script type="module" src="/static/js/sessions.js"></script>
+<script type="module" src="/static/js/memory.js"></script>
+<script type="module" src="/static/js/memoryGraph.js"></script>
+<script type="module" src="/static/js/skills.js"></script>
+<script type="module" src="/static/js/tourHints.js"></script>
+<script type="module" src="/static/js/tourAutoplay.js"></script>
+<script type="module" src="/static/js/fileHandler.js"></script>
+<script type="module" src="/static/js/voiceRecorder.js"></script>
+<script type="module" src="/static/js/voiceCall.js"></script>
+<script type="module" src="/static/js/models.js"></script>  <!-- This must come BEFORE app.js -->
+<script type="module" src="/static/js/rag.js"></script>
+<script type="module" src="/static/js/presets.js"></script>
+<script type="module" src="/static/js/search.js"></script>
+<script type="module" src="/static/js/spinner.js"></script>
+<script type="module" src="/static/js/tts-ai.js"></script>
+<script type="module" src="/static/js/review.js"></script>
+<script type="module" src="/static/js/document.js"></script>
+<script type="module" src="/static/js/gallery.js"></script>
+<script type="module" src="/static/js/chatRenderer.js"></script>
+<script type="module" src="/static/js/codeRunner.js"></script>
+<script type="module" src="/static/js/chatStream.js"></script>
+<script type="module" src="/static/js/chat.js?v=20260520m"></script>
+<script type="module" src="/static/js/cookbook.js"></script>
+<script type="module" src="/static/js/paperclip.js?v=paperclip-floor-20260611d"></script>
+<script type="module" src="/static/js/search-chat.js"></script>
+<script type="module" src="/static/js/compare/index.js"></script>
+<script type="module" src="/static/js/theme.js"></script>
+<script type="module" src="/static/js/censor.js"></script>
+<script type="module" src="/static/js/settings.js"></script>
+<script type="module" src="/static/js/admin.js"></script>
+<script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
+<script type="module" src="/static/js/init.js"></script>
+<script type="module" src="/static/js/a11y.js"></script>
+<script nonce="{{CSP_NONCE}}">if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js').catch(()=>{});}</script>
+```
 
-### 2.1 Two export shapes
+Because these are ES modules, the browser executes them in document order but each only runs after its own `import` graph resolves — the HTML comments (`must come BEFORE app.js`, `app.js must be LAST`) encode a real dependency: `app.js` imports the default export of most of the earlier-loaded modules and wires their DOM event listeners, so it must run after they've registered their own top-level state. Cache-busting uses a hand-bumped `?v=` query string on files that change often (date + suffix letter, e.g. `?v=20260520m`, or a shared feature tag like `paperclip-floor-20260611d` used by both the CSS and JS that ship together) — there is no build step to hash content automatically.
 
-Apollo modules use one of two patterns, and many use both:
+### 1.3 `static/app.js` — the orchestrator (4,293 lines)
 
-**(a) Default-export "module object".** A module gathers its public functions into a frozen-ish object and `export default`s it. The importer treats it like a namespace. Examples:
-
-- `static/js/storage.js:127-141` — builds `const Storage = { KEYS, getJSON, ... getWebMode }` and `export default Storage`.
-- `static/js/browserPanel.js:560-566` — `export default { init, open, close, navigate, detectLocalhost }`.
-- `static/js/chatStream.js:277-284` — `export default chatStream` (object of the four named functions).
-- `static/js/settings.js:4891-4894` — `const settingsModule = { open, close, ... }; export default settingsModule`.
-- `static/js/compare/index.js:1468` — default object exposing `toggleMode`, `isActive`, `deactivate`, etc.
-
-`app.js` imports these as a single binding and dispatches through it, e.g. `import browserPanelModule from './js/browserPanel.js'` then `browserPanelModule.open()` (`static/app.js:41`, `static/app.js:839`).
-
-**(b) Named exports.** Some modules expose individual functions, especially the newer panel-style ones:
-
-- `static/js/research/panel.js` — `export function init/isOpen/toggle/openPanel/closePanel` (`panel.js:228,237,238,254,345`). `app.js` imports it as a namespace: `import * as researchPanelModule from './js/research/panel.js'` (`static/app.js:40`) and calls `researchPanelModule.toggle()`.
-- `static/js/modelPicker.js` — `export function initModelPicker(deps)` / `export function updateModelPicker()` (`modelPicker.js:103,616`).
-- `static/js/storage.js` re-exports its helpers as **both** named (`export function getWebMode`) and as members of the default object, so callers can pick either style.
-
-Both shapes coexist deliberately: the default-object form keeps call sites self-documenting (`Storage.getWebMode(...)`), and the named form supports tree-friendly direct imports and dynamic `import()`.
-
-### 2.2 Dynamic imports for lazy panels
-
-Panels that aren't needed at first paint are pulled in on demand via `import()`. The SSE `open_panel` handler is the clearest example — it maps a server-named panel to a lazy module load (`static/js/chatStream.js:148-191`):
+`app.js` imports the default export of every major feature module plus a few named imports, stashes some on `window` for cross-module access, monkey-patches `window.fetch` for a global 401→redirect, and defines `startApolloApp()` which does the actual DOM wiring:
 
 ```js
-} else if (uiEvent === 'open_panel' || uiData.ui_event === 'open_panel') {
-  var panel = uiData.panel;
-  if (panel === 'browser') {
-    import('./browserPanel.js').then(function(mod) {
-      var fn = mod.open || (mod.default && mod.default.open);
-      if (fn) fn();
-    }).catch(function(){});
-  } else if (panel === 'documents') {
-    import('./documentLibrary.js').then(...);
-  } ...
+// static/app.js:5-53 (imports abridged)
+import Storage from './js/storage.js';
+import uiModule from './js/ui.js';
+import fileHandlerModule from './js/fileHandler.js';
+import modelsModule from './js/models.js';
+import ragModule from './js/rag.js';
+import presetsModule from './js/presets.js';
+import searchModule from './js/search.js';
+import chatModule from './js/chat.js';
+import compareModule from './js/compare/index.js';
+import documentModule from './js/document.js';
+import searchChatModule from './js/search-chat.js';
+import markdownModule from './js/markdown.js';
+import chatRenderer from './js/chatRenderer.js';
+import sessionModule from './js/sessions.js';
+import memoryModule from './js/memory.js';
+import voiceRecorderModule from './js/voiceRecorder.js';
+import censorModule from './js/censor.js';
+import galleryModule from './js/gallery.js';
+import tasksModule from './js/tasks.js';
+import activityModule from './js/activity.js';
+import calendarModule from './js/calendar.js';
+import notesModule from './js/notes.js';
+import adminModule from './js/admin.js';
+import settingsModule from './js/settings.js';
+import './js/modalManager.js';
+import './js/tileManager.js';
+import themeModule from './js/theme.js';
+import cookbookModule from './js/cookbook.js';
+import groupModule from './js/group.js';
+import * as researchPanelModule from './js/research/panel.js';
+import browserPanelModule from './js/browserPanel.js';
+import ttsModule from './js/tts-ai.js';
+import spinnerModule from './js/spinner.js';
+import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
+import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
+
+const API_BASE = window.location.origin;
+window.themeModule = themeModule;
+window.sessionModule = sessionModule;
+window.uiModule = uiModule;
+window.adminModule = adminModule;
+window.cookbookModule = cookbookModule;
+
+// Redirect to login on 401 from any fetch
+const _origFetch = window.fetch;
+window.fetch = async function(...args) {
+  const res = await _origFetch.apply(this, args);
+  if (res.status === 401 && !String(args[0]).includes('/api/auth/')) {
+    window.location.href = '/login';
+  }
+  return res;
+};
+```
+
+`startApolloApp()` (defined at `app.js:3517`, ~800 lines) wires every button click handler, restores sidebar section order/collapse state, and calls into the imported modules. It runs on `DOMContentLoaded` if the document is still loading, or synchronously otherwise:
+
+```js
+// static/app.js:4288-4293
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', startApolloApp, { once: true });
+} else {
+  startApolloApp();
 }
 ```
 
-Note the defensive `mod.open || (mod.default && mod.default.open)` pattern — it tolerates either export shape, which is exactly why both shapes can safely coexist across the codebase.
+### 1.4 `static/js/init.js` — post-app initialization
 
-### 2.3 `window.*` globals as the cross-module bus
-
-Because there is no central store and modules are loaded independently, Apollo uses a small set of `window` globals as a deliberate, documented escape hatch for cross-cutting state and for callbacks the server needs to trigger via SSE. They fall into a few groups:
-
-**Identity / capability flags** (set once after `/api/auth/status`):
-- `window._isAdmin` — `static/app.js:1142` sets `window._isAdmin = !!d.is_admin`; consumed across admin-gated UI.
-- `window._userPrivileges` — `static/app.js:1159`, drives per-user feature hiding (agent mode, bash, documents, research, image gen) at `app.js:1158-1192`.
-
-**Server-drivable UI mutators** (exposed by `app.js`, called from SSE handlers in `chatStream.js`):
-- `window._setWebMode(value, uiMode)` — `static/app.js:1626-1631`. Lets the model toggle the tri-state web mode. Invoked from the `ui_control`/`toggle` handler at `static/js/chatStream.js:42-44`.
-- `window._syncRagIndicator`, `window._syncResearchIndicator`, `window._syncGroupIndicator` — `static/app.js:1820-1826`.
-- `window._showToolSplash` — `static/app.js:1625`, the first-use explainer; called from the `web_sources` SSE branch (`chat.js:1763`).
-
-**Module handles** that other files reach for without importing:
-- `window.themeModule`, `window.sessionModule`, `window.uiModule`, `window.adminModule`, `window.cookbookModule` — `static/app.js:49-53`.
-- `window.modelsModule` (read by the model picker to find `isChatCapable`, see §4).
-- `window.documentModule`, `window.memoryModule`, `window.compareModule` — referenced guardedly elsewhere.
-
-This is the app's "state management glue": rather than a framework's dependency-injection or context, Apollo wires modules together at bootstrap and publishes a handful of well-known globals. Every consumer guards them (`if (window.X) ...` / `typeof window.X === 'function'`) so partial loads degrade instead of throwing.
-
----
-
-## 3. Bootstrap: `app.js`
-
-`app.js` has **no exports** (`static/app.js:2-3` comment: "entry point, no exports — wires all modules together"). Its job is orchestration:
-
-1. **Static imports** of every top-level module (`static/app.js:5-46`), including side-effecting ones that just need to run (`import './js/modalManager.js'` at line 29, `import './js/tileManager.js'` at line 31).
-2. **A global `fetch` wrapper** that redirects to `/login` on any `401` (except `/api/auth/*`) — `static/app.js:56-63`. Every module's network call inherits this auth guard for free.
-3. **`initializeEventListeners()`** (`static/app.js:125`) — the bulk of the file: wiring for the chat form, file/paste handling, the export dropdown, the unified Escape-to-close stack (`app.js:484-595`, closes exactly one overlay per press in a defined priority order), click-outside-to-close (`app.js:643-649`), and every tool button (Compare, Research, Browser, Cookbook, Doc Library, Gallery, Tasks, Calendar, Notes — `app.js:809-924`).
-4. **URL-based panel routing** (`static/app.js:931-1062`): bookmarking `/calendar`, `/notes`, `/browser`, `/email`, `/gallery`, `/tasks`, etc. auto-opens the matching tool on load. The opener is deferred onto `window._apolloRouteOpener` and fired after sessions finish loading.
-5. **`startApolloApp()`** (`static/app.js:3468`) — the actual entry: sets CSS vars, calls `initializeEventListeners()`, then `init(API_BASE)`s each module (`fileHandlerModule.init`, `modelsModule.init`, `ragModule.init`, ... `app.js:3501-3505+`). Guarded by `window.__apolloAppStarted` so a double DOMContentLoaded can't re-init.
-
-### Toggle wiring lives here
-
-The chat-input tool toggles (mode, web, bash, RAG, research, group) are all wired inside `initializeEventListeners`. The mode pill (`static/app.js:1656-1686`) persists `state.mode` to localStorage and slides a CSS pill. The web toggle (§5) and the `MODE_TOOLS` table that re-applies per-mode tool state (`app.js:1644-1653`, `MODE_TOOLS` at `app.js:1579`) live here too.
-
----
-
-## 4. Chat & streaming
-
-### 4.1 `chat.js` — request assembly + SSE consumer
-
-`chat.js` (the largest UI module, ~4570 lines) owns `handleChatSubmit`. It assembles a `FormData` body from the current toggle state and streams the response. The request-building block (`static/js/chat.js:743-783`) reads toggles and translates them into form fields:
+`init.js` runs after `app.js` and handles concerns that need the fully-wired DOM: clearing a stale composer draft on fresh page loads (`clearFreshComposerRestore`), a **defense-in-depth state wipe** — if `/api/auth/status`'s `username` differs from the `apollo-auth-user` cached in `localStorage`, every `localStorage`/`sessionStorage` key except `apollo-last-user`/`apollo-auth-user` is deleted (a second user signing in on the same browser without an explicit logout doesn't inherit the previous user's last session, model choice, or draft input):
 
 ```js
-const toggleState = Storage.loadToggleState();
-let isAgentMode = (toggleState.mode || 'chat') === 'agent';
-// Auto-escalate to agent when a document is open (AI needs edit tools)
-if (!isAgentMode && documentModule?.isPanelOpen() && documentModule.getCurrentDocId())
-  isAgentMode = true;
+// static/js/init.js:27-47
+(async () => {
+  try {
+    const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    const liveUser = (data && data.username) || '';
+    if (!liveUser) return;
+    const KEY = 'apollo-auth-user';
+    const cachedUser = localStorage.getItem(KEY);
+    if (cachedUser && cachedUser !== liveUser) {
+      const _keepKeys = new Set(['apollo-last-user', KEY]);
+      const toRemove = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && !_keepKeys.has(k)) toRemove.push(k);
+      }
+      toRemove.forEach(k => localStorage.removeItem(k));
+      sessionStorage.clear();
+      clearFreshComposerRestore();
+    }
+    localStorage.setItem(KEY, liveUser);
+    ...
+```
+
+The same block also applies **per-user UI privilege gates** from `/api/auth/status`'s `privileges` object — purely cosmetic (the backend enforces the real restriction), hiding e.g. the document-editor button when `privs.can_use_documents` is false, or forcing Chat mode and hiding the Agent toggle when `privs.can_use_agent === false`. `init.js` also owns the resizable-sidebar drag handlers (`sidebar-resize-handle` / `rail-resize-handle`, min/max/collapse thresholds `MIN_WIDTH=200`, `MAX_WIDTH=700`, `COLLAPSE_THRESHOLD=150`, persisted to `Storage.KEYS.SIDEBAR_WIDTH`), and a `welcome-ready` class release gated on `document.fonts.ready` (with a 1200ms hard-fallback timeout) so the welcome-screen entrance animation never plays mid-layout-shift.
+
+---
+
+## 2. State management pattern
+
+Apollo has **no central store**. State is distributed across three mechanisms, chosen per concern:
+
+### 2.1 `static/js/storage.js` — the localStorage façade
+
+Every module that persists client-side state goes through this module rather than calling `localStorage` directly. It exports a `KEYS` constant map (so key strings exist in exactly one place) plus `get`/`set`/`getJSON`/`setJSON`/`remove`, all wrapped in try/catch so a quota error or corrupt JSON degrades to a fallback instead of throwing:
+
+```js
+// static/js/storage.js:1-27
+export const KEYS = {
+  THEME: 'apollo-theme',
+  TOGGLES: 'apollo-toggles',
+  SIDEBAR_COLLAPSED: 'sidebar-collapsed',
+  SIDEBAR_WIDTH: 'sidebar-width',
+  SIDEBAR_SIDE: 'sidebar-side',
+  CURRENT_SESSION: 'currentSessionId',
+  COMPARE_SAVE: 'compare-save-results',
+  COMPARE_CHAT: 'compare-continue-chat',
+  COMPARE_BLIND: 'compare-blind',
+  COMPARE_RANDOM: 'compare-randomize',
+  MODELS_EXPANDED: 'apollo-model-expanded',
+  MODEL_ENDPOINTS: 'apollo-model-endpoints',
+  MODEL_SELECTED: 'apollo-selected-model',
+  SORT_ORDER: 'apollo-sessions-sort',
+  CHAT_SEARCH_SCOPE: 'apollo-search-scope',
+  INCOGNITO: 'apollo-incognito',
+  RAG_ACTIVE: 'apollo-rag-active',
+  MCP_ACTIVE: 'apollo-mcp-active',
+  SECTION_ORDER: 'sidebar-section-order',
+  ADMIN_LAST_TAB: 'admin-last-tab',
+  DENSITY: 'apollo-density'
+};
+
+export function getJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw === null) return fallback !== undefined ? fallback : null;
+    return JSON.parse(raw);
+  } catch (e) {
+    console.warn('[Storage] Failed to parse key "' + key + '":', e.message);
+    return fallback !== undefined ? fallback : null;
+  }
+}
+```
+
+`Storage.KEYS.TOGGLES` is the one general-purpose bucket for feature toggles (`web`, `bash`, `rag`, `research`, `incognito`, `mode`) — read/written as a single JSON blob via `loadToggleState()`/`saveToggleState()`/`getToggle(name, fallback)`.
+
+### 2.2 Per-module exported `let` state
+
+Each feature module owns its own in-memory state as module-scope `let`/`const` variables, not exported directly, with accessor functions exported instead (a hand-rolled encapsulation, since ES modules don't give write access to importers). Example from `fileHandler.js`:
+
+```js
+// static/js/fileHandler.js:10-17
+let pendingFiles = [];
+let uploaded = [];
+let _lastUploadedMeta = [];
+let API_BASE = '';
+let _uploadSpinners = [];
+const _previewUrls = new WeakMap();
+```
+
+`app.js` does not read `pendingFiles` directly; it calls exported functions (`fileHandlerModule.addFiles(...)`, `.renderAttachStrip()`, `.uploadPending()`, etc.). Modules are default-exported as an object bundling their public functions (see `theme`, `session`, `settings`, `admin` etc. all imported as `xModule` and referenced as `xModule.fn()`).
+
+### 2.3 `window.*` globals as the cross-module escape hatch
+
+Where two modules need to call each other but a static `import` would create a cycle (e.g. `chat.js` needing to reach into `theme.js`/`admin.js`, or vice versa), the producing module stashes its public API on `window`:
+
+```js
+// static/app.js:50-54
+window.themeModule = themeModule;
+window.sessionModule = sessionModule;
+window.uiModule = uiModule;
+window.adminModule = adminModule;
+window.cookbookModule = cookbookModule;
+```
+
+Other examples found across the codebase: `window._isAdmin` (boolean, set once auth status is fetched, read by `settings.js`'s tab gating), `window.aiTTSManager`, `window._syncRagIndicator`, `window._setWebMode`, `window.sessionModule.selectSession(...)` (called from `chatStream.js`'s notification click handler). This is a deliberate, pervasive pattern rather than an anti-pattern the codebase is trying to avoid — grep for `window\.` across `static/js/*.js` turns up dozens of these bridges.
+
+### 2.4 Custom DOM events for decoupled notification
+
+`modalManager.js` broadcasts modal lifecycle via `CustomEvent` rather than a callback registry, so unrelated modules can react without importing it:
+
+```js
+// static/js/modalManager.js — _emitModalOpened
+function _emitModalOpened(id, modal) {
+  try {
+    window.dispatchEvent(new CustomEvent('apollo:modal-opened', {
+      detail: { id, modal },
+    }));
+  } catch (_) {}
+}
+```
+
+---
+
+## 3. DOM construction / rendering approach
+
+There is **no templating engine**. Two techniques are used side by side, chosen per call site:
+
+1. **Imperative `document.createElement` + property assignment** — the default for anything built repeatedly or needing careful event-listener attachment (avoids re-parsing HTML strings and re-binding listeners on every render). Example, `fileHandler.js`'s attachment chip:
+
+```js
+// static/js/fileHandler.js (renderAttachStrip / _createChip)
+const badge = document.createElement('div');
+badge.className = 'thumb thumb-collapsed';
+const label = document.createElement('span');
+label.textContent = total + ' file' + (total > 1 ? 's' : '');
+label.className = 'thumb-collapsed-label';
+badge.appendChild(label);
+...
+badge.addEventListener('click', (e) => { ... });
+```
+
+2. **Template-literal HTML strings assigned to `.innerHTML`** — used for larger, mostly-static blocks (modal bodies, list rows rendered from server JSON) where hand-building every node would be excessive. `chatRenderer.js` (2,105 lines) is the heaviest user of this style for message bodies. All user-controllable text going into `innerHTML` is passed through the shared escaper:
+
+```js
+// static/js/ui.js:778-806
+const _ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+export function esc(s) {
+  ...
+}
+```
+
+`ui.js` exports a small set of framework-like helpers used everywhere instead of a component system: `el(id)` (a one-line `document.getElementById` wrapper), `esc()`, `showToast()`, `showError()`, `scrollHistory()`/`scrollHistoryInstant()`, `autoResize()` (textarea auto-grow), `debounce()`, and `styledConfirm()`/`styledPrompt()` (promise-based replacements for `window.confirm`/`prompt` styled to match the theme):
+
+```js
+// static/js/ui.js:589
+export function el(id) { return document.getElementById(id); }
+```
+
+Markdown rendering (`markdown.js`) hand-rolls a fenced-code/math/mermaid preprocessor: it pulls out ` ```mermaid ` blocks and `$$...$$`/`$...$` math spans into placeholder tokens before running the rest of the text through the markdown pass (to keep raw LaTeX/mermaid syntax from being mangled by markdown escaping), then re-substitutes the rendered `katex.renderToString(...)` HTML and `<pre class="mermaid">` blocks back in:
+
+```js
+// static/js/markdown.js:488-523 (abridged)
+if (window.katex) {
+  ...
+  mathBlocks.push(katex.renderToString(raw.trim(), { displayMode: true, throwOnError: false }));
+  ...
+}
+```
+
+```js
+// static/js/markdown.js:665-671
+if (!window.mermaid) return;
+const pending = target.querySelectorAll('pre.mermaid:not([data-processed])');
+...
+window.mermaid.run({ nodes: pending });
+```
+
+Syntax highlighting is `highlight.js` (`window.hljs.highlightElement(block)`), invoked both after markdown render and once at the end of `startApolloApp()` for any server-rendered code blocks still missing the `.hljs` class.
+
+---
+
+## 4. Sidebar navigation & view-switching mechanism
+
+### 4.1 Two navigation surfaces: icon rail + sidebar
+
+The layout has an always-visible **icon rail** (`#icon-rail`) with core actions (search, new chat, delete session) plus tool launchers, and a collapsible **sidebar** (`#sidebar`) with expandable sections. The rail buttons follow the id convention `rail-<feature>`; sidebar tool rows follow `tool-<feature>-btn`. The `tools-section` in `index.html` (lines 879–1000) lists every tool as a `.list-item` div with an inline SVG icon and a `.grow` label span:
+
+```html
+<!-- static/index.html:879-1000 (structure, abridged) -->
+<div class="section" id="tools-section">
+  <div class="section-header-flex"><span class="section-title">...Tools</span></div>
+  <div class="list-item" id="tool-memory-btn">...<span class="grow">Brain</span></div>
+  <div class="list-item" id="tool-calendar-btn">...<span class="grow">Calendar</span></div>
+  <div class="list-item" id="tool-browser-btn">...<span class="grow">Browser</span></div>
+  <div class="list-item" id="tool-compare-btn">...<span class="grow">Compare</span></div>
+  <div class="list-item" id="tool-cookbook-btn">...<span class="grow">Cookbook</span>
+    <span id="cookbook-bg-status" ...></span>
+    <span class="cookbook-notif-dot" id="cookbook-notif-dot" ...></span>
+  </div>
+  <div class="list-item" id="tool-paperclip-btn" style="display:none;">...<span class="grow">Paperclip</span></div>
+  <div class="list-item" id="tool-research-btn">...<span class="grow">Deep Research</span></div>
+  <div class="list-item" id="tool-gallery-btn">...<span class="grow">Gallery</span></div>
+  <div class="list-item" id="tool-library-btn">...<span class="grow">Library</span>
+    <button id="library-new-doc-btn">new</button>
+  </div>
+  <div class="list-item" id="tool-notes-btn">...<span class="grow">Notes</span></div>
+  <div class="list-item" id="tool-tasks-btn">...<span class="grow">Tasks</span>
+    <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
+  </div>
+  <div class="list-item" id="tool-activity-btn" style="display:none">...<span class="grow">Agent History</span></div>
+  <div class="list-item" id="tool-theme-btn">...</div>
+</div>
+```
+
+Chat is not a "tool" — it is the default main view (`#chat-container` / `#chat-history`), always present; sessions are switched via the `sessions-section` list, not a tool button. Email is its own `.section#email-section` above `tools-section`, with its own unread-dot badge. There is no route table; "views" are DOM subtrees toggled visible/hidden, and the browser URL is largely decorative (only used by the per-route favicon script, not by an SPA router — no `pushState`/`popstate` navigation was found wiring tool switches).
+
+### 4.2 Rail → sidebar-button delegation
+
+Rail buttons don't implement their own open/close logic — they simply `.click()` the corresponding sidebar button, so all real behavior lives in one place:
+
+```js
+// static/app.js:3586-3609
+const _railToolMap = {
+  'rail-browser':   'tool-browser-btn',
+  'rail-compare':   'tool-compare-btn',
+  'rail-research':  'tool-research-btn',
+  'rail-cookbook':   'tool-cookbook-btn',
+  'rail-archive':   'tool-library-btn',
+  'rail-gallery':   'tool-gallery-btn',
+  'rail-tasks':     'tool-tasks-btn',
+  'rail-calendar':  'tool-calendar-btn',
+  'rail-notes':     'tool-notes-btn',
+  'rail-memory':    'tool-memory-btn',
+  'rail-theme':     'tool-theme-btn',
+  'rail-email':     'email-section-title',
+};
+Object.entries(_railToolMap).forEach(([railId, toolId]) => {
+  const railBtn = el(railId);
+  if (railBtn) {
+    railBtn.addEventListener('click', () => {
+      const toolBtn = el(toolId);
+      if (toolBtn) toolBtn.click();
+    });
+  }
+});
+```
+
+### 4.3 `modalManager.js` — the actual open/minimize/close state machine
+
+Each `tool-*-btn`'s own click handler (defined inside that feature's module, e.g. `calendar.js:558`, `notes.js:1110`) builds/shows its modal or fullscreen panel and calls `Modals.register(id, {...})`. `modalManager.js` (1,550 lines) is the shared engine behind every one of these tool surfaces, documented in its own header comment:
+
+```js
+// static/js/modalManager.js:1-24
+/**
+ * ModalManager — unified open/minimize/close behavior for tool modals.
+ *
+ * Goals:
+ *  - Tab-down (swipe) and the `_` button MINIMIZE: modal hidden, JS state preserved.
+ *  - The ✕ button CLOSES: tears down via the registered closeFn.
+ *  - Sidebar/rail click handler: closed → open, minimized → restore, open → minimize.
+ *  - Rail icon shows a "minimized" badge when state is held.
+ *
+ * Usage from a tool module:
+ *
+ *   import * as Modals from './modalManager.js';
+ *
+ *   Modals.register('gallery-modal', {
+ *     railBtnId: 'tool-gallery-btn',
+ *     restoreFn: () => { ... },
+ *     closeFn:   () => { ... },
+ *   });
+ *
+ *   if (!Modals.toggle('gallery-modal')) {
+ *     openGallery();
+ *   }
+ */
+```
+
+For tool modals that never call `register()` explicitly (e.g. because they only need minimize behavior after a swipe-dismiss), `_AUTO_WIRE` provides a fallback registry mapping modal id → `{rail, sidebar}` button ids, auto-registered on first minimize:
+
+```js
+// static/js/modalManager.js:29-52
+const _AUTO_WIRE = {
+  'cookbook-modal':       { rail: 'rail-cookbook',  sidebar: 'tool-cookbook-btn' },
+  'calendar-modal':       { rail: 'rail-calendar',  sidebar: 'tool-calendar-btn' },
+  'gallery-modal':        { rail: 'rail-gallery',   sidebar: 'tool-gallery-btn' },
+  'tasks-modal':          { rail: 'rail-tasks',     sidebar: 'tool-tasks-btn' },
+  'doclib-modal':         { rail: 'rail-archive',   sidebar: 'tool-library-btn' },
+  'memory-modal':         { rail: null,             sidebar: 'tool-memory-btn' },
+  'notes-panel':          { rail: 'rail-notes',     sidebar: 'tool-notes-btn' },
+  'email-lib-modal':      { rail: null,             sidebar: null },
+  'research-overlay':     { rail: 'rail-research',  sidebar: 'tool-research-btn' },
+  'theme-modal':          { rail: null,             sidebar: 'tool-theme-btn' },
+  'settings-modal':       { rail: null,             sidebar: 'tool-settings-btn' },
+  'compare-model-overlay':{ rail: 'rail-compare',   sidebar: 'tool-compare-btn' },
+  'ge-shortcuts-modal':   { rail: null,             sidebar: null },
+  'custom-preset-modal':  { rail: null,             sidebar: null },
+};
+```
+
+Basic show/hide is a `hidden` class toggle plus, for dockable tool windows, `applyEdgeDock`/`clearRightDock` from `modalSnap.js` and drag-to-tile-zone logic from `tileManager.js` (`previewZoneAt`, `snapModalToZone`). Z-index ordering for "bring to front" is a simple monotonic counter starting above the static CSS z-indexes:
+
+```js
+// static/js/modalManager.js:63-67
+let _modalTopZ = 300;
+function _bringToFront(modal) {
+  if (modal) modal.style.setProperty('z-index', String(++_modalTopZ), 'important');
+}
+```
+
+---
+
+## 5. Chat UI: message rendering and SSE stream consumption
+
+### 5.1 Sending a message — request shape
+
+`chat.js` (4,574 lines) builds a `FormData` payload (not JSON — this is a multipart POST, presumably to allow file blobs on the same request path in some code paths) and streams the response:
+
+```js
+// static/js/chat.js:736-784 (abridged)
+const fd = new FormData();
+fd.append('message', _finalMsgWithInject);
+fd.append('session', streamSessionId);
+if (ids.length) fd.append('attachments', JSON.stringify(ids));
+if (documentModule.getCurrentDocId()) fd.append('active_doc_id', documentModule.getCurrentDocId());
+...
 fd.append('mode', isAgentMode ? 'agent' : 'chat');
-
-let _webMode = Storage.getWebMode(isAgentMode ? 'agent' : 'chat');     // 'off'|'auto'|'always'
-if (_webMode === 'off' && el('web-toggle').checked) _webMode = 'always'; // transient override
-if (_incog?.checked) _webMode = 'off';                                   // incognito wins
-fd.append('web_access', _webMode);                                       // tri-state to server
-if (_webMode === 'always') { /* also append legacy use_web / allow_web_search */ }
+...
+fd.append('web_access', _webMode);
+if (isAgentMode) fd.append('allow_web_search', 'true'); else fd.append('use_web', 'true');
+...
+fd.append('use_research', 'true');
+...
+fd.append('allow_bash', 'true');
+...
+fd.append('use_rag', 'false');
+...
+fd.append('incognito', 'true');
+...
+fd.append('preset_id', presetsModule.getSelectedPreset());
 ```
 
-Key points:
-- The **tri-state web mode is resolved per UI mode** (`chat` vs `agent`) through `Storage.getWebMode(...)` and sent as a single `web_access` field. Legacy boolean flags (`use_web`, `allow_web_search`) are still appended when `always`, so older server paths keep working (`chat.js:760-764`).
-- A `holder` element is created for the streaming reply and stashes context for later SSE handlers: `holder._webMode = _webMode` (`chat.js:810`) is read in the `web_sources` branch to show auto-search feedback.
-- Timeout is 6 min for research/agent, 3 min otherwise, enforced via an `AbortController` (`chat.js:786-801`).
+The request itself — **not `EventSource`**, but `fetch()` with a `ReadableStream` reader, so it can be a POST with a body and can be cancelled via `AbortController`:
 
-### 4.2 The SSE event protocol
+```js
+// static/js/chat.js:929-935
+const _tzOffsetMin = -new Date().getTimezoneOffset();
+const res = await fetch(`${API_BASE}/api/chat_stream`, {
+  method: 'POST',
+  body: fd,
+  headers: { 'X-Tz-Offset': String(_tzOffsetMin) },
+  signal: abortCtrl.signal
+});
+```
 
-The server streams newline-delimited JSON events; `chat.js` parses each line and switches on `json.type`. The web-relevant and panel-relevant branches:
+Non-OK responses are handled specially for a deleted session (`404` → reload session list, drop back to welcome screen) and for tool-incompatible models (heuristically detected by scanning the error text for `"tool"`/`"auto"`, then auto-switching the mode toggle from Agent to Chat).
 
-- **`web_sources`** (`static/js/chat.js:1744-1766`): the server performed a web search and returns the result set. The handler stores `holder._webSources`, builds a sources box (`_buildSourcesBox(json.data, 'web')`), and — crucially for the *auto* mode — surfaces that a search silently happened:
-  ```js
-  if (holder._webMode === 'auto' && spinner?.updateMessage) spinner.updateMessage('Searched the web');
-  if (holder._webMode === 'auto' && window._showToolSplash) window._showToolSplash('web');
-  ```
-  This is the feedback loop that tells the user "the model decided to search" even though they never flipped the toggle to `always`.
+### 5.2 The client-side streaming protocol — verbatim
 
-- **`web_search_failed`** (`static/js/chat.js:1767-1778`): web was requested but returned nothing. The spinner flips to "Web search unavailable" and a toast warns "answering without live results" — the answer may be stale.
+The response body is consumed as raw SSE-formatted text via `getReader()`/`TextDecoder`, buffered and split on `\n`, with the last (possibly incomplete) line kept in the buffer for the next chunk:
 
-- **`research_done` / `research_findings` / `research` sources** (`chat.js:1704-1743`): deep-research lifecycle; clears the research timer, persists sources, reloads the session to show the saved report, and (if backgrounded) notifies via `notifyResearchComplete`.
+```js
+// static/js/chat.js:981-983, 1246-1263
+const reader = res.body.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+...
+while (true) {
+  const { done, value } = await reader.read();
+  _lastReaderActivity = Date.now();
+  if (done) break;
 
-- **`model_fallback` / `fallback`** (`chat.js:1779-1829`): a selected model went offline and another answered; shown as a toast and reflected in the role label so a misconfigured provider is never silently masked.
+  buffer += decoder.decode(value, { stream: true });
+  const lines = buffer.split('\n');
+  buffer = lines.pop() || '';
 
-- **`model_info`** (`chat.js:1791-1812`): updates the role label with the real model name / character name as soon as it's known.
+  for (const line of lines) {
+    // Log SSE event types (e.g. "event: error") for debugging
+    if (line.startsWith('event: ')) {
+      const evtType = line.slice(7).trim();
+      if (evtType === 'error') _nextIsError = true;
+      continue;
+    }
+    if (line.startsWith('data: ')) {
+      const data = line.slice(6);
+      ...
+      if (data === '[DONE]') {
+        _streamSawDone = true;
+        ...
+        break;
+      }
+      try {
+        const json = JSON.parse(data);
+        if (_nextIsError || json.status >= 400) {
+          const errMsg = json.text || json.error?.message || `Error ${json.status || 'unknown'}`;
+          ...
+          break;
+        }
+        ...
+```
 
-### 4.3 `chatStream.js` — `ui_control` and background-stream helpers
+This is standard **text/event-stream framing hand-parsed with string methods** rather than the browser's `EventSource` — `event: <type>` lines flip an `_nextIsError` flag for the next `data:` line, `data: <json or [DONE]>` lines carry the payload, and a blank line (implicit, from the trailing `\n\n` per SSE event) is not specially handled since the parser only cares about non-empty prefixed lines. `[DONE]` is the stream-termination sentinel (mirrors OpenAI's SSE convention).
 
-The AI-driven UI events and background-stream notifications were factored out of `chat.js` into `chatStream.js`. Its centerpiece is `handleUIControl(uiData)` (`static/js/chatStream.js:15-204`), which interprets a `ui_control` SSE event so the model can manipulate the UI:
+Each parsed `data:` JSON object carries a `type` discriminator dispatched via a long `if/else if` chain (`json.type === '...'`) — the full observed vocabulary, in source order:
 
-- **`toggle`** (`chatStream.js:20-47`): flips a named tool toggle (`web`/`bash`/`rag`/`research`/`incognito`), syncs the checkbox + button class, persists to the `apollo-toggles` blob, and — for `web` — calls `window._setWebMode(state ? 'always' : 'off')` so the tri-state button reflects it.
-- **`set_mode`** (`chatStream.js:49-62`): switches chat/agent.
-- **`set_theme` / `create_theme`** (`chatStream.js:68-109`): apply + persist a theme, including animated-background / frosted-glass effects.
-- **`highlight` / `clear_highlight`** (`chatStream.js:111-129`): the model can spotlight a DOM selector with a label.
-- **`research_started`** (`chatStream.js:131-146`): adopts a research session into the sidebar immediately (lazy-loads `research/jobs.js`).
-- **`open_panel`** (`chatStream.js:148-191`) and **`open_email_reply`** (`chatStream.js:193-200`): lazy-load and open the named panel (see §2.2).
+```
+tool_start, tool_progress, tool_output, doc_stream_open, doc_stream_delta,
+doc_update, doc_suggestions, ui_control, agent_step, budget_exceeded,
+teacher_takeover, skill_saved, escalation_failed / skill_save_failed,
+research_progress, research_sources, research_findings, research_done,
+web_sources, web_search_failed, model_fallback, model_info, fallback,
+attachments, rag_sources, memories_used, compacted, metrics, message_saved
+```
 
-The remaining exports — `notifyStreamComplete`, `insertStreamDoneToast`, `notifyResearchComplete` (`chatStream.js:209-275`) — handle the "a background stream you weren't looking at just finished" case: a desktop `Notification` when the tab is hidden or you're in another session, plus a clickable in-chat toast that jumps you to the finished session.
+Plain incremental text has **no `type` field** — it arrives as `{"delta": "...", "thinking": bool}` and is appended directly to the accumulator:
+
+```js
+// static/js/chat.js:1367-1385 (abridged)
+if (json.delta) {
+  _cancelThinkingTimer();
+  _removeThinkingSpinner();
+  let _delta = json.delta;
+  if (json.thinking) {
+    if (!_thinkOpen) { _delta = '<think>' + _delta; _thinkOpen = true; }
+  } else if (_thinkOpen) {
+    _delta = '</think>' + _delta; _thinkOpen = false;
+  }
+  const wasEmpty = !accumulated;
+  accumulated += _delta;
+  roundText += _delta;
+  currentAccumulated = accumulated;
+  ...
+```
+
+`json.thinking === true` deltas are wrapped in synthetic `<think>...</think>` tags client-side (there is no native `<think>` tag from the model — Apollo's markdown/renderer layer recognizes this tag to build the collapsible "thinking" UI). Reasoning-model output is therefore reconstructed purely from a boolean flag per delta, with explicit open/close-tag bookkeeping (`_thinkOpen`) so a multi-round agent response gets one `<think>` pair per round instead of leaking round-2+ reasoning into the visible answer.
+
+### 5.3 Background / multi-session streaming
+
+If the user navigates away from the session that's streaming, the loop detects it (`sessionModule.getCurrentSessionId() !== streamSessionId`) and switches to updating an in-memory `_backgroundStreams` Map instead of the DOM, later reconciled via `chatStream.js`'s `notifyStreamComplete()` (native `Notification` API, only fires when `document.hidden` or viewing another session) and `insertStreamDoneToast()` (an in-chat clickable toast in the *other* session that jumps back via `sessionModule.selectSession(sessionId)`).
+
+### 5.4 `chatStream.js` — the `ui_control` event handler
+
+Separated out of `chat.js` for size, this module owns AI-driven UI manipulation events (`type === 'ui_control'`, dispatched into `handleUIControl(uiData)`), covering: `toggle` (flips web/bash/rag/research/incognito checkboxes + persists via `Storage.KEYS.TOGGLES`), `set_mode` (chat↔agent), `switch_model` (updates the model-name display), `set_theme`/`create_theme` (delegates to `themeModule.applyColors`/`.save`/`.saveCustomTheme`), `highlight`/`clear_highlight` (adds `.apollo-highlight` + a floating label to a CSS-selector target, used for guided UI tours the agent can trigger), `research_started`, and `open_panel` (dynamic `import()` of the target feature module, e.g. `import('./browserPanel.js').then(mod => mod.open())`). This lets the backend agent drive the frontend UI as a tool-call side effect during a stream.
+
+### 5.5 Rendering — markdown, code, math, mermaid
+
+`chatRenderer.js` (2,105 lines) renders the accumulated message body via `markdownModule`'s pass (see §3), then re-highlights any un-highlighted `<pre><code>` blocks:
+
+```js
+// static/js/chat.js:1792, 2037 (post-render highlight, same pattern in chatRenderer.js)
+box.querySelectorAll('pre code:not(.hljs)').forEach(b => window.hljs.highlightElement(b));
+```
+
+`modelMeta.js` was deliberately split out of `chatRenderer.js` as a **zero-import, zero-DOM-access module** purely so its pricing/model-metadata tables could be unit-tested under plain Node (importing the full UI chain crashes outside a browser because it touches `HTMLInputElement` at import time via `theme.js` → `colorPicker.js`):
+
+```js
+// static/js/modelMeta.js:1-12
+// Pure model-metadata + text helpers extracted from chatRenderer.js so they
+// can be unit-tested under Node (chatRenderer.js itself imports the whole UI
+// chain — ui.js → theme.js → colorPicker.js — which touches HTMLInputElement
+// at import time and crashes outside a browser). This module has ZERO imports
+// and no DOM/window access at module scope, mirroring vad.js / graphLayout.js.
+//
+// chatRenderer.js imports and re-exports every name here, so its public API is
+// unchanged.
+export const MODEL_INFO = {
+  'claude-sonnet-4-5':    { input: 3.00,  output: 15.00, ctx: 200000 },
+  ...
+```
+
+`MODEL_INFO` is a large hand-maintained table of `{input, output, ctx}` (USD per 1M tokens, context window) keyed by model id, covering Anthropic, OpenAI, DeepSeek, Google, Mistral, etc. — used to compute/display estimated cost in the chat UI.
 
 ---
 
-## 5. State management
+## 6. Model picker
 
-### 5.1 `storage.js` — the only localStorage gateway
-
-All persistence goes through `storage.js`, which centralizes key names and adds JSON parse safety. Every key is a constant in `KEYS` (`static/js/storage.js:5-27`): `THEME: 'apollo-theme'`, `TOGGLES: 'apollo-toggles'`, plus sidebar/compare/model/session keys. `getJSON`/`setJSON` swallow quota and parse errors and fall back gracefully (`storage.js:33-53`) so private-mode browsers and corrupted values never crash the app.
-
-The **toggle blob** is the app's main piece of UI state. It is a single JSON object under `apollo-toggles`, read/written via `loadToggleState()` / `saveToggleState()` (`storage.js:91-97`) and field-accessed via `getToggle`/`setToggle` (`storage.js:99-108`). It holds `mode`, the per-tool booleans (`rag`, `research`, `group`, `bash`, ...), and the tri-state web keys (`webmode_chat`, `webmode_agent`).
-
-### 5.2 The tri-state web toggle (off / auto / always)
-
-Unlike the other tools (plain on/off checkboxes), web access is a **three-position toggle persisted per UI mode**. The single source of truth for resolving it is `getWebMode(uiMode)` (`static/js/storage.js:118-125`):
+There are two related-but-distinct model UIs. `static/js/models.js` renders the sidebar's `models-section` — a browsable list of every endpoint's models with favorite-star/drag-reorder support, fetched from `/api/models` and cached client-side with a TTL, where each row's `+ Chat`/`+ Image`/`Offline` button or the row itself calls `_startChat(url, mid, endpointId)` → `sessionModule.createDirectChat(...)`. The actual **chatbox model-selector dropdown** — the "model picker" a user opens from the composer to switch models mid-conversation — is a separate, dedicated module: `static/js/modelPicker.js` (707 lines), explicitly extracted out of `sessions.js`:
 
 ```js
-export function getWebMode(uiMode) {
-  const state = loadToggleState();
-  const key = 'webmode_' + uiMode;                     // webmode_chat / webmode_agent
-  if (['off', 'auto', 'always'].includes(state[key])) return state[key];
-  const legacy = state['web_' + uiMode];               // migrate old boolean keys
-  if (legacy !== undefined) return legacy ? 'always' : 'off';
-  return 'auto';                                        // default for fresh browsers
+// static/js/modelPicker.js:1-19
+// Model Picker — chatbox model selector dropdown
+// Extracted from sessions.js
+
+import { providerLogo } from './providers.js';
+import uiModule from './ui.js';
+import settingsModule from './settings.js';
+import { sortModelObjects } from './modelSort.js';
+
+const API_BASE = window.location.origin;
+
+// ── Recent + Favorites persistence ──
+// Recent is auto-tracked (last 5 picks, most-recent-first) and lives in its
+// own key. Favorites is the SAME key the sidebar Models section uses, so a
+// favorite toggled here shows up there and vice-versa.
+const RECENT_KEY = 'apollo-model-recent';
+const FAVORITES_KEY = 'apollo-model-favorites';
+const RECENT_MAX = 5;
+const BROWSE_ALL_LIMIT = 12;
+```
+
+Its public API is intentionally tiny — `initModelPicker(deps)` (wires the dropdown once) and `updateModelPicker()` (re-syncs the composer's model-name label, called after any model change from *either* UI). The candidate list is built by `_getAllModels()`, which reads from `window.modelsModule.getCachedItems()` — i.e. it reuses `models.js`'s already-fetched/cached endpoint data rather than issuing its own `/api/models` call — dedupes by model id across endpoints, and filters out non-chat-capable models via `window.modelsModule.isChatCapable(item, mid)`:
+
+```js
+// static/js/modelPicker.js:177-215 (abridged)
+function _getAllModels() {
+  const items = (window.modelsModule && window.modelsModule.getCachedItems) ? window.modelsModule.getCachedItems() : [];
+  const result = [];
+  const seen = new Set();
+  items.forEach(item => {
+    if (item.offline) return;
+    const allModels = (item.models || []).concat(item.models_extra || []);
+    ...
+    allModels.forEach((mid, i) => {
+      if (seen.has(mid)) return;
+      const _icc = window.modelsModule && typeof window.modelsModule.isChatCapable === 'function'
+        ? window.modelsModule.isChatCapable(item, mid)
+        : true;
+      if (!_icc) return;
+      seen.add(mid);
+      result.push({ mid, display: ..., url: item.url, endpointId: item.endpoint_id, ... });
+    });
+  });
+  return sortModelObjects(result);
 }
 ```
 
-Semantics:
-- **off** — never search.
-- **auto** — the *server* decides whether the query needs the web (the "decider"); the client shows after-the-fact feedback via the `web_sources` SSE branch (§4.2).
-- **always** — force a pre-search every message.
+**Selecting a model** (`_pick(m)`, `modelPicker.js:470-513`) is the concrete state-transition: it fires a `CustomEvent('apollo:model-picked', { detail: m })` for any listener that cares, closes the dropdown, then does one of three things depending on whether a session already exists — stash a pending choice (`_deps.setPendingChat(...)`) if there's no current session and no pending chat yet, create a brand-new direct chat (`_deps.createDirectChat(...)`), or `PATCH` the live session's model:
 
-The button cycles `off → auto → always → off` (`static/app.js:1599` `WEB_MODES = ['off','auto','always']`; cycle handler `app.js:1748-1767`). Persistence and visual sync are three small functions in `app.js`:
+```js
+// static/js/modelPicker.js:470-513 (abridged)
+try { document.dispatchEvent(new CustomEvent('apollo:model-picked', { detail: m })); } catch {}
+...
+_close();
+if (!currentSessionId && _pendingChat) {
+  _deps.setPendingChat({ url: m.url, modelId: m.mid, endpointId: m.endpointId });
+  updateModelPicker();
+  uiModule.showToast(`Using ${m.display}`);
+  return;
+} else if (!currentSessionId) {
+  await _deps.createDirectChat(m.url, m.mid, m.endpointId);
+} else {
+  const fd = new FormData();
+  fd.append('model', m.mid);
+  fd.append('endpoint_url', m.url);
+  if (m.endpointId) fd.append('endpoint_id', m.endpointId);
+  const res = await fetch(`${API_BASE}/api/session/${currentSessionId}`, { method: 'PATCH', body: fd });
+  if (!res.ok) { uiModule.showError('Failed to set model'); return; }
+  const sessions = _deps.getSessions();
+  const s = sessions.find(x => x.id === currentSessionId);
+  if (s) { s.model = m.mid; s.endpoint_url = m.url; }
+}
+updateModelPicker();
+uiModule.showToast(`Using ${m.display}`);
+```
 
-- `saveWebMode(mode, value)` writes `state['webmode_' + mode] = value` (`static/app.js:1605-1609`).
-- `applyWebModeToButton(webMode)` (`static/app.js:1611-1621`) toggles `.active`/`.web-auto` classes, sets `aria-pressed`, `aria-label`/`title` to `Web search: <mode>`, and keeps the hidden `#web-toggle` checkbox in sync (for compare mode and slash commands that read the checkbox directly).
-- `window._setWebMode(value, uiMode)` (`static/app.js:1626-1631`) is the server/slash-command entry point.
-
-Because the value is keyed by `webmode_chat` vs `webmode_agent`, switching between Chat and Agent mode re-applies the correct stored web mode (`applyModeToToggles → applyWebModeToButton(loadWebMode(mode))`, `app.js:1652`). Settings also exposes a server-side default via `web-access-mode` (`static/js/settings.js:1782-1792`, `PATCH` of `web_access_mode`), and on a fresh browser `app.js` seeds the local `webmode_*` keys from that server default (`app.js:1383-1395`).
-
-Mutual-exclusion rules are enforced where toggles interact: Group chat forces web off (`app.js:734-741`), incognito forces `web_access=off` at send time (`chat.js:757-758`), and turning web on disables research (`app.js:1762-1765`).
+The picked model is **not** re-sent on every `/api/chat_stream` FormData payload (§5.1's field list has no `model` key) — it's persisted server-side on the session record via this `PATCH /api/session/{id}` (or baked in at `createDirectChat` time), and `chat.js` reads it back for display purposes via `sessionModule.getCurrentModel()`. `modelPicker.js` receives its cross-module dependencies (`setPendingChat`, `createDirectChat`, `getSessions`, …) through the same `deps`-object injection pattern used by `settingsAiExtras.js` (§7.2) rather than importing `sessions.js` directly — avoiding a `sessions.js` ⇄ `modelPicker.js` import cycle. `app.js` also maintains a `_defaultChat` cache (`_refreshDefaultChat()`, hitting `/api/default-chat`) so "New chat" without an explicit model pick still resolves to the user's configured default endpoint/model, refreshed on every new-chat action rather than cached once at page load (so a settings change to the default model takes effect immediately).
 
 ---
 
-## 6. The model picker & `isChatCapable`
+## 7. Settings modal architecture
 
-The chatbox model dropdown is `modelPicker.js`, initialized with a dependency bag: `initModelPicker(deps)` (`static/js/modelPicker.js:103`). It keeps two small localStorage lists — recent picks (`apollo-model-recent`, capped at 5, `modelPicker.js:15-37`) and favorites (`apollo-model-favorites`, the *same* key the sidebar Models section uses so favorites stay in sync, `modelPicker.js:16,38`).
+### 7.1 Tab structure
 
-`models.js` owns the catalog (`/api/models`, 30 s client cache, `models.js:17-19`) and the new capability filter `isChatCapable(endpointItem, modelName)` (`static/js/models.js:37-42`):
+`settings.js` owns the `#settings-modal` and its tabs, toggled via `[data-settings-tab]` buttons whose `data-settings-tab` value maps to a `[data-settings-panel]` content div:
 
 ```js
-export function isChatCapable(endpointItem, modelName) {
-  const meta = endpointItem && endpointItem.model_meta;
-  if (!meta || !meta[modelName]) return true;      // no metadata → assume chat-capable
-  const kind = meta[modelName].kind;
-  return kind === 'chat' || !kind;                 // exclude embedding / non-chat kinds
+// static/js/settings.js:34-58
+const ADMIN_TABS = new Set(['services', 'integrations', 'tools', 'users', 'system']);
+
+function initTabs() {
+  modalEl.querySelectorAll('[data-settings-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.settingsTab;
+      if (ADMIN_TABS.has(tab) && tab !== 'integrations' && window._isAdmin && window.adminModule && typeof window.adminModule.open === 'function') {
+        window.adminModule.open(tab);
+        return;
+      }
+      modalEl.querySelectorAll('[data-settings-tab]').forEach(b => b.classList.toggle('active', b.dataset.settingsTab === tab));
+      modalEl.querySelectorAll('[data-settings-panel]').forEach(p => p.classList.toggle('hidden', p.dataset.settingsPanel !== tab));
+      document.body.classList.toggle('settings-appearance-open', tab === 'appearance');
+      syncAppearanceOpacity(tab === 'appearance');
+      if (tab === 'ai') { refreshAiModelEndpoints(); refreshLocalModels(); }
+    });
+  });
 }
 ```
 
-This filter is applied in two places so embedding/diffusion/unsupported models never reach a chat selector:
-- In `models.js` itself when rendering the sidebar list (`models.js:227,239,549`), always paired with an `epModelType !== 'image'` guard.
-- In `modelPicker.js`, which reaches `isChatCapable` through the global `window.modelsModule` rather than a static import (avoiding a circular dependency): `window.modelsModule && typeof window.modelsModule.isChatCapable === 'function' ? window.modelsModule.isChatCapable(item, mid) : true` (`static/js/modelPicker.js:192-195`, and the bound variants at `modelPicker.js:537-538,667-668,678-679`). The `: true` fallback means if the helper hasn't loaded yet the model is *included* rather than wrongly hidden.
+Admin-gated tab ids (`services`, `integrations` [partially — see below], `tools`, `users`, `system`) delegate entirely to `adminModule.open(tab)` instead of showing a `settings-modal` panel — the Settings modal is user-preferences-only; the wider admin console is a separate surface `admin.js` renders. `integrations` is a hybrid: the tab always opens locally (Agent Workbench + personal integrations are for every user), but API-service *management* inside that panel is gated internally. `window._isAdmin` is populated once from `/api/auth/status`'s `is_admin` field (see §7.3 and doc 06).
 
-`modelPicker.js` also uses the filter when auto-selecting a default model, picking the first chat-capable id rather than blindly the first entry (`modelPicker.js` tail, `models.find(m => _iccFn3(first, m)) || models[0]`).
+### 7.2 `settingsAiExtras.js` — how it extends `settings.js`
 
----
-
-## 7. Panels
-
-Apollo's tool surfaces are modal/overlay "panels" opened from the sidebar tool buttons (wired in `app.js`) or by the server via the `open_panel` SSE event (§2.2). Three representative ones:
-
-### 7.1 Research panel — `research/panel.js`
-
-Named-export module (`init`, `isOpen`, `toggle`, `openPanel`, `closePanel`). The sidebar button just calls `researchPanelModule.toggle()` (`static/app.js:831-833`). `toggle()` (`panel.js:238-252`) restores a minimized overlay if one exists, otherwise opens/closes. State is a module-private `_open` boolean plus `document.body.classList` markers (`research-panel-view`) — no global store.
-
-### 7.2 Browser panel — `browserPanel.js` (canvas screencast client)
-
-The most involved panel: a live **canvas screencast** of the agent's server-side Chromium, with full input forwarding. It is opened via `browserPanelModule.open()` (`static/app.js:838-840`). Architecture:
-
-- **WebSocket transport.** `open()` (`browserPanel.js:433-442`) shows the modal, binds canvas input, calls `connectWs()` (`browserPanel.js:124-166`) to `/api/browser/ws` (`wss://` under HTTPS, `browserPanel.js:109-112`), and starts a 2 s console-event poll. A stale-socket guard (`if (socket !== ws) return`) is applied in every handler so a reconnect can't have its old socket's callbacks clobber the new one.
-- **Frame rendering (latest-wins).** Incoming `{type:'frame'}` messages carry base64 JPEG + device `w/h`. `drawFrame`/`paint` (`browserPanel.js:194-237`) decode into a single reused `Image`; if a frame arrives mid-decode it is held in `pendingFrame` and only the *most recent* one is drawn next (`frameBusy` gate) — this caps memory and keeps the stream real-time under load. `{type:'url'}` updates the address bar without recording history; `{type:'error'}` is shown non-fatally (`handleWsMessage`, `browserPanel.js:178-190`).
-- **Input forwarding.** `bindCanvasInput` (`browserPanel.js:263-321`) attaches mouse/wheel/key listeners that translate canvas coordinates back into device pixels (`canvasCoords`, `browserPanel.js:245-255`) and `wsSend` them as `{type:'mouse'|'key'...}`. `mousemove` is throttled to ~30/s (`MOVE_THROTTLE_MS = 33`, `browserPanel.js:29,268-275`). A `CAPTURE_KEYS` set (`browserPanel.js:258-261`) prevents space/arrows/Tab from scrolling Apollo instead of the page; `Cmd`-combos pass through to the host browser; `Esc` blurs the canvas (releases keyboard focus) rather than being forwarded.
-- **POST fallback.** When the WS is *not* connected, the panel drives the agent browser over `POST /api/browser/navigate` and maintains a **local** history stack (`historyStack`/`historyIndex`, `browserPanel.js:14-17,93-99`). `navigate`/`goBack`/`goForward`/`reload` (`browserPanel.js:345-397`) branch on `wsConnected`: live → send a WS message and let the *server* own history; fallback → POST and walk the local stack. `syncButtons` (`browserPanel.js:79-91`) keeps back/forward enabled when live (server owns it) and stack-driven otherwise.
-- **URL safety.** `normalizeUrl` (`browserPanel.js:49-70`) blocks dangerous schemes (`BLOCKED_SCHEMES`: `javascript:`, `file:`, `data:`, `chrome:`, ...) and refuses to load Apollo's own origin inside the frame.
-- **Localhost auto-detect.** A `MutationObserver` over terminal/output panes (`initLocalhostObserver`, `browserPanel.js:473-537`) scans for `localhost`/`127.0.0.1` URLs in code-runner / cookbook / agent-tool output and toasts "Dev server detected" so the user can open it in the panel.
-
-### 7.3 Compare — `compare/`
-
-A sub-bundle (`compare/index.js` + `state.js`, `panes.js`, `stream.js`, `vote.js`, `scoreboard.js`, `selector.js`, `probe.js`, `models.js`, `icons.js`) exposing a default object with `toggleMode`, `isActive`, `deactivate` (`compare/index.js:1468`). The Compare tool button (`app.js:809-827`) closes other exclusive tools, starts a fresh chat, then `compareModule.toggleMode()`. Compare-specific persistence (`compare-save-results`, `compare-continue-chat`, `compare-blind`, `compare-randomize`) is namespaced in `storage.js`'s `KEYS` (`storage.js:12-15`).
-
-### How panels open (summary)
-
-| Path | Trigger | Code |
-|------|---------|------|
-| Sidebar tool button | direct `module.open()/toggle()` | `app.js:809-924` |
-| URL route (`/browser`, `/notes`, ...) | deferred `window._apolloRouteOpener` | `app.js:993-1062`, fired post-`loadSessions` |
-| Server SSE `open_panel` | lazy `import()` + `mod.open` | `chatStream.js:148-191` |
-| Escape key | one overlay per press, priority-ordered | `app.js:484-595` |
-
----
-
-## 8. Component-interaction summary
-
-```
-DOMContentLoaded
-   └─ startApolloApp()                       app.js:3468
-        ├─ initializeEventListeners()        app.js:125   (toggles, tool btns, Esc stack, routing)
-        └─ modules.init(API_BASE)            app.js:3501+
-
-Send a message
-   chat.js handleChatSubmit
-     ├─ Storage.loadToggleState() / getWebMode(mode)     → web_access tri-state   storage.js:118
-     ├─ FormData → POST (stream)                          chat.js:743-801
-     └─ for each SSE line, switch(json.type):
-            web_sources       → sources box + auto-search feedback   chat.js:1744
-            web_search_failed → "no live results" toast              chat.js:1767
-            model_fallback    → toast + relabel                      chat.js:1779
-            ui_control        → chatStream.handleUIControl()         chatStream.js:15
-                                   ├─ toggle web → window._setWebMode → applyWebModeToButton  app.js:1611
-                                   └─ open_panel → import('./browserPanel.js').open()          chatStream.js:148
-
-Globals bus:  window._isAdmin, _userPrivileges, _setWebMode,
-              _syncRagIndicator, _showToolSplash, modelsModule, sessionModule, ...   app.js:49-53,1142,1626,1820
-```
-
-The throughline: **no framework, no store, no build** — coordination is done with ES-module imports, a default-export-object convention, a single localStorage gateway (`storage.js`), a handful of guarded `window.*` globals, and a line-delimited-JSON SSE protocol that lets the server reach back into the UI.
-
----
-
-## 9. Voice call mode (`voiceCall.js` + `vad.js`)
-
-Call mode is hands-free voice chat: mic → VAD → STT → normal chat send → TTS →
-back to listening. Both modules follow the same "pure core, thin browser wiring"
-split as the backend pure modules, so the state machine and the VAD gate import
-cleanly in Node for unit tests and only touch the DOM/mic when their wiring
-functions are called.
-
-### 9.1 The pure state machine — `createCallMachine` (`voiceCall.js:9`)
-
-`createCallMachine(effects)` returns `{dispatch(event, payload), state}` over
-injected effects (`startCapture`, `stopCapture`, `submitMessage`, `speak`,
-`stopSpeak`, `teardown`, `onState`). States and the events that move between
-them:
-
-```
-idle ──start──▶ listening
-listening ──speechStart──▶ (startCapture) capturing
-capturing ──speechEnd──▶ (stopCapture) transcribing
-transcribing ──transcribed(text)──▶ (submitMessage) thinking   [empty text → listening]
-thinking ──assistantComplete(text)──▶ (speak) speaking          [empty text → listening]
-speaking ──speakEnd──▶ listening
-speaking ──speechStart (barge-in)──▶ (stopSpeak, startCapture) capturing
-(any state) ──end──▶ (teardown) idle
-```
-
-Two load-bearing details in the transitions:
-
-- **`speaking` is entered *before* `speak()` is invoked** (`voiceCall.js:73-76`):
-  a `speak()` that fires `speakEnd` synchronously (e.g. TTS disabled) must land
-  in `speaking`, or the machine would park there forever.
-- **Barge-in:** a `speechStart` while `speaking` stops TTS and jumps straight to
-  `capturing` so the user can interrupt the assistant.
-
-### 9.2 The VAD gate — `createVadGate` (`vad.js:9`)
-
-A pure RMS→event gate with hysteresis. `push(rms, nowMs)` returns
-`'speechstart'`, `'speechend'`, or `null`. It rises above a `threshold` (0.02)
-to start speech and only ends after `silenceMs` (1200 ms) of quiet:
+Rather than growing `settings.js` further (the repo enforces a module-size ratchet via `scripts/check_module_sizes.py`), AI-settings-adjacent functionality that doesn't fit the size budget was extracted into `settingsAiExtras.js` and wired back in via **named imports plus dependency injection** (not a plugin/registration API — `settingsAiExtras.js` cannot see `settings.js`'s private module-scope helpers, so `settings.js` passes them explicitly as a `deps` object to avoid a circular import):
 
 ```js
-push(rms, nowMs) {
-  const loud = rms >= threshold;
-  if (loud) lastLoudMs = nowMs;
-  if (!speaking) { if (loud) { speaking = true; return 'speechstart'; } return null; }
-  if (!loud && nowMs - lastLoudMs >= silenceMs) { speaking = false; return 'speechend'; }
-  return null;
+// static/js/settingsAiExtras.js:1-6
+// static/js/settingsAiExtras.js
+//
+// Settings → AI additions kept out of settings.js for the module-size
+// ratchet (scripts/check_module_sizes.py): the llama-server binary field on
+// the Local Models card, and the Fast Lane (mixture routing) model role.
+// settings.js-private helpers are injected via a deps object.
+```
+
+```js
+// static/js/settings.js:12
+import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling } from './settingsAiExtras.js';
+```
+
+`initLightModel(deps)` is a representative example of the injection pattern — it receives `deps.el`, `deps.fetchModelEndpoints`, `deps.fillEndpointSelect`, `deps.fillModelSelect` from `settings.js` rather than importing them:
+
+```js
+// static/js/settingsAiExtras.js (initLightModel, abridged)
+export async function initLightModel(deps) {
+  var el = deps.el;
+  var toggle = el('set-mixtureRoutingToggle');
+  var epSel = el('set-lightEpSelect');
+  var modelSel = el('set-lightModelSelect');
+  ...
+  try {
+    _endpoints = await deps.fetchModelEndpoints();
+    deps.fillEndpointSelect(epSel, _endpoints, epSel.value, true);
+  } catch (e) { console.warn('Failed to load endpoints for fast lane', e); }
+  ...
+  var res = await fetch('/api/auth/settings', { credentials: 'same-origin' });
+  var settings = await res.json();
+  if (toggle) toggle.checked = !!settings.mixture_routing_enabled;
+  ...
+```
+
+`refreshLlamaBinary`/`wireLlamaBinaryField` render and save the local `llama-server` binary path (`GET`/`PUT /api/local-models/binary`) for the Local Models card. This same deps-object pattern recurs for `ecosystemHub.js` (`initEcosystemHub`) and `systemStatusCard.js`/`systemStatusActions.js` — Apollo's general strategy for splitting an oversized module without a plugin framework: extract pure functions, pass in whatever DOM/state accessors they need as parameters.
+
+---
+
+## 8. File upload flow
+
+`fileHandler.js` (295 lines) owns picking, previewing, and uploading attachments.
+
+**Selection**: `openPicker()` clicks a hidden `<input type="file" id="file-input">`; drag-and-drop and paste handlers (wired in `app.js`) funnel into `addFiles(files)` (capped at `MAX_FILES = 10`).
+
+**Preview**: each pending `File` gets an object-URL preview cached in a `WeakMap` (`_previewUrls`) so the same `File` object never leaks a duplicate URL, with `_revokePreviewUrl()` called on removal. The attachment strip collapses into a single "N files" badge above `MAX_VISIBLE = 3`, capped from expanding at all above `MAX_EXPAND = 6`:
+
+```js
+// static/js/fileHandler.js:49-56
+const MAX_VISIBLE = 3;
+const MAX_EXPAND = 6;   // beyond this, the badge stays collapsed (too many chips to preview)
+let _expanded = false;
+```
+
+**Upload** (`uploadPending()`): builds a `FormData` with one `files` entry per pending file and POSTs to `/api/upload`:
+
+```js
+// static/js/fileHandler.js:167-192 (abridged)
+const fd = new FormData();
+pendingFiles.forEach(f => fd.append('files', f, f.name || 'paste.png'));
+
+try {
+  const res = await fetch(`${API_BASE}/api/upload`, {
+    method: 'POST',
+    body: fd
+  });
+  if (!res.ok) {
+    let detail = '';
+    try { const e = await res.json(); detail = e.detail || e.error || ''; } catch (_) {}
+    _showToast('Upload failed' + (detail ? ': ' + detail : ` (HTTP ${res.status})`));
+    return [];
+  }
+  const data = await res.json();
+  uploaded = (data.files || []);
+  pendingFiles = [];          // clear only on success
+  _lastUploadedMeta = uploaded;
+  return uploaded.map(x => x.id);
+} finally {
+  _uploadSpinners.forEach(sp => { try { sp.stop && sp.stop(); } catch (_) {} });
+  _uploadSpinners = [];
+  if (strip) strip.classList.remove('attach-uploading');
+  renderAttachStrip();
 }
 ```
 
-Note the **deliberate lowercase** `speechstart`/`speechend` (DOM-event style):
-the call wiring bridges these to the machine's camelCase `speechStart`/`speechEnd`
-at `voiceCall.js:211` (`ev === 'speechstart' ? 'speechStart' : 'speechEnd'`) —
-the casing is intentionally different on the two sides.
+On failure, `pendingFiles` is deliberately **not cleared**, so the strip re-renders with the same chips for a retry — a fix for an earlier bug (referenced in-code as issue #1346) where a non-OK upload response (429 rate-limit, 413 too-large) silently dropped the attachments and the chat sent with no files attached at all, with the model never seeing them. Returned attachment `id`s are stitched into the chat request as `fd.append('attachments', JSON.stringify(ids))` (see §5.1) — the upload always happens as its own round-trip *before* `/api/chat_stream` is called, not inline with the streaming request.
 
-### 9.3 The Web Audio wrapper — `createMicVad` (`vad.js:49`)
+---
 
-Browser-only. Wires a mic `MediaStream` through an `AnalyserNode`
-(`fftSize = 512`), computes RMS off `getFloatTimeDomainData` each
-`requestAnimationFrame` tick, and feeds it to a gate; emits `onEvent(ev, rms)`.
-It resumes a `suspended` AudioContext (one created outside a user gesture reads
-silence forever otherwise, `vad.js:58-59`) and returns `{pause, resume, destroy}`
-so the overlay's Mute button can gate the loop.
+## 9. Theming system
 
-### 9.4 Browser wiring — `startCall`/`endCall` (`voiceCall.js:143`, `:237`)
+### 9.1 Persistence and CSS custom properties
 
-`startCall()`:
-1. Guards `window.isSecureContext` (mic needs HTTPS/localhost), then
-   `getUserMedia({audio:{echoCancellation, noiseSuppression}})`.
-2. **Refreshes TTS availability** (`await window.aiTTSManager.checkAvailability()`,
-   `:163`) so a provider enabled mid-session isn't seen as unavailable — the
-   manager only probes once at page load.
-3. Takes over TTS: saves `aiTTSManager.autoPlay`, sets it `false` (the call drives
-   TTS explicitly via the machine's `speak` effect).
-4. Builds the machine with real effects. `startCapture` spins up a
-   `MediaRecorder(stream, {mimeType:'audio/webm'})`, buffering chunks **in the
-   closure** (not on `_active`) so a mid-utterance teardown can't leave `onstop`
-   dereferencing a nulled `_active`; `onstop` POSTs the blob to
-   `/api/stt/transcribe` and dispatches `transcribed`. `submitMessage(text)` calls
-   `window.apolloSendMessage(text)`. `speak(text)` short-circuits to `speakEnd`
-   when TTS is unavailable/disabled, else `aiTTSManager.enqueue(text, ..., () => dispatch('speakEnd'))`.
-5. Creates the `createMicVad`, subscribes to the `apollo:assistant-complete`
-   window event (§9.5), wires the overlay Mute/End buttons, and `dispatch('start')`.
-
-`endCall()` removes the event listener, destroys the mic, stops the stream
-tracks, stops TTS, **restores** `autoPlay`, resets the overlay to `idle`, and
-nulls `_active`. Guarded `window.voiceCallModule` assignment keeps the module
-Node-importable.
-
-### 9.5 The `apollo:assistant-complete` bridge
-
-The chat stream fires this window `CustomEvent` **unconditionally** at the end of
-every assistant turn (`chat.js:2500-2504`), *outside* the TTS-button guard so the
-call machine still advances past `thinking` when TTS is unavailable:
+Themes are plain JS objects of hex color strings plus optional `advanced` overrides, persisted to `localStorage['apollo-theme']` (via `Storage.KEYS.THEME`) and mirrored server-side for cross-device sync:
 
 ```js
-window.dispatchEvent(new CustomEvent('apollo:assistant-complete', {
-  detail: { text: accumulated || '' },
-}));
+// static/js/theme.js:471-483
+export function save(name, colors, opts) {
+  const obj = { name, colors };
+  if (opts) {
+    if (opts.font && opts.font !== DEFAULT_FONT) obj.font = opts.font;
+    if (opts.density && opts.density !== DEFAULT_DENSITY) obj.density = opts.density;
+    if (opts.bgPattern && opts.bgPattern !== 'none') obj.bgPattern = opts.bgPattern;
+    ...
+  }
+  Storage.setJSON(LS_KEY, obj);
+  _syncToServer(obj);
+}
+
+function _syncToServer(obj) {
+  try {
+    fetch('/api/prefs/theme', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ value: obj }),
+    }).catch(e => console.warn('Theme sync failed:', e));
+  } catch (e) { console.warn('Theme sync error:', e); }
+}
 ```
 
-Call mode listens (`voiceCall.js:221`) and dispatches `assistantComplete`;
-Review mode listens too (§11).
+Applying a theme sets CSS custom properties directly on `document.documentElement.style` — there is no `.light`/`.dark` class toggle; every themed rule reads a `--*` variable:
 
-### 9.6 Overlay markup + call button
+```js
+// static/js/theme.js:241-266 (abridged)
+export function applyColors(colors) {
+  const s = document.documentElement.style;
+  s.setProperty('--bg', colors.bg);
+  s.setProperty('--fg', colors.fg);
+  s.setProperty('--panel', colors.panel);
+  s.setProperty('--border', colors.border);
+  if (colors.red) s.setProperty('--red', colors.red);
 
-- **Overlay** (`index.html:2506`): `#voice-call-overlay[data-state]` with a status
-  line ("call mode · local whisper · on-device"), an animated orb,
-  `#vc-state-label` + `#vc-transcript`, and `#vc-mute-btn` / `#vc-end-btn`. The
-  wiring writes `overlay.dataset.state` and the label text per state
-  (`voiceCall.js:118-128`).
-- **Call button** (`index.html:1118`, `#call-mode-btn`) in the input bar. It's
-  **always visible**; the click is gated on STT being enabled rather than hiding
-  the button (which left it invisible when STT status loaded late). If STT is off
-  it toasts "Enable Speech-to-Text in Settings"; else `voiceCallModule.startCall()`
-  (`app.js:3862-3882`). `window._syncCallModeBtn` toggles a `.tool-disabled`
-  class as STT status changes.
-- **`window.apolloSendMessage(text)`** (`app.js:3851`): the programmatic-send
-  entry. It fills `#message`, fires an `input` event, and calls `handleSubmit` so
-  the transcript goes through the *normal* chat path (a real turn, not a special
-  case).
+  // Match native form controls, scrollbars, and date/color pickers to the
+  // theme's brightness ... The theme system swaps CSS variables but never adds a
+  // `.light` class, so the `:root.light` overrides ... never fired
+  try {
+    const bgL = hexToHSL(colors.bg)[2];
+    s.colorScheme = bgL < 50 ? 'dark' : 'light';
+  } catch (_e) { /* keep whatever's set if bg is unparseable */ }
 
----
+  const _mtc = document.querySelector('meta[name="theme-color"]');
+  if (_mtc && colors.bg) _mtc.setAttribute('content', colors.bg);
 
-## 10. The Voicebox TTS option (settings)
+  const syn = deriveSyntaxColors(colors);
+  s.setProperty('--hl-bg', syn.bg);
+  ...
+  const adv = colors.advanced || {};
+  const defaults = computeAdvancedDefaults(colors);
+  for (const { key, css } of ADV_KEYS) {
+    s.setProperty(css, adv[key] || defaults[key]);
+  }
+  _updateFavicon(colors.red || '#e06c75');
+}
+```
 
-The TTS settings block adds a **`voicebox`** provider option alongside
-`disabled`/`browser`/`local`/`piper`/`endpoint:*`. When selected
-(`settings.js:1104` `isVoicebox()`):
-- A base-URL row (`#set-ttsVoiceboxUrlRow`, default `http://127.0.0.1:17493`) is
-  shown (`settings.js:1121`).
-- The voice field becomes a free-text **profile id** ("leave blank for first
-  available", `settings.js:1128`).
-- `loadVoiceboxProfiles()` (`settings.js:1137`) GETs `<base>/profiles` with the
-  `X-Voicebox-Client-Id: apollo` header and populates the voice datalist,
-  tolerating a bare list / `{profiles}` / `{data}` shape. On failure the
-  free-text profile id still works.
+Native form-control chrome (scrollbars, `<select>` popups, date/color pickers) is matched to the theme's *derived brightness* via the CSS `color-scheme` property, computed from the background color's HSL lightness (`bgL < 50` ⇒ dark) rather than a fixed light/dark flag — the code comment explicitly notes this was a fix for a bug where a `:root.light` class-based override was dead code because the theme system never added that class.
 
-Saving posts `{tts_provider:'voicebox', voicebox_url, tts_voice, ...}` to
-`POST /api/auth/settings` (the app-settings route, doc 04 §10.3), which the
-backend `TTSService` reads on every call.
+### 9.2 Syntax-highlight color derivation
 
----
+`--hl-*` variables (used by `highlight.js`'s CSS theme) are **derived**, not stored — `deriveSyntaxColors(colors)` computes keyword/string/comment/function/number/builtin/variable/param colors from the theme's `fg`/`bg`/`red` via HSL rotation, matching the inline bootstrap script in `index.html` (§1.1) so first paint and post-boot application agree exactly.
 
-## 11. Adversarial reviewer (`review.js`)
+### 9.3 First-paint bootstrap (duplicated logic)
 
-`review.js` mirrors the AI-TTS-button pattern: it appends a small "Review" icon
-button to an assistant message's `.msg-actions`, and supports a persisted
-**Review mode** that auto-reviews every answer.
+Because `theme.js` as an ES module can't run before the browser parses and paints the initial DOM, the *exact same* color-application logic is duplicated as plain inline JS in `index.html`'s first `<script nonce>` block (§1.1) — this is a deliberate, documented duplication to avoid a flash of unstyled/wrong-themed content, not an oversight; comments in both places cross-reference the duplication.
 
-- **`addReviewButton(messageElement, question, answer)`** (`review.js:128`):
-  dedup-guarded, appends the icon button. On click it resolves the question
-  (`findPrecedingQuestion` walks back to the preceding `.msg-user` bubble,
-  falling back to the last one in history) and the answer (`dataset.raw` or the
-  `.body` text), then `runReview`. `chat.js:2494` calls `addReviewButton` on
-  every completed answer.
-- **`runReview`** (`review.js:82`) POSTs `/api/review` `{question, answer}`
-  (JSON), then renders `{verdict, issues, suggestion}` into a collapsible
-  `<details class="review-box">` under the message. `verdictColor` maps the
-  verdict to a badge color: `incorrect`→red, `accurate`→green,
-  `incomplete`/`needs`→amber, else neutral (`review.js:18-24`). Errors render in
-  red inside the same box.
-- **Review mode** (`review.js:157`): a window listener on
-  `apollo:assistant-complete` (§9.5) checks `loadToggleState().reviewMode`; when
-  on, it finds the last `.msg-ai` bubble and auto-runs a review for it.
+### 9.4 Theme popup UI
+
+`#theme-modal` / `#theme-popup` (index.html ~lines 485–650) has two tabs — **Themes** (browse built-in `#themeGrid` + user-saved `#themeUserGrid` swatches) and **Customize** (native `<input type="color">` pickers for `bg`/`fg`/`panel`/`sidebar`/`border`/`red`, an expandable "More Colors" section for `advanced` overrides — chat bubbles, sidebar, input bar, code blocks, toggles — each with a per-field reset button, plus a Color Harmony generator card). Every advanced color field has a matching `data-reset-adv="<key>"` reset button that removes the override and reapplies the computed default. Server round-trips (`GET`/`PUT /api/prefs/theme`) keep the active theme in sync across devices/sessions for a logged-in user; anonymous/desktop-mode users still get full theming purely from `localStorage`.
 
 ---
 
-## 12. Knowledge graph (`memoryGraph.js` + `graphLayout.js`)
+## 10. The editor build-directory naming — verified against the actual files
 
-The Brain/memory modal's **Graph tab** renders a self-contained force-directed
-SVG of the user's memories — no D3/CDN, CSP-nonce safe.
+The task brief for this document described `static/js/editor/build/*.js` as "prebuilt artifacts" imported by `galleryEditor.js`. **This does not match what is on disk.** Inspecting the files directly:
 
-### 12.1 Lazy tab activation
+```
+static/js/editor/build/controls.js         366 lines
+static/js/editor/build/popups.js           112 lines
+static/js/editor/build/right-panel.js      200 lines
+static/js/editor/build/toolbar.js           73 lines
+static/js/editor/build/topbar.js           131 lines
+static/js/editor/build/transform-popup.js  109 lines
+```
 
-`memory.js:1414-1417` lazy-`import()`s `memoryGraph.js` and calls
-`openGraphTab()` the first time the `graph` tab opens. `memoryGraph.js` is also
-loaded once as a module `<script>` (`index.html:2472`). `openGraphTab()`
-(`memoryGraph.js:38`) is idempotent (renders once per page load; the Refresh
-button re-renders).
+None of these are minified, none carry bundler banners (no webpack/rollup/esbuild headers, no `!function(){...}` IIFE wrapping, no source-map comment), and every file has ordinary hand-written `import`/`export` statements and JSDoc comments, e.g.:
 
-### 12.2 Fetch → pure layout → SVG (`render`, `memoryGraph.js:51`)
+```js
+// static/js/editor/build/toolbar.js:1-6
+/**
+ * Build the editor's left-side tool palette.
+ *
+ * Pure DOM construction — no module state. The big tool-switch logic
+ * (cursor swap, control-section toggle, transform entry, inpaint
+ * ...
+```
 
-1. `fetch('/api/memory/graph')` → `{nodes, edges}` (doc 04 §13.2). Empty nodes →
-   an empty-state message ("No memories yet — distill a chat first").
-2. Runs the **pure** force layout headlessly (no DOM in the loop):
-   ```js
-   seedPositions(nodes, width, height, SEED);              // SEED=1337 → deterministic
-   for (let i = 0; i < TICKS; i++) stepLayout(nodes, edges, { width, height });
-   ```
-   (`SEED=1337`, `TICKS=300`, `memoryGraph.js:13-14,87-88`). Determinism means
-   the graph looks identical every open.
-3. Draws edges first (under nodes): **semantic** edges solid with opacity by
-   weight, **session** edges dashed and fainter (`memoryGraph.js:113-117`).
-   Nodes are colored by category (`CATEGORY_COLORS`, `memoryGraph.js:18-26`,
-   mirroring the `.memory-cat-*` badge palette). Clicking a node highlights it +
-   its neighbors, dims the rest, and shows the fact + a "Go to source chat →"
-   link (`selectNode`/`renderDetail`, `:159`, `:174`) that calls
-   `sessionModule.selectSession(session_id)`.
+`galleryEditor.js` imports named "build" functions from this directory alongside dozens of other `editor/*` submodules (canvas math, tools, filters, snapping) using the exact same plain ES-module `import` syntax as everywhere else in the codebase:
 
-### 12.3 The pure layout — `graphLayout.js`
+```js
+// static/js/galleryEditor.js:57-59
+import { buildToolbar as _buildToolbar } from './editor/build/toolbar.js';
+import { buildTopbar as _buildTopbar } from './editor/build/topbar.js';
+import { ... } from './editor/build/right-panel.js';
+```
 
-No DOM, no `Math.random`, no browser globals at module top level.
-- **`seedPositions(nodes, w, h, seed)`** (`graphLayout.js:24`) places each node at
-  a deterministic pseudo-random point via a small LCG (glibc constants,
-  `state = (1103515245*state + 12345) mod 2^31`) and zeroes velocity.
-- **`stepLayout(nodes, edges, opts)`** (`graphLayout.js:37`) advances one physics
-  tick, mutating `{x,y,vx,vy}`: O(n²) Coulomb repulsion (`repulsion/d²`, with a
-  deterministic nudge for coincident nodes), Hooke edge springs toward
-  `springLen` (edges to unknown ids skipped safely), a mild center pull so
-  disconnected nodes don't drift off, then velocity integration with `damping`
-  and clamping to `[0,width]×[0,height]`. Fine for ≤300 nodes (the graph's node
-  cap). See doc 07 §(e) for the graph *builder* on the backend.
-
-## 13. 2026-07-19 frontend refresh
-
-The no-bundler delivery model remains intentional, but the main UI was split
-into testable ES-module seams: chat request lifecycle, document diff/export/
-state/suggestions/version history, notes drafts, email attachment and reader
-slots, settings model policy, and Paperclip floor layout. CSS is now divided
-into 23 feature/layout files under `static/css/`. Reconstructors must keep
-service-worker precache and cache-version changes synchronized with new static
-modules.
+**UNCERTAIN → resolved by inspection**: the directory name `editor/build/` refers to functions that *build UI* (`buildToolbar`, `buildTopbar`, `buildRightPanel`, `buildPopups`, `buildControls`, `buildTransformPopup` — i.e. "build" as a verb, DOM-construction helpers for the image editor's chrome), not a bundler output directory. There is no separate unbuilt source for these files and no build step that generates them — they are first-class, hand-maintained ES modules like every other file in `static/js/`, organized into `editor/build/` purely as a naming/grouping convention alongside sibling folders like `editor/tools/`, `editor/fx/`, and `editor/filters/`. A recreation effort should treat every file under `static/js/`, including `editor/build/`, identically: plain source, no compilation step, load-order governed only by ES module `import` resolution.

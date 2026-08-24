@@ -101,3 +101,7 @@ docs/recreation/14-security-implementation.md
 
 # Private security fix-list — never publish
 SECURITY-FIXLIST.local.md
+
+# Security-implementation walkthrough stays local-only by policy (README §Recreation):
+# it enumerates residual weaknesses and this repo is public.
+docs/recreation/14-security-implementation-best-practices.md
