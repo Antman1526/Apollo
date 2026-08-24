@@ -201,6 +201,18 @@ Or with JSON for fresh news:
 ```
 Search the web for a SINGLE quick fact/lookup mid-task. For news / "today" / "latest" queries, pass `time_filter` ("day", "week", "month", or "year"). NOT for "research X" / "do research on X" / "look into X" requests — those mean a multi-source DEEP RESEARCH job: use `trigger_research` instead (it runs in the Deep Research sidebar and produces a full report). web_search = one quick query; trigger_research = a researched report.""",
 
+    "reference_search": """\
+```reference_search
+{"query": "<what to look for>", "kind": "api"}
+```
+Search the LOCAL Reference Library — installed catalogs of free public APIs, programming books, build-from-scratch tutorials, and learning roadmaps. `kind` is optional: "api", "book", "tutorial", or "roadmap". USE THIS FIRST when you need a real free API for live data (weather, currency, geo, …): results include each API's auth/HTTPS/CORS requirements, so pick one with `auth: none` and then fetch it with `web_fetch`/`api_call` instead of guessing an endpoint from memory. Local lookup, instant, no network. NEVER invent an API result — if this returns nothing, say so.""",
+
+    "python_session": """\
+```python_session
+<python code>
+```
+Execute Python in a PERSISTENT per-conversation session — variables, imports, and loaded data SURVIVE across calls, unlike the one-shot `python` tool. Use for multi-step data work: load a file once, then analyze it across several calls. Same sandbox limits as `python` (no TTY, no GUI, no `input()`).""",
+
     "web_fetch": """\
 ```web_fetch
 <url or domain>
