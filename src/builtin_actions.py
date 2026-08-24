@@ -7,7 +7,7 @@ scheduler without needing an LLM call.
 
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Tuple
 
 from src.auth_helpers import owner_filter
@@ -97,8 +97,8 @@ async def action_auto_distill_sessions(owner: str, **kwargs) -> Tuple[str, bool]
         try:
             watermark = datetime.fromisoformat(raw)
         except (ValueError, TypeError):
-            watermark = datetime.utcnow() - timedelta(days=1)
-        now = datetime.utcnow()
+            watermark = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         db = SessionLocal()
         try:
