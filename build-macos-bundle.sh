@@ -71,19 +71,17 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # Ship the whole PyInstaller onedir under Contents/Resources/apollo.
 cp -R "$ONEDIR" "$APP/Contents/Resources/apollo"
 
-# ── Icon (best effort) — center-crop docs/apollo.jpg to a square .icns ──
-if [ -f "$REPO_DIR/docs/apollo.jpg" ] && command -v sips >/dev/null 2>&1; then
-  TMPIMG="$(mktemp -d)"
-  sips -c 720 720 "$REPO_DIR/docs/apollo.jpg" --out "$TMPIMG/sq.png" >/dev/null 2>&1 || cp "$REPO_DIR/docs/apollo.jpg" "$TMPIMG/sq.png"
-  sips -z 512 512 "$TMPIMG/sq.png" --out "$TMPIMG/icon.png" >/dev/null 2>&1
-  if sips -s format icns "$TMPIMG/icon.png" --out "$APP/Contents/Resources/apollo.icns" >/dev/null 2>&1; then
-    echo "  icon:        apollo.icns"
-  else
-    echo "  icon:        (skipped — conversion failed)"
-  fi
-  rm -rf "$TMPIMG"
+# ── Icon — the committed multi-resolution .icns ──
+# Previously this center-cropped docs/apollo.jpg (a SCREENSHOT of the UI) into
+# a single-resolution icns, so the shipped app had no real logo and looked soft
+# in the Dock at Retina scale. packaging/apollo.icns is generated from the
+# product's own sail mark by packaging/make-icon.sh — regenerate it there, not
+# here, so this build works on machines without rsvg-convert.
+if [ -f "$REPO_DIR/packaging/apollo.icns" ]; then
+  cp "$REPO_DIR/packaging/apollo.icns" "$APP/Contents/Resources/apollo.icns"
+  echo "  icon:        apollo.icns (multi-resolution)"
 else
-  echo "  icon:        (skipped — no docs/apollo.jpg)"
+  echo "  icon:        (skipped — packaging/apollo.icns missing; run packaging/make-icon.sh)"
 fi
 
 # ── Info.plist ──
