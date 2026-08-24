@@ -143,7 +143,11 @@ export function _sanitizeHtml(html) {
   const URL_ATTRS = ['href', 'src', 'srcset', 'action', 'formaction', 'background', 'poster', 'data'];
   const isDangerousUrl = (val) => {
     if (!val) return false;
-    const v = val.trim().toLowerCase();
+    // Browsers strip ASCII tab/CR/LF ANYWHERE in a URL and leading C0
+    // control chars before resolving the scheme, so `.trim()` alone let
+    // `jav&#9;ascript:` slip past. Strip every char the URL parser ignores
+    // before testing the scheme.
+    const v = String(val).replace(/[\u0000-\u0020]/g, '').toLowerCase();
     return v.startsWith('javascript:') || v.startsWith('vbscript:') || v.startsWith('data:');
   };
 

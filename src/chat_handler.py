@@ -233,7 +233,13 @@ class ChatHandler:
                                 )
                                 vl_desc = None
                         if not vl_desc:
-                            vl_result = analyze_image_with_vl_result(file_info["path"])
+                            # analyze_image_with_vl_result makes a SYNC vision-
+                            # model HTTP call (up to 120s). Off-thread it so a
+                            # single image attachment doesn't stall the event
+                            # loop for every other concurrent request.
+                            vl_result = await asyncio.to_thread(
+                                analyze_image_with_vl_result, file_info["path"]
+                            )
                             vl_desc = vl_result.get("text", "")
                             vl_model = vl_result.get("model", "")
                             if vl_desc and not vl_desc.startswith("["):
@@ -258,7 +264,11 @@ class ChatHandler:
                             _m["vision"] = vl_desc
                             _m["vision_model"] = vl_model
 
-        user_content = build_user_content(
+        # build_user_content parses PDFs (pypdf) and may issue sync vision
+        # calls for image-only pages — both blocking. Off-thread the whole
+        # call so a low-text PDF attachment can't freeze the event loop.
+        user_content = await asyncio.to_thread(
+            build_user_content,
             enhanced_message, att_ids, UPLOAD_DIR, self.upload_handler,
             session_id=getattr(sess, "id", None),
             auto_opened_docs=auto_opened_docs,
