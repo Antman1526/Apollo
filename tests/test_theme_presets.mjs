@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
 
-// theme.js imports a DOM-heavy module chain, so validate the preset table at
-// source level: presence, well-formed palettes, and readable contrast.
-const src = fs.readFileSync(new URL('../static/js/theme.js', import.meta.url), 'utf8');
+// The preset table lives in themePresets.js (extracted from theme.js for
+// the module-size ratchet); validate it at source level: presence,
+// well-formed palettes, and readable contrast.
+const src = fs.readFileSync(new URL('../static/js/themePresets.js', import.meta.url), 'utf8');
 
 function paletteOf(name) {
   const m = src.match(new RegExp(
@@ -27,10 +28,10 @@ function contrast(a, b) {
   return (l1 + 0.05) / (l2 + 0.05);
 }
 
-const NEW_DARK = ['nord', 'dracula', 'gruvbox', 'rosepine', 'sunset'];
-const NEW_LIGHT = ['solarized', 'mint', 'contrast'];
+const NEW_DARK = ['helios', 'nord', 'dracula', 'gruvbox', 'rosepine', 'sunset'];
+const NEW_LIGHT = ['solstice', 'solarized', 'mint', 'contrast'];
 
-test('the eight new preset themes exist with complete palettes', () => {
+test('the preset themes exist with complete palettes', () => {
   for (const name of [...NEW_DARK, ...NEW_LIGHT]) {
     const palette = paletteOf(name);
     assert.ok(palette, `theme ${name} missing or malformed`);
