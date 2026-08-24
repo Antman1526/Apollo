@@ -174,6 +174,44 @@ def _to_dict(r: ActivityEvent) -> Dict[str, Any]:
     }
 
 
+def undo_session(session_id: str) -> Dict[str, Any]:
+    """Roll back every still-undoable file write from one session, as a bundle.
+
+    Undoes newest-first so a file written twice steps back through each
+    snapshot and lands on its original content. Per-event failures don't
+    abort the bundle — the result reports both counts.
+    """
+    if not session_id:
+        return {"ok": False, "error": "session_id required"}
+    db = SessionLocal()
+    try:
+        rows = (
+            db.query(ActivityEvent)
+            .filter(
+                ActivityEvent.session_id == session_id,
+                ActivityEvent.undone.is_(False),
+                ActivityEvent.path.isnot(None),
+                ActivityEvent.before_content.isnot(None),
+            )
+            .order_by(ActivityEvent.created_at.desc())
+            .all()
+        )
+        ids = [r.id for r in rows]
+    finally:
+        db.close()
+    if not ids:
+        return {"ok": False, "error": "no undoable writes in this session"}
+    undone = 0
+    failed = []
+    for eid in ids:
+        res = undo_event(eid)
+        if res.get("ok"):
+            undone += 1
+        else:
+            failed.append({"id": eid, "error": res.get("error")})
+    return {"ok": undone > 0, "undone": undone, "failed": failed}
+
+
 def undo_event(event_id: str) -> Dict[str, Any]:
     """Revert a recorded file write to its captured pre-write state.
 

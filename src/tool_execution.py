@@ -709,6 +709,14 @@ async def _direct_fallback(
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+# Tools that change state — the machine, files, or the outside world.
+# Read/search/recall tools stay available in every autonomy mode.
+_MUTATING_TOOLS = {
+    "bash", "python", "write_file", "browser", "builtin_browser",
+    "send_email", "edit_image", "generate_image",
+}
+
+
 async def execute_tool_block(
     block: Any,
     session_id: Optional[str] = None,
@@ -723,9 +731,43 @@ async def execute_tool_block(
     it), times the call, and records the outcome. Ledger work is best-effort
     and off-thread — a ledger failure never affects tool execution.
     """
+    tool = getattr(block, "tool_type", "")
+
+    # Autonomy dial (Agent History panel): "observe" blocks every mutating
+    # tool up front — the agent can read, search, and propose, but nothing
+    # touches the machine or leaves it. "auto" (default) is unchanged
+    # behavior. Blocked attempts still go to the ledger below: an audit
+    # trail that omits refusals isn't one.
+    if tool in _MUTATING_TOOLS:
+        try:
+            from src.settings import get_setting
+            _autonomy = str(get_setting("agent_autonomy", "auto") or "auto")
+        except Exception:
+            _autonomy = "auto"
+        if _autonomy == "observe":
+            desc = f"{tool}: BLOCKED (observe mode)"
+            result = {
+                "error": (
+                    f"Tool '{tool}' is blocked: the agent is in OBSERVE autonomy "
+                    "mode, so actions that change files, run commands, or send "
+                    "anything are disabled. Describe what you would do instead, "
+                    "or ask the user to raise autonomy in Agent History."
+                ),
+                "exit_code": 1,
+            }
+            try:
+                from services.activity_ledger import record_event
+                await asyncio.to_thread(
+                    record_event, tool=tool, summary=desc,
+                    input_text=getattr(block, "content", "") or "",
+                    result=result, session_id=session_id, owner=owner,
+                )
+            except Exception:
+                logger.exception("activity ledger hook failed (ignored)")
+            return desc, result
+
     before = None
     ledger_path = None
-    tool = getattr(block, "tool_type", "")
     if tool == "write_file":
         try:
             raw_path = block.content.split("\n", 1)[0].strip()

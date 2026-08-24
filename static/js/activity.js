@@ -4,6 +4,7 @@
 let _open = false;
 let _search = '';
 let _toolFilter = '';
+let _sessionFilter = '';
 
 function _esc(s) {
   return String(s == null ? '' : s)
@@ -44,6 +45,19 @@ export function openActivity() {
       <div class="modal-body" style="display:flex;flex-direction:column;gap:8px;overflow:hidden;">
         <div class="admin-card" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
           <p class="memory-desc">Everything the agent did on this machine — commands, file writes, web fetches — newest first. File writes can be undone.</p>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+            <span style="font-size:11px;font-weight:600;opacity:0.7;">Autonomy</span>
+            <select class="memory-sort-select" id="activity-autonomy" title="How freely the agent may act" style="width:100px;font-size:11px;height:24px;">
+              <option value="auto">Auto</option>
+              <option value="observe">Observe</option>
+            </select>
+            <span id="activity-autonomy-msg" style="font-size:10px;opacity:0.6;"></span>
+          </div>
+          <div id="activity-session-bar" style="display:none;gap:6px;align-items:center;margin-bottom:6px;font-size:11px;">
+            <span>Session: <code id="activity-session-label"></code></span>
+            <button class="memory-toolbar-btn danger" id="activity-undo-session" title="Undo every file write from this session, newest first">Roll back all writes</button>
+            <button class="memory-toolbar-btn" id="activity-session-clear">Clear filter</button>
+          </div>
           <div class="memory-toolbar">
             <select class="memory-sort-select" id="activity-tool-filter" title="Filter by tool" style="width:110px;font-size:11px;height:24px;">
               <option value="">All tools</option>
@@ -78,6 +92,61 @@ export function openActivity() {
   const filterEl = document.getElementById('activity-tool-filter');
   filterEl.addEventListener('change', () => { _toolFilter = filterEl.value; _refresh(); });
 
+  const autonomyEl = document.getElementById('activity-autonomy');
+  const autonomyMsg = document.getElementById('activity-autonomy-msg');
+  fetch('/api/activity/autonomy', { credentials: 'same-origin' })
+    .then(r => r.json())
+    .then(d => { if (autonomyEl && d.mode) autonomyEl.value = d.mode; _describeAutonomy(); })
+    .catch(() => {});
+  function _describeAutonomy() {
+    if (!autonomyMsg || !autonomyEl) return;
+    autonomyMsg.textContent = autonomyEl.value === 'observe'
+      ? 'Agent can read and propose only — nothing changes on this machine.'
+      : 'Agent acts freely; every action lands here and file writes are undoable.';
+  }
+  if (autonomyEl) {
+    autonomyEl.addEventListener('change', () => {
+      fetch('/api/activity/autonomy', {
+        method: 'PUT', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: autonomyEl.value })
+      }).then(r => r.json()).then(_describeAutonomy)
+        .catch(() => { if (autonomyMsg) autonomyMsg.textContent = 'Failed to save mode.'; });
+    });
+  }
+
+  const clearBtn = document.getElementById('activity-session-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => _setSessionFilter(''));
+  const undoSessBtn = document.getElementById('activity-undo-session');
+  if (undoSessBtn) {
+    undoSessBtn.addEventListener('click', () => {
+      if (!_sessionFilter) return;
+      if (!confirm('Undo EVERY file write from this session? Files step back to their pre-session contents.')) return;
+      undoSessBtn.disabled = true;
+      fetch('/api/activity/undo-session/' + encodeURIComponent(_sessionFilter), {
+        method: 'POST', credentials: 'same-origin'
+      }).then(r => r.json()).then(res => {
+        const err = document.getElementById('activity-err');
+        if (err) {
+          err.style.color = res.ok ? '' : '#c0392b';
+          err.textContent = res.ok
+            ? `Rolled back ${res.undone} write(s)` + (res.failed && res.failed.length ? `, ${res.failed.length} failed` : '')
+            : (res.error || 'rollback failed');
+        }
+        _refresh();
+      }).catch(() => {}).finally(() => { undoSessBtn.disabled = false; });
+    });
+  }
+
+  _refresh();
+}
+
+function _setSessionFilter(sid) {
+  _sessionFilter = sid || '';
+  const bar = document.getElementById('activity-session-bar');
+  const label = document.getElementById('activity-session-label');
+  if (bar) bar.style.display = _sessionFilter ? 'flex' : 'none';
+  if (label) label.textContent = _sessionFilter.slice(0, 8) + (_sessionFilter.length > 8 ? '…' : '');
   _refresh();
 }
 
@@ -89,6 +158,7 @@ function _refresh() {
   const params = new URLSearchParams({ limit: '200' });
   if (_search) params.set('q', _search);
   if (_toolFilter) params.set('tool', _toolFilter);
+  if (_sessionFilter) params.set('session_id', _sessionFilter);
   fetch('/api/activity?' + params.toString(), { credentials: 'same-origin' })
     .then(r => {
       if (!r.ok) throw new Error(r.status === 403 ? 'Admin only' : 'HTTP ' + r.status);
@@ -116,6 +186,7 @@ function _renderList(events) {
       <div class="memory-item" style="flex-direction:column;align-items:stretch;gap:3px;">
         <div style="display:flex;gap:8px;align-items:center;">
           <span style="font-weight:600;font-size:12px;">${_esc(ev.tool)}</span>
+          ${ev.session_id ? `<span data-session="${_esc(ev.session_id)}" title="Filter to this session (enables session rollback)" style="font-size:10px;opacity:0.55;cursor:pointer;text-decoration:underline dotted;">${_esc(ev.session_id.slice(0, 8))}</span>` : ''}
           ${ev.path ? `<span style="font-size:11px;opacity:0.7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(ev.path)}</span>` : ''}
           <span style="flex:1"></span>
           ${status} ${dur}
@@ -126,6 +197,10 @@ function _renderList(events) {
         ${ev.output_preview ? `<div style="font-size:10px;opacity:0.55;white-space:pre-wrap;word-break:break-word;max-height:40px;overflow:hidden;">${_esc(ev.output_preview.slice(0, 200))}</div>` : ''}
       </div>`;
   }).join('');
+
+  list.querySelectorAll('[data-session]').forEach(chip => {
+    chip.addEventListener('click', () => _setSessionFilter(chip.dataset.session));
+  });
 
   list.querySelectorAll('[data-undo]').forEach(btn => {
     btn.addEventListener('click', () => {

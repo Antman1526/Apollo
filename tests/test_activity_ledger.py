@@ -237,3 +237,67 @@ def test_failed_write_gets_no_undo_snapshot(monkeypatch, tmp_path):
     asyncio.run(te.execute_tool_block(Block()))
     assert recorded["before"] is None  # failed write → no undo affordance
     assert recorded["path"] == str(target)  # path still audited
+
+
+def test_undo_session_rolls_back_newest_first(ledger, tmp_path):
+    al, _ = ledger
+    target = tmp_path / "f.txt"
+    # Write twice in one session: original -> v1 -> v2
+    target.write_text("original")
+    b1 = al.capture_before(str(target))
+    target.write_text("v1")
+    al.record_event(tool="write_file", input_text=f"{target}\nv1",
+                    result={"exit_code": 0}, path=str(target), before=b1,
+                    session_id="sess1")
+    b2 = al.capture_before(str(target))
+    target.write_text("v2")
+    al.record_event(tool="write_file", input_text=f"{target}\nv2",
+                    result={"exit_code": 0}, path=str(target), before=b2,
+                    session_id="sess1")
+    # unrelated session untouched
+    other = tmp_path / "other.txt"
+    b3 = al.capture_before(str(other))
+    other.write_text("other")
+    al.record_event(tool="write_file", input_text=f"{other}\nother",
+                    result={"exit_code": 0}, path=str(other), before=b3,
+                    session_id="sess2")
+
+    res = al.undo_session("sess1")
+    assert res["ok"] and res["undone"] == 2 and not res["failed"]
+    assert target.read_text() == "original"
+    assert other.exists()  # sess2 untouched
+
+    assert not al.undo_session("sess1")["ok"]   # nothing left
+    assert not al.undo_session("")["ok"]
+
+
+def test_observe_mode_blocks_mutating_tools(monkeypatch):
+    _evict_module_stubs()
+    import src.tool_execution as te
+    import services.activity_ledger as al
+
+    recorded = []
+    called = {"inner": False}
+    async def fake_inner(block, **kw):
+        called["inner"] = True
+        return "bash: ok", {"output": "hi", "exit_code": 0}
+    monkeypatch.setattr(te, "_execute_tool_block_inner", fake_inner)
+    monkeypatch.setattr(al, "record_event", lambda **kw: recorded.append(kw) or "id")
+    monkeypatch.setattr("src.settings.get_setting",
+                        lambda k, d=None: "observe" if k == "agent_autonomy" else d)
+
+    class Bash:
+        tool_type = "bash"
+        content = "rm -rf /tmp/x"
+
+    desc, result = asyncio.run(te.execute_tool_block(Bash()))
+    assert "BLOCKED" in desc and result["exit_code"] == 1
+    assert not called["inner"]           # never dispatched
+    assert recorded and recorded[0]["tool"] == "bash"  # refusal audited
+
+    class Search:
+        tool_type = "web_search"
+        content = "apollo"
+
+    desc2, result2 = asyncio.run(te.execute_tool_block(Search()))
+    assert result2["exit_code"] == 0     # read-only tools unaffected

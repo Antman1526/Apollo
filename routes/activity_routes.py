@@ -11,8 +11,17 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from pydantic import BaseModel
+
 from core.middleware import require_admin
-from services.activity_ledger import list_events, undo_event
+from services.activity_ledger import list_events, undo_event, undo_session
+from src.settings import get_setting, load_settings, save_settings
+
+AUTONOMY_MODES = ("auto", "observe")
+
+
+class AutonomyBody(BaseModel):
+    mode: str
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +43,35 @@ def setup_activity_routes() -> APIRouter:
             q=q, tool=tool, session_id=session_id, limit=limit, offset=offset
         )
         return {"events": events, "count": len(events)}
+
+    @router.post("/undo-session/{session_id}")
+    def undo_whole_session(request: Request, session_id: str):
+        """Roll back every undoable file write from one session as a bundle."""
+        require_admin(request)
+        result = undo_session(session_id)
+        if not result.get("ok"):
+            return JSONResponse(result, status_code=400)
+        return result
+
+    @router.get("/autonomy")
+    def get_autonomy(request: Request):
+        require_admin(request)
+        mode = str(get_setting("agent_autonomy", "auto") or "auto")
+        return {"mode": mode if mode in AUTONOMY_MODES else "auto",
+                "modes": list(AUTONOMY_MODES)}
+
+    @router.put("/autonomy")
+    def put_autonomy(request: Request, body: AutonomyBody):
+        require_admin(request)
+        if body.mode not in AUTONOMY_MODES:
+            return JSONResponse(
+                {"ok": False, "error": f"mode must be one of {AUTONOMY_MODES}"},
+                status_code=400,
+            )
+        settings = load_settings()
+        settings["agent_autonomy"] = body.mode
+        save_settings(settings)
+        return {"ok": True, "mode": body.mode}
 
     @router.post("/{event_id}/undo")
     def undo(request: Request, event_id: str):

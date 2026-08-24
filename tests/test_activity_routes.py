@@ -126,3 +126,31 @@ def test_assign_creates_and_runs_task(monkeypatch):
 
     r2 = c.post("/api/tasks/assign", json={"prompt": "   "})
     assert r2.status_code == 400
+
+
+def test_undo_session_and_autonomy_routes(monkeypatch):
+    _evict_module_stubs()
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import routes.activity_routes as routes_mod
+
+    store = {"agent_autonomy": "auto"}
+    monkeypatch.setattr(routes_mod, "require_admin", lambda r: None)
+    monkeypatch.setattr(routes_mod, "get_setting", lambda k, d=None: store.get(k, d))
+    monkeypatch.setattr(routes_mod, "load_settings", lambda: dict(store))
+    monkeypatch.setattr(routes_mod, "save_settings", lambda s: store.update(s))
+    monkeypatch.setattr(routes_mod, "undo_session",
+                        lambda sid: {"ok": True, "undone": 3, "failed": []} if sid == "s1"
+                        else {"ok": False, "error": "no undoable writes in this session"})
+
+    app = FastAPI()
+    app.include_router(routes_mod.setup_activity_routes())
+    c = TestClient(app)
+
+    assert c.post("/api/activity/undo-session/s1").json()["undone"] == 3
+    assert c.post("/api/activity/undo-session/s2").status_code == 400
+
+    assert c.get("/api/activity/autonomy").json()["mode"] == "auto"
+    r = c.put("/api/activity/autonomy", json={"mode": "observe"})
+    assert r.status_code == 200 and store["agent_autonomy"] == "observe"
+    assert c.put("/api/activity/autonomy", json={"mode": "yolo"}).status_code == 400

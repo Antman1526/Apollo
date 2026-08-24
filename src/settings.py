@@ -34,6 +34,10 @@ DEFAULT_SETTINGS = {
     # per-write undo (Settings → surfaced via /api/activity).
     "activity_ledger_enabled": True,
     "activity_ledger_max_events": 10000,
+    # Autonomy dial: "auto" = agent acts freely (current behavior);
+    # "observe" = mutating tools (bash/python/write/browser/email/image)
+    # are blocked so the agent can only read, search, and propose.
+    "agent_autonomy": "auto",
     # Context budget: caps on memory injection into the prompt preface.
     # Pinned memories were previously unbounded — a large pinned set could
     # eat a small local model's context before the request started.
