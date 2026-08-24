@@ -587,7 +587,7 @@ session_config = {"REQUEST_TIMEOUT": REQUEST_TIMEOUT, "OPENAI_API_KEY": OPENAI_A
 register_router_specs(app, [
     RouterSpec("Emoji", setup_emoji_routes),
     RouterSpec("Activity", setup_activity_routes),
-    RouterSpec("ModelHub", setup_hub_routes),
+    RouterSpec("ModelHub", setup_hub_routes, args=(preset_manager,), kwargs={"skills_manager": skills_manager}),
     RouterSpec("Sessions", setup_session_routes, args=(session_manager, session_config), kwargs={"webhook_manager": webhook_manager}),
     RouterSpec("Admin wipe", setup_admin_wipe_routes, args=(session_manager,)),
     RouterSpec("Memory", setup_memory_routes, args=(memory_manager, session_manager), kwargs={"memory_vector": memory_vector}),
@@ -1235,6 +1235,22 @@ async def startup_event():
 
     _startup_tasks.append(asyncio.create_task(_null_owner_sweep_loop()))
 
+    # Reap idle python_session kernels every 10 min so a session left open
+    # doesn't hold a Python subprocess alive forever.
+    async def _python_session_reaper_loop():
+        while True:
+            try:
+                await asyncio.sleep(600)
+                from services.python_kernel import get_manager
+                reaped = await get_manager().reap_idle()
+                if reaped:
+                    logger.info(f"python_session: reaped {reaped} idle kernel(s)")
+            except Exception as e:
+                logger.debug(f"python_session reaper skipped: {e}")
+                await asyncio.sleep(600)
+
+    _startup_tasks.append(asyncio.create_task(_python_session_reaper_loop()))
+
     # Nightly skill audit — at ~02:00 local, test + judge a batch of the
     # least-recently-checked skills, auto-fixing/escalating weak ones (never
     # deletes). Rotates through the library so each night covers different
@@ -1297,4 +1313,10 @@ async def shutdown_event():
         get_server().stop_all()
     except Exception as e:
         logger.warning(f"Local model server shutdown error: {e}")
+    # Stop any persistent python_session kernels so they don't outlive the app
+    try:
+        from services.python_kernel import get_manager
+        await get_manager().stop_all()
+    except Exception as e:
+        logger.warning(f"Python session kernel shutdown error: {e}")
     logger.info("Application shutdown complete")

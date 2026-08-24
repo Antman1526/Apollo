@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 NON_ADMIN_BLOCKED_TOOLS = {
     "bash",
     "python",
+    "python_session",
     "read_file",
     "write_file",
     "search_chats",

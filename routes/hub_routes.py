@@ -13,8 +13,10 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from core.database import ModelEndpoint, SessionLocal
+from core.database import McpServer, ModelEndpoint, SessionLocal
 from core.middleware import require_admin
+from services.config_scanner import scan_mcp_servers, scan_skills, summarize
+from services.connector_catalog import get_catalog
 from services.model_hub import (
     PROVIDERS,
     codex_router_status,
@@ -24,6 +26,7 @@ from services.model_hub import (
     search_gguf_repos,
     start_gguf_download,
 )
+from services.persona_importer import install_personas, preview_personas
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +42,18 @@ class GgufDownloadBody(BaseModel):
     hf_token: Optional[str] = None
 
 
-def setup_hub_routes() -> APIRouter:
+class PersonaPreviewBody(BaseModel):
+    source: str
+    ref: Optional[str] = ""
+
+
+class PersonaInstallBody(BaseModel):
+    source: str
+    names: list[str]
+    ref: Optional[str] = ""
+
+
+def setup_hub_routes(preset_manager=None, skills_manager=None) -> APIRouter:
     router = APIRouter(prefix="/api/hub", tags=["model-hub"])
 
     @router.get("/free-models")
@@ -146,5 +160,70 @@ def setup_hub_routes() -> APIRouter:
     def codex_router(request: Request):
         require_admin(request)
         return codex_router_status()
+
+    @router.get("/security-scan")
+    def security_scan(request: Request):
+        """Lean config audit: MCP server commands/env + skill procedures for
+        risky patterns. Never returns secret values — only whether a
+        secret-shaped env var name is present."""
+        require_admin(request)
+        db = SessionLocal()
+        try:
+            rows = db.query(McpServer).all()
+            servers = []
+            for r in rows:
+                try:
+                    args = json.loads(r.args) if r.args else []
+                    env = json.loads(r.env) if r.env else {}
+                except (json.JSONDecodeError, TypeError):
+                    args, env = [], {}
+                servers.append({
+                    "id": r.id, "name": r.name, "transport": r.transport,
+                    "command": r.command, "args": args, "env": env, "url": r.url,
+                })
+        finally:
+            db.close()
+        findings = scan_mcp_servers(servers)
+        if skills_manager is not None:
+            try:
+                findings += scan_skills(skills_manager.load_all())
+            except Exception as e:
+                logger.warning("skill scan failed: %s", e)
+        return {"findings": findings, "summary": summarize(findings)}
+
+    @router.get("/catalog")
+    def catalog(request: Request):
+        """Curated skill-pack + MCP-server presets. Installing still goes
+        through the existing skill-pack / MCP add-server pipelines — this
+        just tells the frontend what to pre-fill."""
+        require_admin(request)
+        return get_catalog()
+
+    @router.post("/personas/preview")
+    def personas_preview(request: Request, body: PersonaPreviewBody):
+        require_admin(request)
+        try:
+            return {"personas": preview_personas(body.source, body.ref or "")}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            logger.warning("persona preview failed for %s: %s", body.source, e)
+            raise HTTPException(502, "Could not fetch or read that repository")
+
+    @router.post("/personas/install")
+    def personas_install(request: Request, body: PersonaInstallBody):
+        require_admin(request)
+        if preset_manager is None:
+            raise HTTPException(500, "preset manager unavailable")
+        if not body.names:
+            raise HTTPException(400, "names is required")
+        try:
+            result = install_personas(body.source, body.names, preset_manager, body.ref or "")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            logger.warning("persona install failed for %s: %s", body.source, e)
+            raise HTTPException(502, "Could not fetch or read that repository")
+        return {"ok": True, **result}
 
     return router

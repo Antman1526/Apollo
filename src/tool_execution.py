@@ -712,7 +712,7 @@ async def _direct_fallback(
 # Tools that change state — the machine, files, or the outside world.
 # Read/search/recall tools stay available in every autonomy mode.
 _MUTATING_TOOLS = {
-    "bash", "python", "write_file", "browser", "builtin_browser",
+    "bash", "python", "python_session", "write_file", "browser", "builtin_browser",
     "send_email", "edit_image", "generate_image",
 }
 
@@ -923,7 +923,16 @@ async def _execute_tool_block_inner(
     # Route MCP-extracted tools through the MCP manager. Forward
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
-    if tool in _MCP_TOOL_MAP:
+    if tool == "python_session":
+        # Direct dispatch (not MCP-routed): the persistent kernel is keyed
+        # by session_id, which the MCP call path doesn't carry.
+        desc = f"python_session: {content.split(chr(10))[0][:60]}"
+        if not session_id:
+            result = {"error": "python_session requires an active chat session", "exit_code": 1}
+        else:
+            from services.python_kernel import get_manager
+            result = await get_manager().run(session_id, content)
+    elif tool in _MCP_TOOL_MAP:
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)

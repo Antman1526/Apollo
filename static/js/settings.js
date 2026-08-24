@@ -10,6 +10,7 @@ import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 import { wireSystemStatusActions } from './systemStatusActions.js';
 import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling } from './settingsAiExtras.js';
+import { initEcosystemHub } from './ecosystemHub.js';
 import { endpointLabel, selectableModels } from './settings/models.js';
 
 let initialized = false;
@@ -2716,6 +2717,7 @@ function initAll() {
   initUtilityModel();
   initReviewerModel();
   initModelHub(el);
+  initEcosystemHub(el);
   initLightModel({ el: el, fetchModelEndpoints: _fetchModelEndpoints, fillEndpointSelect: _fillEndpointSelect, fillModelSelect: _fillModelSelect, registerAiEndpointRefresh: _registerAiEndpointRefresh });
   initImageSettings();
   initVisionSettings();
