@@ -47,7 +47,10 @@ fi
 # ── 2. PyInstaller onedir build (arm64) ──
 echo "  pyinstaller: building onedir (this takes a few minutes)…"
 rm -rf "$REPO_DIR/build" "$ONEDIR"
-( cd "$REPO_DIR" && "$VENV/bin/pyinstaller" packaging/apollo.spec \
+# python -m instead of the console script: entry-point shebangs cannot hold a
+# path containing spaces (this checkout lives under "BrainPulse Ventures LLC"),
+# so $VENV/bin/pyinstaller fails with "bad interpreter" while -m always works.
+( cd "$REPO_DIR" && "$VENV/bin/python" -m PyInstaller packaging/apollo.spec \
     --noconfirm --distpath "$DIST" --workpath "$REPO_DIR/build" )
 
 if [ ! -x "$ONEDIR/$EXE_NAME" ]; then
