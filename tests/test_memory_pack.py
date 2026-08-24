@@ -157,3 +157,78 @@ def test_auto_distill_watermarks_are_per_owner(monkeypatch):
     assert "no sessions" in str(exc.value)
     # noop → watermark untouched for everyone
     assert "auto_distill_watermarks" not in store
+
+
+def test_provenance_route(monkeypatch):
+    mm = _FakeMemoryManager([
+        {"id": "m1", "text": "Fact", "category": "fact", "source": "agent",
+         "timestamp": 1, "provenance": {"kind": "import-pack"}},
+    ])
+    c = _make_client(monkeypatch, mm)
+    r = c.get("/api/memory/m1/provenance")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["memory"]["id"] == "m1"
+    assert body["origin"] == {"kind": "import-pack"}
+    assert body["session"] is None
+    assert c.get("/api/memory/nope/provenance").status_code == 404
+
+
+def test_sync_memory_packs_round_trip(monkeypatch, tmp_path):
+    import asyncio
+    import json
+    import src.builtin_actions as ba
+    import src.memory as memmod
+
+    fake = _FakeMemoryManager([
+        {"id": "1", "text": "Local fact", "category": "fact", "timestamp": 1},
+    ])
+    monkeypatch.setattr(memmod, "MemoryManager", lambda data_dir: fake)
+    monkeypatch.setattr("src.settings.load_settings",
+                        lambda: {"memory_pack_sync_dir": str(tmp_path)})
+    import platform
+    monkeypatch.setattr(platform, "node", lambda: "machost")
+
+    # Run 1: export only (no peer packs yet)
+    msg, ok = asyncio.run(ba.action_sync_memory_packs(owner=None))
+    assert ok and "Exported 1 memories" in msg
+    exported = json.loads((tmp_path / "memory-pack-machost.json").read_text())
+    assert exported["apollo_memory_pack"] == 1
+    assert exported["memories"][0]["text"] == "Local fact"
+
+    # Peer pack appears (the ROG's export): one new fact, one duplicate
+    (tmp_path / "memory-pack-rog.json").write_text(json.dumps({
+        "apollo_memory_pack": 1, "host": "rog",
+        "memories": [
+            {"text": "Local fact", "category": "fact"},
+            {"text": "ROG fact", "category": "fact", "pinned": True},
+        ],
+    }))
+    msg2, ok2 = asyncio.run(ba.action_sync_memory_packs(owner=None))
+    assert ok2 and "imported 1 new" in msg2
+    texts = {m["text"] for m in fake.entries}
+    assert "ROG fact" in texts
+    rog = next(m for m in fake.entries if m["text"] == "ROG fact")
+    assert rog["pinned"] is True
+    assert rog["provenance"]["kind"] == "sync"
+
+    # Idempotent: third run imports nothing new
+    msg3, ok3 = asyncio.run(ba.action_sync_memory_packs(owner=None))
+    assert ok3 and "imported 0 new" in msg3
+
+
+def test_sync_memory_packs_noop_without_dir(monkeypatch):
+    import asyncio
+    import src.builtin_actions as ba
+    monkeypatch.setattr("src.settings.load_settings", lambda: {})
+    with pytest.raises(BaseException) as exc:
+        asyncio.run(ba.action_sync_memory_packs(owner=None))
+    assert "not configured" in str(exc.value)
+
+
+def test_sync_registered():
+    from src.builtin_actions import BUILTIN_ACTIONS, BUILTIN_ACTION_INFO
+    from src.task_scheduler import HOUSEKEEPING_DEFAULTS
+    assert "sync_memory_packs" in BUILTIN_ACTIONS
+    assert "sync_memory_packs" in BUILTIN_ACTION_INFO
+    assert HOUSEKEEPING_DEFAULTS["sync_memory_packs"]["schedule"] == "cron"

@@ -38,6 +38,9 @@ DEFAULT_SETTINGS = {
     # "observe" = mutating tools (bash/python/write/browser/email/image)
     # are blocked so the agent can only read, search, and propose.
     "agent_autonomy": "auto",
+    # Folder shared between machines (iCloud/OneDrive/Syncthing) for the
+    # Memory Sync housekeeping task; empty = sync disabled.
+    "memory_pack_sync_dir": "",
     # Context budget: caps on memory injection into the prompt preface.
     # Pinned memories were previously unbounded — a large pinned set could
     # eat a small local model's context before the request started.

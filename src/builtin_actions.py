@@ -150,6 +150,109 @@ async def action_auto_distill_sessions(owner: str, **kwargs) -> Tuple[str, bool]
         return str(e), False
 
 
+async def action_sync_memory_packs(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Two-way memory sync through a shared folder (iCloud/OneDrive/Syncthing).
+
+    When `memory_pack_sync_dir` is set, each run (1) exports this machine's
+    memories to `memory-pack-<hostname>.json` in that folder and (2) imports
+    every other machine's pack found there, deduping by exact text — so two
+    Apollo installs pointed at the same synced folder converge on one brain.
+    No-ops (TaskNoop) until the setting names a directory.
+    """
+    try:
+        import json
+        import platform
+
+        from src.constants import DATA_DIR
+        from src.memory import MemoryManager
+        from src.settings import load_settings
+
+        sync_dir = (load_settings().get("memory_pack_sync_dir") or "").strip()
+        if not sync_dir:
+            raise TaskNoop("memory_pack_sync_dir not configured")
+        sync_dir = os.path.expanduser(sync_dir)
+        if not os.path.isdir(sync_dir):
+            return f"sync dir does not exist: {sync_dir}", False
+
+        manager = MemoryManager(DATA_DIR)
+        entries = manager.load_all()
+        host = (platform.node() or "apollo").split(".")[0]
+
+        # 1) Export this machine's pack (atomic: temp file + rename).
+        pack = {
+            "apollo_memory_pack": 1,
+            "host": host,
+            "count": len(entries),
+            "memories": [
+                {
+                    "text": m.get("text", ""),
+                    "category": m.get("category", "fact"),
+                    "pinned": bool(m.get("pinned")),
+                    "timestamp": m.get("timestamp"),
+                    "source": m.get("source", "unknown"),
+                    "owner": m.get("owner"),
+                }
+                for m in entries
+            ],
+        }
+        out_path = os.path.join(sync_dir, f"memory-pack-{host}.json")
+        tmp_path = out_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(pack, f, ensure_ascii=False)
+        os.replace(tmp_path, out_path)
+
+        # 2) Import every other machine's pack.
+        added = 0
+        skipped = 0
+        imported_from = []
+        dirty = False
+        for fn in sorted(os.listdir(sync_dir)):
+            if not (fn.startswith("memory-pack-") and fn.endswith(".json")):
+                continue
+            if fn == os.path.basename(out_path):
+                continue
+            try:
+                with open(os.path.join(sync_dir, fn), "r", encoding="utf-8") as f:
+                    other = json.load(f)
+            except (OSError, ValueError):
+                logger.warning("sync_memory_packs: unreadable pack %s", fn)
+                continue
+            memories = other.get("memories")
+            if not isinstance(memories, list):
+                continue
+            imported_from.append(fn)
+            for item in memories:
+                text = (item.get("text") or "").strip() if isinstance(item, dict) else ""
+                if not text or manager.find_duplicates(text, entries):
+                    skipped += 1
+                    continue
+                entry = manager.add_entry(
+                    text=text,
+                    source="import",
+                    category=(item.get("category") or "fact"),
+                    owner=item.get("owner") or None,
+                )
+                if item.get("pinned"):
+                    entry["pinned"] = True
+                entry["provenance"] = {"kind": "sync", "from": fn}
+                entries.append(entry)
+                added += 1
+                dirty = True
+        if dirty:
+            manager.save(entries)
+        if not imported_from and not added:
+            return f"Exported {len(pack['memories'])} memories to {out_path}; no peer packs found", True
+        return (
+            f"Exported {len(pack['memories'])} memories; imported {added} new "
+            f"({skipped} duplicates) from {', '.join(imported_from)}"
+        ), True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"sync_memory_packs action failed: {e}")
+        return str(e), False
+
+
 async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     """Consolidate/deduplicate memories for the owner."""
     try:
@@ -2313,6 +2416,7 @@ BUILTIN_ACTIONS = {
     "tidy_documents": action_tidy_documents,
     "consolidate_memory": action_consolidate_memory,
     "auto_distill_sessions": action_auto_distill_sessions,
+    "sync_memory_packs": action_sync_memory_packs,
     "tidy_research": action_tidy_research,
     "summarize_emails": action_summarize_emails,
     "draft_email_replies": action_draft_email_replies,
@@ -2338,6 +2442,7 @@ BUILTIN_ACTION_INFO = {
     "tidy_documents": "Remove junk/empty documents",
     "consolidate_memory": "Remove duplicate memories",
     "auto_distill_sessions": "Auto-distill recent chats into durable memories (runs the second-brain distiller on sessions with new messages)",
+    "sync_memory_packs": "Sync memories with other Apollo installs through a shared folder (set memory_pack_sync_dir to an iCloud/OneDrive/Syncthing path)",
     "tidy_research": "Remove orphaned research files (sessions that were deleted)",
     "summarize_emails": "Pre-generate AI summaries for new inbox emails",
     "draft_email_replies": "Pre-draft AI reply suggestions for new inbox emails",

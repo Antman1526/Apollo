@@ -116,6 +116,47 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         user = _owner(request)
         return {"memory": memory_manager.load(owner=user)}
 
+    @router.get("/{memory_id}/provenance")
+    def api_memory_provenance(request: Request, memory_id: str):
+        """Answer "why do you believe that?" for one memory.
+
+        Returns the entry plus the chat session it was distilled from (when
+        it has one), so a fact can be traced back to the conversation that
+        produced it.
+        """
+        user = _owner(request)
+        mem = next(
+            (m for m in memory_manager.load_all() if m.get("id") == memory_id),
+            None,
+        )
+        if not mem:
+            raise HTTPException(404, "Memory not found")
+        _verify_memory_owner(mem, user)
+        session_info = None
+        sid = mem.get("session_id")
+        if sid:
+            try:
+                from core.database import SessionLocal, Session as DbSession
+                db = SessionLocal()
+                try:
+                    row = db.query(DbSession).filter(DbSession.id == sid).first()
+                    if row:
+                        session_info = {
+                            "id": row.id,
+                            "name": row.name,
+                            "model": row.model,
+                            "created_at": row.created_at.isoformat() if row.created_at else None,
+                        }
+                finally:
+                    db.close()
+            except Exception:
+                logger.debug("provenance session lookup failed", exc_info=True)
+        return {
+            "memory": mem,
+            "session": session_info,
+            "origin": mem.get("provenance") or {"kind": mem.get("source", "unknown")},
+        }
+
     @router.get("/export-pack")
     def api_export_pack(request: Request):
         """Full owner-scoped memory export as a portable pack.
@@ -174,6 +215,7 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
             )
             if item.get("pinned"):
                 entry["pinned"] = True
+            entry["provenance"] = {"kind": "import-pack"}
             all_mem.append(entry)
             if mine is not all_mem:  # single-user path aliases the same list
                 mine.append(entry)
