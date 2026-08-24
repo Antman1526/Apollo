@@ -15,18 +15,36 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from services.localmodels.scanner import LocalModel, scan_dirs
+from services.localmodels.config import get_llama_server_path
 from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
-_BIN_CANDIDATES = [
-    "llama-server",
-    os.path.expanduser("~/.local/bin/llama-server"),
-    os.path.expanduser("~/bin/llama-server"),
-    os.path.expanduser("~/llama.cpp/build/bin/llama-server"),
-    "/opt/homebrew/bin/llama-server",
-    "/usr/local/bin/llama-server",
-]
+def _bin_candidates() -> list[str]:
+    if os.name == "nt":
+        local_appdata = os.environ.get(
+            "LOCALAPPDATA", os.path.join(os.path.expanduser("~"), "AppData", "Local")
+        )
+        program_files = os.environ.get("ProgramFiles", r"C:\Program Files")
+        home = os.path.expanduser("~")
+        return [
+            "llama-server",  # PATH lookup; PATHEXT resolves llama-server.exe
+            os.path.join(home, "scoop", "shims", "llama-server.exe"),
+            os.path.join(local_appdata, "llama.cpp", "llama-server.exe"),
+            os.path.join(program_files, "llama.cpp", "llama-server.exe"),
+            os.path.join(home, "llama.cpp", "build", "bin", "Release", "llama-server.exe"),
+        ]
+    return [
+        "llama-server",
+        os.path.expanduser("~/.local/bin/llama-server"),
+        os.path.expanduser("~/bin/llama-server"),
+        os.path.expanduser("~/llama.cpp/build/bin/llama-server"),
+        "/opt/homebrew/bin/llama-server",
+        "/usr/local/bin/llama-server",
+    ]
+
+
+_BIN_CANDIDATES = _bin_candidates()
 
 
 @dataclass
@@ -68,6 +86,12 @@ class LocalModelServer:
 
     # -- discovery --------------------------------------------------------
     def find_binary(self) -> Optional[str]:
+        # An explicitly configured path (Settings → AI or APOLLO_LLAMA_SERVER)
+        # wins outright — and if it's set but wrong we return None rather than
+        # silently auto-detecting a different binary than the one asked for.
+        configured = get_llama_server_path()
+        if configured:
+            return configured if os.path.isfile(configured) else None
         for cand in _BIN_CANDIDATES:
             if os.sep in cand:
                 if os.path.exists(cand) and os.access(cand, os.X_OK):
@@ -177,10 +201,20 @@ class LocalModelServer:
     def _launch(self, m: LocalModel) -> _Proc:
         binary = self.find_binary()
         if not binary:
-            raise RuntimeError(
-                "llama-server not found. Install llama.cpp "
-                "(e.g. `brew install llama.cpp`) or build it via the Cookbook."
+            configured = get_llama_server_path()
+            if configured:
+                raise RuntimeError(
+                    f"Configured llama-server path does not exist: {configured}. "
+                    "Fix it in Settings → AI → Local Models (or unset "
+                    "APOLLO_LLAMA_SERVER to auto-detect)."
+                )
+            hint = (
+                "winget install llama.cpp (or download a release build), then set "
+                "the binary path in Settings → AI → Local Models"
+                if os.name == "nt"
+                else "e.g. `brew install llama.cpp`, or build it via the Cookbook"
             )
+            raise RuntimeError(f"llama-server not found. Install llama.cpp ({hint}).")
         port = _free_port(self._host)
         cmd = [
             binary, "--model", m.path,

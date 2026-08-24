@@ -448,6 +448,31 @@ export function refreshLocalModels() {
     .catch(function(e) {
       if (errEl) errEl.textContent = 'Failed to load local models: ' + e.message;
     });
+  _refreshLlamaBinary();
+}
+
+function _renderLlamaBinary(data) {
+  var input = el('set-localModelBinInput');
+  var msg = el('set-localModelBinMsg');
+  if (input) input.value = data.path || '';
+  if (!msg) return;
+  if (data.resolved) {
+    msg.textContent = 'Using: ' + data.resolved;
+    msg.style.color = '';
+  } else if (data.path) {
+    msg.textContent = 'Configured path not found: ' + data.path;
+    msg.style.color = '#c0392b';
+  } else {
+    msg.textContent = 'llama-server not found — install llama.cpp or set the path above.';
+    msg.style.color = '#c0392b';
+  }
+}
+
+function _refreshLlamaBinary() {
+  fetch('/api/local-models/binary', { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(_renderLlamaBinary)
+    .catch(function() { /* section already surfaces load errors */ });
 }
 
 function _initLocalModelsPanel() {
@@ -476,6 +501,26 @@ function _initLocalModelsPanel() {
     });
     input.addEventListener('keydown', function(e) {
       if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); }
+    });
+  }
+
+  var binSave = el('set-localModelBinSave');
+  var binInput = el('set-localModelBinInput');
+  if (binSave && binInput) {
+    binSave.addEventListener('click', function() {
+      fetch('/api/local-models/binary', {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: binInput.value.trim() })
+      }).then(function(r) { return r.json(); }).then(_renderLlamaBinary)
+        .catch(function(e) {
+          var msg = el('set-localModelBinMsg');
+          if (msg) { msg.textContent = 'Failed to save: ' + e.message; msg.style.color = '#c0392b'; }
+        });
+    });
+    binInput.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); binSave.click(); }
     });
   }
 

@@ -983,6 +983,15 @@
           <span class="grow">Tasks</span>
           <span id="assistant-notif-dot" class="sidebar-notif-dot" style="display:none"></span>
         </div>
+        <div class="list-item" id="tool-activity-btn" style="display:none">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            style="flex-shrink:0;opacity:0.5;">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span class="grow">Agent History</span>
+        </div>
 
         <div class="list-item" id="tool-theme-btn">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1875,6 +1884,15 @@
                 <input id="set-localModelDirInput" type="text" placeholder="/path/to/models" class="settings-select" style="flex:1;">
                 <button type="button" id="set-localModelDirAdd" class="admin-btn-sm" style="flex-shrink:0;">Add</button>
               </div>
+            </div>
+            <!-- llama-server binary -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">llama-server Binary</div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <input id="set-localModelBinInput" type="text" placeholder="Leave empty to auto-detect (e.g. C:\llama.cpp\llama-server.exe)" class="settings-select" style="flex:1;">
+                <button type="button" id="set-localModelBinSave" class="admin-btn-sm" style="flex-shrink:0;">Save</button>
+              </div>
+              <div id="set-localModelBinMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
             <!-- Rescan -->
             <div style="margin-bottom:14px;">
