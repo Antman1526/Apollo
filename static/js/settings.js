@@ -9,7 +9,7 @@ import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 import { wireSystemStatusActions } from './systemStatusActions.js';
-import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel } from './settingsAiExtras.js';
+import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub } from './settingsAiExtras.js';
 import { endpointLabel, selectableModels } from './settings/models.js';
 
 let initialized = false;
@@ -2715,6 +2715,7 @@ function initAll() {
   initTeacherModel();
   initUtilityModel();
   initReviewerModel();
+  initModelHub(el);
   initLightModel({ el: el, fetchModelEndpoints: _fetchModelEndpoints, fillEndpointSelect: _fillEndpointSelect, fillModelSelect: _fillModelSelect, registerAiEndpointRefresh: _registerAiEndpointRefresh });
   initImageSettings();
   initVisionSettings();

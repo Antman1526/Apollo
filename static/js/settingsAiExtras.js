@@ -108,3 +108,149 @@ export async function initLightModel(deps) {
     refreshModels(modelSel.value);
   });
 }
+
+/* ── Model Hub: free cloud models, Codex Router, HF GGUF pulls ── */
+export function initModelHub(el) {
+  var provSel = el('set-hubProvider');
+  var keyInput = el('set-hubApiKey');
+  var addBtn = el('set-hubAddFree');
+  var freeMsg = el('set-hubFreeMsg');
+  if (addBtn && provSel && keyInput) {
+    addBtn.addEventListener('click', function() {
+      var key = keyInput.value.trim();
+      if (!key) { if (freeMsg) freeMsg.textContent = 'Enter the provider API key (free models still need one).'; return; }
+      addBtn.disabled = true;
+      if (freeMsg) freeMsg.textContent = 'Fetching free model list…';
+      fetch('/api/hub/free-endpoint', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: provSel.value, api_key: key })
+      }).then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || d.error || ('HTTP ' + r.status)); return d; }); })
+        .then(function(d) {
+          keyInput.value = '';
+          if (freeMsg) freeMsg.textContent = '"' + d.name + '" added with ' + d.free_models + ' free models — they are in the model picker now.';
+        })
+        .catch(function(e) { if (freeMsg) freeMsg.textContent = 'Failed: ' + e.message; })
+        .finally(function() { addBtn.disabled = false; });
+    });
+  }
+
+  var codexStatus = el('set-hubCodexStatus');
+  var codexInstall = el('set-hubCodexInstall');
+  var codexNote = el('set-hubCodexNote');
+  fetch('/api/hub/codex-router', { credentials: 'same-origin' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (codexStatus) {
+        codexStatus.textContent = d.running
+          ? 'Running on 127.0.0.1:' + d.port + ' — its models appear inside the Codex CLI.'
+          : 'Not detected. Install it with:';
+        codexStatus.style.color = d.running ? 'var(--fg)' : '';
+      }
+      if (!d.running && codexInstall) {
+        codexInstall.textContent = d.install_commands;
+        codexInstall.style.display = 'block';
+      }
+      if (codexNote) codexNote.textContent = d.note || '';
+    })
+    .catch(function() { if (codexStatus) codexStatus.textContent = 'Status unavailable.'; });
+
+  _initGgufPull(el);
+}
+
+function _esc(s) {
+  return String(s == null ? '' : s).replaceAll('&', '&amp;').replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+}
+
+function _gb(bytes) { return bytes ? (bytes / 1e9).toFixed(1) + ' GB' : '?'; }
+
+function _initGgufPull(el) {
+  var query = el('set-hubGgufQuery');
+  var searchBtn = el('set-hubGgufSearch');
+  var results = el('set-hubGgufResults');
+  var dls = el('set-hubGgufDownloads');
+  var msg = el('set-hubGgufMsg');
+  if (!query || !searchBtn || !results) return;
+  var pollTimer = null;
+
+  function doSearch() {
+    var q = query.value.trim();
+    if (!q) return;
+    searchBtn.disabled = true;
+    if (msg) msg.textContent = 'Searching Hugging Face…';
+    fetch('/api/hub/gguf-search?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var repos = d.repos || [];
+        if (msg) msg.textContent = repos.length ? '' : 'No GGUF repos found.';
+        results.innerHTML = repos.map(function(rp) {
+          return '<div style="display:flex;gap:6px;align-items:center;font-size:11px;">' +
+            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;">' + _esc(rp.repo_id) + '</span>' +
+            '<span style="opacity:0.5;font-size:10px;">' + (rp.downloads || 0) + ' dl</span>' +
+            '<button class="admin-btn-sm" data-hub-repo="' + _esc(rp.repo_id) + '">Files</button></div>';
+        }).join('');
+        results.querySelectorAll('[data-hub-repo]').forEach(function(btn) {
+          btn.addEventListener('click', function() { showFiles(btn.dataset.hubRepo); });
+        });
+      })
+      .catch(function() { if (msg) msg.textContent = 'Search failed.'; })
+      .finally(function() { searchBtn.disabled = false; });
+  }
+
+  function showFiles(repo) {
+    if (msg) msg.textContent = 'Listing files in ' + repo + '…';
+    fetch('/api/hub/gguf-files?repo=' + encodeURIComponent(repo), { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var files = d.files || [];
+        if (msg) msg.textContent = files.length ? 'Pick a quantization to download:' : 'No .gguf files in that repo.';
+        results.innerHTML = files.map(function(f) {
+          return '<div style="display:flex;gap:6px;align-items:center;font-size:11px;">' +
+            '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;">' + _esc(f.path) + '</span>' +
+            '<span style="opacity:0.5;font-size:10px;">' + _gb(f.size_bytes) + '</span>' +
+            '<button class="admin-btn-sm" data-hub-file="' + _esc(f.path) + '" data-hub-frepo="' + _esc(repo) + '">Download</button></div>';
+        }).join('');
+        results.querySelectorAll('[data-hub-file]').forEach(function(btn) {
+          btn.addEventListener('click', function() { startDownload(btn.dataset.hubFrepo, btn.dataset.hubFile); });
+        });
+      })
+      .catch(function() { if (msg) msg.textContent = 'Could not list files.'; });
+  }
+
+  function startDownload(repo, file) {
+    if (msg) msg.textContent = 'Starting download…';
+    fetch('/api/hub/gguf-download', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo_id: repo, file: file })
+    }).then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'refused'); return d; }); })
+      .then(function() { if (msg) msg.textContent = ''; pollDownloads(); })
+      .catch(function(e) { if (msg) msg.textContent = 'Download failed to start: ' + e.message; });
+  }
+
+  function pollDownloads() {
+    fetch('/api/hub/gguf-downloads', { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        var items = d.downloads || [];
+        if (dls) {
+          dls.innerHTML = items.map(function(it) {
+            var pct = it.total_bytes ? Math.round(100 * it.done_bytes / it.total_bytes) : null;
+            var state = it.status === 'downloading'
+              ? (pct != null ? pct + '%' : _gb(it.done_bytes))
+              : (it.status === 'done' ? 'done — model appears after rescan' : 'error: ' + _esc(it.error || ''));
+            return '<div style="font-size:10px;opacity:0.8;">' + _esc(it.file) + ' — ' + state + '</div>';
+          }).join('');
+        }
+        var active = items.some(function(it) { return it.status === 'downloading'; });
+        clearTimeout(pollTimer);
+        if (active) pollTimer = setTimeout(pollDownloads, 2000);
+      })
+      .catch(function() {});
+  }
+
+  searchBtn.addEventListener('click', doSearch);
+  query.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+  pollDownloads();
+}
