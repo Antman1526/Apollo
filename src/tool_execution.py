@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Tuple
 
@@ -59,7 +60,13 @@ def _is_sensitive_path(resolved: str) -> bool:
     """Return True if *resolved* falls under a sensitive directory or
     matches a sensitive filename — regardless of what root it sits under.
     """
-    parts = resolved.split(os.sep)
+    # Split on '/' as well as os.sep: this is a security-critical check, so
+    # it must not depend on a caller having already normalized separators
+    # for the current platform (e.g. os.path.realpath does that for callers
+    # going through _resolve_tool_path, but this helper is also called
+    # directly/tested with POSIX-style strings on Windows).
+    normalized = resolved.replace("\\", "/") if os.sep != "/" else resolved
+    parts = normalized.split("/")
     filenames: set[str] = {parts[-1]} if parts else set()
 
     # Check if any path component is a sensitive directory.
@@ -86,7 +93,15 @@ def _tool_path_roots() -> list[str]:
     from src.constants import DATA_DIR
     roots.append(DATA_DIR)
 
-    # /tmp (and its macOS realpath /private/tmp).
+    # System temp dir. tempfile.gettempdir() is the cross-platform source of
+    # truth (/tmp or its macOS realpath /private/tmp on POSIX; %TEMP%/%TMP%,
+    # e.g. C:\Users\<user>\AppData\Local\Temp, on Windows) — hardcoding "/tmp"
+    # left every real Windows temp path outside the allowlist, rejecting
+    # legitimate tool operations there.
+    try:
+        roots.append(tempfile.gettempdir())
+    except OSError as e:
+        logger.debug("Could not resolve system temp dir for tool confinement: %s", e, exc_info=True)
     roots.append("/tmp")
     try:
         private_tmp = os.path.realpath("/tmp")

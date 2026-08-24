@@ -921,7 +921,7 @@ def test_email_thread_rendering_sanitizes_body_html():
     """Both threaded render paths must run server-parsed body_html through the
     allowlist sanitizer (the flat path already did)."""
     src = Path(__file__).resolve().parents[1] / "static" / "js" / "emailLibrary.js"
-    text = src.read_text()
+    text = src.read_text(encoding="utf-8")
     # every `t.body_html` reference is wrapped by _sanitizeHtml(...)
     assert text.count("t.body_html") == text.count("_sanitizeHtml(t.body_html")
     assert "t.body_html" in text  # guard against the file being refactored away
