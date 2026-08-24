@@ -11,7 +11,15 @@ For the bare install/launch steps see the **Native Windows** section of the
 ## 1. Prerequisites
 
 Apollo needs exactly three things: **Python 3.11+**, **Git for Windows**, and a
-**recent llama.cpp**. Check what you already have — open PowerShell
+**recent llama.cpp**.
+
+> **Easiest path: just run the launcher (section 2).** It detects anything
+> missing and **offers to install it for you** via winget — it always asks
+> first (`Install X now via winget? [Y/n]`) and never installs silently.
+> Python is required; Git and llama.cpp are offered as optional. The rest of
+> this section is for installing manually, or for machines without winget.
+
+Check what you already have — open PowerShell
 (<kbd>Win</kbd>+<kbd>X</kbd> → *Terminal*) and run:
 
 ```powershell
