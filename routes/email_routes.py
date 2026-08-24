@@ -671,14 +671,14 @@ def setup_email_routes():
             elif filter_ == "pending_30d":
                 # "What's pending in the last month" — UNANSWERED + delivered
                 # within the last 30 days. SINCE takes a DD-Mon-YYYY date.
-                from datetime import datetime as _dt, timedelta as _td
-                _since = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
+                from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                _since = (_dt.now(_tz.utc).replace(tzinfo=None) - _td(days=30)).strftime("%d-%b-%Y")
                 status, data = _imap_uid_search(conn, f'(UNANSWERED SINCE "{_since}"{from_clause})')
             elif filter_ == "stale_30d":
                 # "What's been sitting too long" — UNANSWERED + delivered
                 # MORE than 30 days ago. BEFORE excludes the cutoff date itself.
-                from datetime import datetime as _dt, timedelta as _td
-                _before = (_dt.utcnow() - _td(days=30)).strftime("%d-%b-%Y")
+                from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+                _before = (_dt.now(_tz.utc).replace(tzinfo=None) - _td(days=30)).strftime("%d-%b-%Y")
                 status, data = _imap_uid_search(conn, f'(UNANSWERED BEFORE "{_before}"{from_clause})')
             elif filter_ and filter_.startswith("tag:"):
                 # Tag-based filter — resolve UIDs from email_tags first, then
@@ -2019,7 +2019,7 @@ def setup_email_routes():
                 parsed_at = _dt.fromisoformat(send_at.replace("Z", "+00:00"))
             except ValueError:
                 return {"success": False, "error": "send_at must be ISO8601"}
-            now_utc = _dt.now(_tz.utc) if parsed_at.tzinfo else _dt.utcnow()
+            now_utc = _dt.now(_tz.utc) if parsed_at.tzinfo else _dt.now(_tz.utc).replace(tzinfo=None)
             # Tiny 30s grace so a user clicking Send right at the chosen
             # minute doesn't trip the past-time guard.
             if parsed_at < now_utc:

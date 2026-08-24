@@ -482,7 +482,7 @@ def background_status(task_scheduler: Any = None) -> dict[str, Any]:
 
         db = SessionLocal()
         try:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
             stale_cutoff = now - timedelta(hours=2)
             db_metrics = {
                 "active_tasks": db.query(ScheduledTask).filter(ScheduledTask.status == "active").count(),
