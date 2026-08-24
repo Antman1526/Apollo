@@ -436,6 +436,33 @@ class ApiToken(TimestampMixin, Base):
     last_used_at = Column(DateTime, nullable=True)
 
 
+class ActivityEvent(TimestampMixin, Base):
+    """Append-only ledger of agent tool executions (the "computer history").
+
+    One row per tool call the agent makes — command runs, file writes, web
+    fetches, emails — with enough context to audit ("what did the agent do
+    last Tuesday?") and, for file writes, to undo: `before_content` holds the
+    file's prior contents (capped) so a write can be reverted. Rows are only
+    ever inserted or marked undone, never edited.
+    """
+    __tablename__ = "activity_events"
+
+    id = Column(String, primary_key=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    tool = Column(String, nullable=False, index=True)
+    summary = Column(String, nullable=False, default="")
+    input_preview = Column(Text, nullable=False, default="")
+    output_preview = Column(Text, nullable=False, default="")
+    exit_code = Column(Integer, nullable=True)
+    duration_ms = Column(Integer, nullable=True)
+    # File-write audit/undo fields (write_file only)
+    path = Column(String, nullable=True, index=True)
+    before_content = Column(Text, nullable=True)   # None = not captured
+    before_existed = Column(Boolean, nullable=True)  # False = undo deletes file
+    undone = Column(Boolean, default=False, nullable=False)
+
+
 class Webhook(TimestampMixin, Base):
     """Outgoing webhooks fired on events."""
     __tablename__ = "webhooks"

@@ -30,6 +30,15 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
+    # Activity ledger: append-only record of agent tool executions with
+    # per-write undo (Settings → surfaced via /api/activity).
+    "activity_ledger_enabled": True,
+    "activity_ledger_max_events": 10000,
+    # Context budget: caps on memory injection into the prompt preface.
+    # Pinned memories were previously unbounded — a large pinned set could
+    # eat a small local model's context before the request started.
+    "memory_recall_max": 3,
+    "memory_pinned_max": 15,
     "image_gen_enabled": True,
     "image_model": "",
     "image_quality": "medium",

@@ -67,6 +67,89 @@ async def action_tidy_documents(owner: str, **kwargs) -> Tuple[str, bool]:
         return str(e), False
 
 
+async def action_auto_distill_sessions(owner: str, **kwargs) -> Tuple[str, bool]:
+    """Distill recent chat sessions into durable memories automatically.
+
+    Finds sessions whose last message landed after the previous run's
+    watermark and runs the same distiller the manual "distill session"
+    button uses. Dedup inside `distill_and_store` makes re-distilling an
+    unchanged session a no-op for storage (it still costs an LLM call,
+    hence the watermark). Ships paused — enabling it is an explicit opt-in
+    because every run spends utility-model tokens.
+    """
+    try:
+        import asyncio
+        from datetime import timedelta
+
+        from core.database import SessionLocal, Session as DbSession
+        from src.constants import DATA_DIR
+        from src.memory import MemoryManager
+        from src.settings import load_settings, save_settings
+        from services.memory.brain import distill_session
+
+        # Per-owner watermarks: the scheduler seeds one of these tasks per
+        # owner, so a single global watermark would let owner A's run hide
+        # owner B's sessions. Keyed dict, "" key for the ownerless run.
+        _wm_key = (owner or "").strip() or "__all__"
+        settings = load_settings()
+        marks = settings.get("auto_distill_watermarks") or {}
+        raw = marks.get(_wm_key) or ""
+        try:
+            watermark = datetime.fromisoformat(raw)
+        except (ValueError, TypeError):
+            watermark = datetime.utcnow() - timedelta(days=1)
+        now = datetime.utcnow()
+
+        db = SessionLocal()
+        try:
+            q = db.query(DbSession).filter(
+                DbSession.last_message_at.isnot(None),
+                DbSession.last_message_at > watermark,
+            )
+            if (owner or "").strip():
+                q = q.filter(DbSession.owner == owner)
+            rows = [
+                (s.id, s.owner)
+                for s in q.order_by(DbSession.last_message_at.desc()).limit(10).all()
+            ]
+        finally:
+            db.close()
+
+        if not rows:
+            raise TaskNoop("no sessions with new messages to distill")
+
+        manager = MemoryManager(DATA_DIR)
+        try:
+            from services.memory.memory_vector import MemoryVectorStore
+            memory_vector = MemoryVectorStore(DATA_DIR)
+        except Exception:
+            memory_vector = None  # distill_and_store degrades gracefully
+
+        distilled = 0
+        added = 0
+        for sid, sowner in rows:
+            try:
+                res = await asyncio.to_thread(
+                    distill_session, sid, sowner, manager, memory_vector
+                )
+                added += int(res.get("added", 0))
+                distilled += 1
+            except Exception as e:
+                logger.warning("auto-distill failed for session %s: %s", sid, e)
+
+        settings = load_settings()
+        marks = dict(settings.get("auto_distill_watermarks") or {})
+        marks[_wm_key] = now.isoformat()
+        settings["auto_distill_watermarks"] = marks
+        save_settings(settings)
+        return f"Distilled {distilled} session(s); {added} new memories", True
+    except TaskNoop:
+        raise
+    except Exception as e:
+        logger.error(f"auto_distill_sessions action failed: {e}")
+        return str(e), False
+
+
 async def action_consolidate_memory(owner: str, **kwargs) -> Tuple[str, bool]:
     """Consolidate/deduplicate memories for the owner."""
     try:
@@ -2229,6 +2312,7 @@ BUILTIN_ACTIONS = {
     "tidy_sessions": action_tidy_sessions,
     "tidy_documents": action_tidy_documents,
     "consolidate_memory": action_consolidate_memory,
+    "auto_distill_sessions": action_auto_distill_sessions,
     "tidy_research": action_tidy_research,
     "summarize_emails": action_summarize_emails,
     "draft_email_replies": action_draft_email_replies,
@@ -2253,6 +2337,7 @@ BUILTIN_ACTION_INFO = {
     "tidy_sessions": "Clean up empty chat sessions and auto-sort into folders",
     "tidy_documents": "Remove junk/empty documents",
     "consolidate_memory": "Remove duplicate memories",
+    "auto_distill_sessions": "Auto-distill recent chats into durable memories (runs the second-brain distiller on sessions with new messages)",
     "tidy_research": "Remove orphaned research files (sessions that were deleted)",
     "summarize_emails": "Pre-generate AI summaries for new inbox emails",
     "draft_email_replies": "Pre-draft AI reply suggestions for new inbox emails",

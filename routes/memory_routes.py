@@ -116,6 +116,77 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
         user = _owner(request)
         return {"memory": memory_manager.load(owner=user)}
 
+    @router.get("/export-pack")
+    def api_export_pack(request: Request):
+        """Full owner-scoped memory export as a portable pack.
+
+        The pack round-trips through /api/memory/import-pack on another
+        Apollo install (e.g. the Windows machine), preserving category,
+        pinned state, and timestamps — the sync path between two brains.
+        """
+        import time as _time
+        user = _owner(request)
+        entries = memory_manager.load(owner=user)
+        return {
+            "apollo_memory_pack": 1,
+            "exported_at": int(_time.time()),
+            "count": len(entries),
+            "memories": [
+                {
+                    "text": m.get("text", ""),
+                    "category": m.get("category", "fact"),
+                    "pinned": bool(m.get("pinned")),
+                    "timestamp": m.get("timestamp"),
+                    "source": m.get("source", "unknown"),
+                }
+                for m in entries
+            ],
+        }
+
+    @router.post("/import-pack")
+    def api_import_pack(request: Request, payload: dict):
+        """Merge a memory pack exported by /api/memory/export-pack.
+
+        Exact-duplicate texts are skipped; imported entries keep their
+        category and pinned flag and get source="import".
+        """
+        user = _owner(request)
+        memories = payload.get("memories")
+        if not isinstance(memories, list):
+            raise HTTPException(400, "payload must contain a 'memories' list")
+        all_mem = memory_manager.load_all()
+        mine = [m for m in all_mem if m.get("owner") == user] if user else all_mem
+        added = 0
+        skipped = 0
+        for item in memories:
+            text = (item.get("text") or "").strip() if isinstance(item, dict) else ""
+            if not text:
+                skipped += 1
+                continue
+            if memory_manager.find_duplicates(text, mine):
+                skipped += 1
+                continue
+            entry = memory_manager.add_entry(
+                text=text,
+                source="import",
+                category=(item.get("category") or "fact"),
+                owner=user,
+            )
+            if item.get("pinned"):
+                entry["pinned"] = True
+            all_mem.append(entry)
+            if mine is not all_mem:  # single-user path aliases the same list
+                mine.append(entry)
+            if memory_vector and memory_vector.healthy:
+                try:
+                    memory_vector.add(entry["id"], text)
+                except Exception:
+                    logger.debug("import-pack vector index failed", exc_info=True)
+            added += 1
+        if added:
+            memory_manager.save(all_mem)
+        return {"ok": True, "added": added, "skipped": skipped}
+
     @router.get("/graph")
     async def memory_graph(request: Request):
         """Owner-scoped knowledge graph over the user's memories.

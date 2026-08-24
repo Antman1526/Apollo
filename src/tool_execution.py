@@ -170,8 +170,20 @@ def _resolve_tool_path(raw_path: str) -> str:
 # The user can cancel sooner via the chat stop button — when the
 # SSE stream is torn down, the asyncio task running the subprocess
 # gets cancelled and the subprocess is killed by the finally block.
-DEFAULT_BASH_TIMEOUT = 60 * 60     # 1 hour
-DEFAULT_PYTHON_TIMEOUT = 60 * 60
+# Both are operator-tunable: a single-user install that never runs long
+# builds can bound runaway commands much tighter (e.g. 900) without a
+# code edit, which also keeps this and the UI shell's timeouts
+# (routes/shell_routes.py, APOLLO_SHELL_*_TIMEOUT) reconcilable from env.
+def _env_timeout(var: str, default: int) -> int:
+    try:
+        val = int(os.getenv(var, "") or default)
+        return val if val > 0 else default
+    except ValueError:
+        return default
+
+
+DEFAULT_BASH_TIMEOUT = _env_timeout("APOLLO_BASH_TIMEOUT", 60 * 60)     # 1 hour
+DEFAULT_PYTHON_TIMEOUT = _env_timeout("APOLLO_PYTHON_TIMEOUT", 60 * 60)
 
 # How often to push a progress event while a long-running subprocess
 # is still in flight. The frontend cares about "alive" more than
@@ -698,6 +710,60 @@ async def _direct_fallback(
 # ---------------------------------------------------------------------------
 
 async def execute_tool_block(
+    block: Any,
+    session_id: Optional[str] = None,
+    disabled_tools: Optional[set] = None,
+    owner: Optional[str] = None,
+    progress_cb: Optional[Callable[[Dict], Awaitable[None]]] = None,
+) -> Tuple[str, Dict]:
+    """Execute a single tool block and record it in the activity ledger.
+
+    Thin wrapper around `_execute_tool_block_inner` (the actual dispatcher):
+    captures a pre-write snapshot for `write_file` (so the ledger can undo
+    it), times the call, and records the outcome. Ledger work is best-effort
+    and off-thread — a ledger failure never affects tool execution.
+    """
+    before = None
+    ledger_path = None
+    tool = getattr(block, "tool_type", "")
+    if tool == "write_file":
+        try:
+            raw_path = block.content.split("\n", 1)[0].strip()
+            ledger_path = _resolve_tool_path(raw_path)
+            from services.activity_ledger import capture_before
+            before = await asyncio.to_thread(capture_before, ledger_path)
+        except Exception:
+            before = None  # unresolvable path — inner call will surface the error
+
+    t0 = time.monotonic()
+    desc, result = await _execute_tool_block_inner(
+        block, session_id=session_id, disabled_tools=disabled_tools,
+        owner=owner, progress_cb=progress_cb,
+    )
+    try:
+        from services.activity_ledger import record_event
+        # Only a write that actually succeeded gets an undo snapshot —
+        # a failed write changed nothing, so offering "Undo" would be a
+        # false affordance.
+        _ok = isinstance(result, dict) and result.get("exit_code") == 0
+        await asyncio.to_thread(
+            record_event,
+            tool=tool,
+            summary=desc,
+            input_text=getattr(block, "content", "") or "",
+            result=result if isinstance(result, dict) else {},
+            session_id=session_id,
+            owner=owner,
+            duration_ms=int((time.monotonic() - t0) * 1000),
+            path=ledger_path,
+            before=before if _ok else None,
+        )
+    except Exception:
+        logger.exception("activity ledger hook failed (ignored)")
+    return desc, result
+
+
+async def _execute_tool_block_inner(
     block: Any,
     session_id: Optional[str] = None,
     disabled_tools: Optional[set] = None,
