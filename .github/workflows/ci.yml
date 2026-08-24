@@ -30,7 +30,10 @@ jobs:
           python -m compileall -q app.py companion core routes services src scripts
           python scripts/check_runtime_paths.py --root .
           python scripts/check_module_sizes.py
-          python -m pytest -q
+          # -v prints each test result live so a mid-run native crash (seen
+          # on the Windows runner) can't swallow the names of earlier
+          # failures; -rf + short tracebacks keep the tail actionable.
+          python -m pytest -v -rf --tb=short
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
