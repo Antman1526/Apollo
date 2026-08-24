@@ -1,8 +1,13 @@
 import json
+import shlex
 import subprocess
 import sys
 
 from src import ralph_loop as ralph
+
+# Shell-quoted interpreter path for command strings run via /bin/sh; the
+# checkout path may contain spaces.
+PY = shlex.quote(sys.executable)
 
 
 def _prd():
@@ -78,7 +83,7 @@ def test_init_record_and_learning_files(tmp_path):
 
 
 def test_run_quality_check_captures_success(tmp_path):
-    result = ralph.run_quality_check(f"{sys.executable} -c 'print(\"ok\")'", cwd=tmp_path)
+    result = ralph.run_quality_check(f"{PY} -c 'print(\"ok\")'", cwd=tmp_path)
 
     assert result["ok"] is True
     assert result["returncode"] == 0
@@ -87,7 +92,7 @@ def test_run_quality_check_captures_success(tmp_path):
 
 def test_run_quality_check_reports_timeout(tmp_path):
     result = ralph.run_quality_check(
-        f"{sys.executable} -c 'import time; time.sleep(2)'",
+        f"{PY} -c 'import time; time.sleep(2)'",
         cwd=tmp_path,
         timeout_seconds=0.05,
     )
@@ -146,7 +151,7 @@ def test_apollo_ralph_run_once_without_agent_only_prints_prompt(tmp_path):
             str(root),
             "run-once",
             "--check-command",
-            f"{sys.executable} -c 'raise SystemExit(99)'",
+            f"{PY} -c 'raise SystemExit(99)'",
         ],
         text=True,
         stdout=subprocess.PIPE,
@@ -177,9 +182,9 @@ def test_apollo_ralph_auto_mark_requires_exit_signal(tmp_path):
             str(root),
             "run-once",
             "--agent-cmd",
-            f"{sys.executable} -c 'print(\"checks pass, still working\")'",
+            f"{PY} -c 'print(\"checks pass, still working\")'",
             "--check-command",
-            f"{sys.executable} -c 'print(\"ok\")'",
+            f"{PY} -c 'print(\"ok\")'",
             "--auto-mark",
         ],
         text=True,
@@ -198,9 +203,9 @@ def test_apollo_ralph_auto_mark_requires_exit_signal(tmp_path):
             str(root),
             "run-once",
             "--agent-cmd",
-            f"{sys.executable} -c 'print(\"EXIT_SIGNAL: true\")'",
+            f"{PY} -c 'print(\"EXIT_SIGNAL: true\")'",
             "--check-command",
-            f"{sys.executable} -c 'print(\"ok\")'",
+            f"{PY} -c 'print(\"ok\")'",
             "--auto-mark",
         ],
         text=True,
@@ -230,11 +235,11 @@ def test_apollo_ralph_auto_mark_requires_verification_command(tmp_path):
             str(root),
             "run-once",
             "--agent-cmd",
-            f"{sys.executable} -c 'print(\"EXIT_SIGNAL: true\")'",
+            f"{PY} -c 'print(\"EXIT_SIGNAL: true\")'",
             "--check-command",
-            f"{sys.executable} -c 'print(\"ok\")'",
+            f"{PY} -c 'print(\"ok\")'",
             "--verification-command",
-            f"{sys.executable} -c 'raise SystemExit(42)'",
+            f"{PY} -c 'raise SystemExit(42)'",
             "--auto-mark",
         ],
         text=True,
@@ -267,7 +272,7 @@ def test_apollo_ralph_records_agent_timeout(tmp_path):
             str(root),
             "run-once",
             "--agent-cmd",
-            f"{sys.executable} -c 'import time; time.sleep(2)'",
+            f"{PY} -c 'import time; time.sleep(2)'",
             "--timeout-minutes",
             "0.001",
         ],
