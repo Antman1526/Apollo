@@ -52,6 +52,20 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "python_session",
+            "description": "Execute Python code in a PERSISTENT session — variables, imports, and loaded data survive across calls, unlike the one-shot `python` tool. Use this for multi-step data work (load once, analyze across several calls) in the SAME conversation; use `python` for a single throwaway computation.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {"type": "string", "description": "Python code to execute in the session's shared namespace"}
+                },
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": "Quick single web lookup for a fact or current event mid-task. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
             "parameters": {

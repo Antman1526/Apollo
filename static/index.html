@@ -1690,6 +1690,38 @@
             </div>
           </div>
           <div class="admin-card">
+            <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 10v6M4.2 4.2l4.2 4.2m7.2 7.2 4.2 4.2M1 12h6m10 0h6M4.2 19.8l4.2-4.2m7.2-7.2 4.2-4.2"/></svg>Ecosystem</h2>
+            <div class="admin-toggle-sub" style="margin-bottom:10px">One-click community skill packs and MCP presets, importable personas, and a lean config security scan.</div>
+
+            <div style="margin-bottom:14px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Skill Packs</div>
+              <div id="eco-catalog-packs" style="display:flex;flex-direction:column;gap:4px;"></div>
+            </div>
+            <div style="margin-bottom:14px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">MCP Server Presets</div>
+              <div id="eco-catalog-mcp" style="display:flex;flex-direction:column;gap:4px;"></div>
+              <div id="eco-catalog-msg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Import Personas</div>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <input id="eco-persona-source" type="text" class="settings-select" style="flex:1;" value="https://github.com/msitarzewski/agency-agents" placeholder="GitHub repo of persona markdown files">
+                <button type="button" id="eco-persona-preview-btn" class="admin-btn-sm">Preview</button>
+              </div>
+              <div id="eco-persona-list" style="display:flex;flex-direction:column;gap:3px;margin-top:6px;max-height:180px;overflow-y:auto;"></div>
+              <button type="button" id="eco-persona-install-btn" class="admin-btn-sm" style="display:none;margin-top:6px;">Install selected</button>
+              <div id="eco-persona-msg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
+            </div>
+
+            <div>
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Security Scan</div>
+              <button type="button" id="eco-scan-btn" class="admin-btn-sm">Scan MCP servers &amp; skills</button>
+              <span id="eco-scan-summary" style="font-size:11px;margin-left:8px;"></span>
+              <div id="eco-scan-findings" style="display:flex;flex-direction:column;gap:4px;margin-top:8px;"></div>
+            </div>
+          </div>
+          <div class="admin-card">
             <h2 style="display:flex;align-items:center;gap:6px;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:1px;opacity:0.6;flex-shrink:0"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>Vision<span style="flex:1"></span><label class="admin-switch" title="Analyze images with a vision-capable model"><input type="checkbox" id="set-visionEnabledToggle" checked><span class="admin-slider"></span></label></h2>
             <div class="admin-toggle-sub" style="margin-bottom:8px">Analyze images with a vision-capable model.</div>
             <div style="display:flex;flex-direction:column;gap:0.5rem;">
