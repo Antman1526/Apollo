@@ -85,6 +85,30 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         token = request.cookies.get(SESSION_COOKIE)
         return auth_manager.get_username_for_token(token)
 
+    def _require_admin_user(request: Request) -> Optional[str]:
+        """Admin gate for this router — strict, plus the desktop-mode allowance.
+
+        Delegating wholesale to core.middleware.require_admin is WRONG here:
+        that helper trusts ``request.state.current_user``, which the auth
+        middleware populates through loopback/bypass paths. On a direct
+        loopback request that turned GET /api/auth/users from 403 into 200
+        for an UNAUTHENTICATED caller (verified by A/B against main), leaking
+        usernames and privilege flags.
+
+        So keep the strict cookie-validating check exactly as it was, and add
+        only the one thing that was missing: the no-login desktop mode
+        (AUTH_ENABLED=false) that the macOS bundle launcher ships and that
+        every require_admin route already honors. Without this, Settings
+        saves, integrations CRUD and the Users panel all 403 in the mode the
+        app ships in.
+        """
+        if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+            return None
+        user = _get_current_user(request)
+        if not user or not auth_manager.is_admin(user):
+            raise HTTPException(403, "Admin only")
+        return user
+
     @router.post("/setup")
     async def first_run_setup(body: SetupRequest, request: Request):
         """Create initial admin account. Only works if no accounts exist."""
@@ -250,16 +274,12 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     # Admin-only routes
     @router.get("/users")
     async def list_users(request: Request):
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         return {"users": auth_manager.list_users()}
 
     @router.post("/users")
     async def admin_create_user(body: CreateUserRequest, request: Request):
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         if len(body.password) < 8:
             raise HTTPException(400, "Password must be at least 8 characters")
         ok = auth_manager.create_user(body.username, body.password, body.is_admin)
@@ -269,9 +289,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     @router.put("/users/{username}/privileges")
     async def update_user_privileges(username: str, request: Request):
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         ok = auth_manager.set_privileges(username, body)
         if not ok:
@@ -280,9 +298,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
     @router.put("/users/{username}/rename")
     async def rename_user(username: str, body: RenameUserRequest, request: Request):
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        user = _require_admin_user(request)
         old_username = (username or "").strip().lower()
         new_username = (body.username or "").strip().lower()
         if not new_username:
@@ -353,26 +369,20 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
 
         This endpoint is kept for backward compatibility and may be removed in future versions.
         """
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         auth_manager.signup_enabled = not auth_manager.signup_enabled
         return {"ok": True, "signup_enabled": auth_manager.signup_enabled}
 
     @router.put("/open-signup")
     async def set_signup_enabled(body: SetOpenRegistrationRequest, request: Request):
         """Set open signup enabled state. Admin only."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         auth_manager.signup_enabled = body.enabled
         return {"ok": True,"signup_enabled": auth_manager.signup_enabled}
 
     @router.delete("/users")
     async def admin_delete_user(body: DeleteUserRequest, request: Request):
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        user = _require_admin_user(request)
         ok = auth_manager.delete_user(body.username, user)
         if not ok:
             raise HTTPException(400, "Cannot delete user")
@@ -388,9 +398,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/features")
     async def set_features(request: Request):
         """Admin only: update feature toggles."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         current = _load_features()
         for key in current:
@@ -406,18 +414,22 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
         """Returns app settings. Admins get the full set; non-admins get
         a scrubbed copy with secret keys blanked. The frontend uses this
         for keybinds + TTS prefs, so it stays callable without admin."""
-        user = _get_current_user(request)
         settings = _load_settings()
-        if user and auth_manager.is_admin(user):
+        # Same policy source as every mutating admin route: require_admin
+        # passes for real admins AND for the launcher's no-login desktop
+        # mode (AUTH_ENABLED=false), so the operator sees full settings
+        # there instead of a scrubbed copy. Genuine non-admins still get
+        # secrets blanked.
+        try:
+            _require_admin_user(request)
             return settings
-        return scrub_settings(settings)
+        except HTTPException:
+            return scrub_settings(settings)
 
     @router.post("/settings")
     async def set_settings(request: Request):
         """Admin only: update app settings."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         current = _load_settings()
         for key in DEFAULT_SETTINGS:
@@ -434,9 +446,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.get("/integrations")
     async def list_integrations_route(request: Request):
         """List all integrations (admin only, keys masked)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         items = load_integrations()
         # Mask API keys for frontend display
         safe = [mask_integration_secret(item) for item in items]
@@ -450,9 +460,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/integrations")
     async def create_integration(request: Request):
         """Create a new integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         item = add_integration(body)
         return {"ok": True, "integration": mask_integration_secret(item)}
@@ -460,9 +468,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.put("/integrations/{integration_id}")
     async def update_integration_route(integration_id: str, request: Request):
         """Update an existing integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         body = await request.json()
         item = update_integration(integration_id, body)
         if not item:
@@ -472,9 +478,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.delete("/integrations/{integration_id}")
     async def delete_integration_route(integration_id: str, request: Request):
         """Delete an integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         ok = delete_integration(integration_id)
         if not ok:
             raise HTTPException(404, "Integration not found")
@@ -483,9 +487,7 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     @router.post("/integrations/{integration_id}/test")
     async def test_integration_route(integration_id: str, request: Request):
         """Test connectivity to an integration (admin only)."""
-        user = _get_current_user(request)
-        if not user or not auth_manager.is_admin(user):
-            raise HTTPException(403, "Admin only")
+        _require_admin_user(request)
         integ = get_integration(integration_id)
         if not integ:
             raise HTTPException(404, "Integration not found")

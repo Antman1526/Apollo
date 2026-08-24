@@ -100,12 +100,21 @@ def _auth_route_endpoint(path: str, method: str):
     raise AssertionError(f"{method} {path} route not registered")
 
 
-def _fake_auth_request(token="session-token"):
+def _fake_auth_request(token="session-token", auth_manager=None, user="admin"):
     from routes.auth_routes import SESSION_COOKIE
 
     req = SimpleNamespace()
     req.cookies = {SESSION_COOKIE: token}
     req.client = SimpleNamespace(host="127.0.0.1")
+    # A real Starlette Request always carries these. The admin auth routes
+    # now delegate to core.middleware.require_admin (the single admin policy
+    # source, so the no-login desktop mode works), which reads
+    # request.headers, request.state and request.app.state.auth_manager.
+    # The admin decision still comes from auth_manager.is_admin(), so tests
+    # control the outcome exactly as before.
+    req.headers = {}
+    req.state = SimpleNamespace(current_user=user, internal_tool=False)
+    req.app = SimpleNamespace(state=SimpleNamespace(auth_manager=auth_manager))
     return req
 
 
@@ -116,7 +125,7 @@ def test_set_signup_enabled_true_is_idempotent():
     auth.get_username_for_token.return_value = "admin"
     auth.is_admin.return_value = True
 
-    request = _fake_auth_request()
+    request = _fake_auth_request(auth_manager=auth, user="admin")
     auth.signup_enabled = False
 
     out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True),request=request))
@@ -136,7 +145,7 @@ def test_set_signup_enabled_false_is_idempotent():
     auth.get_username_for_token.return_value = "admin"
     auth.is_admin.return_value = True
 
-    request = _fake_auth_request()
+    request = _fake_auth_request(auth_manager=auth, user="admin")
     auth.signup_enabled = True
 
     out = asyncio.run(target(body=SetOpenRegistrationRequest(enabled=False), request=request))
@@ -158,7 +167,7 @@ def test_set_signup_enabled_requires_admin():
     auth.signup_enabled = False
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=_fake_auth_request()))
+        asyncio.run(target(body=SetOpenRegistrationRequest(enabled=True), request=_fake_auth_request(auth_manager=auth, user="bob")))
 
     assert exc.value.status_code == 403
     assert auth.signup_enabled is False
