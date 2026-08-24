@@ -27,6 +27,12 @@ from services.model_hub import (
     start_gguf_download,
 )
 from services.persona_importer import install_personas, preview_personas
+from services.reference_library import (
+    install_source as ref_install,
+    remove_source as ref_remove,
+    search as ref_search,
+    source_status as ref_sources,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,10 @@ class GgufDownloadBody(BaseModel):
     repo_id: str
     file: str
     hf_token: Optional[str] = None
+
+
+class ReferenceSourceBody(BaseModel):
+    source: str
 
 
 class PersonaPreviewBody(BaseModel):
@@ -225,5 +235,38 @@ def setup_hub_routes(preset_manager=None, skills_manager=None) -> APIRouter:
             logger.warning("persona install failed for %s: %s", body.source, e)
             raise HTTPException(502, "Could not fetch or read that repository")
         return {"ok": True, **result}
+
+    # ── Reference Library ──
+    # Catalogs of external resources (free APIs, books, tutorials, roadmaps)
+    # kept in their own store so they never dilute memory recall or masquerade
+    # as skills. The agent reaches them via the `reference_search` tool.
+
+    @router.get("/reference/sources")
+    def reference_sources(request: Request):
+        require_admin(request)
+        return {"sources": ref_sources()}
+
+    @router.post("/reference/install")
+    def reference_install(request: Request, body: ReferenceSourceBody):
+        require_admin(request)
+        try:
+            return ref_install(body.source)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except Exception as e:
+            logger.warning("reference install failed for %s: %s", body.source, e)
+            raise HTTPException(502, "Could not fetch or parse that catalog")
+
+    @router.post("/reference/remove")
+    def reference_remove(request: Request, body: ReferenceSourceBody):
+        require_admin(request)
+        return ref_remove(body.source)
+
+    @router.get("/reference/search")
+    def reference_search_route(request: Request, q: str, source: str = "",
+                               kind: str = "", limit: int = 20):
+        require_admin(request)
+        results = ref_search(q, source=source or None, kind=kind or None, limit=limit)
+        return {"query": q, "count": len(results), "results": results}
 
     return router

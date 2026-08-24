@@ -463,6 +463,27 @@ class ActivityEvent(TimestampMixin, Base):
     undone = Column(Boolean, default=False, nullable=False)
 
 
+class ReferenceEntry(TimestampMixin, Base):
+    """One entry in a Reference Library catalog (a free API, book, tutorial…).
+
+    A fourth store alongside memory (facts about the user), skills
+    (procedures), and documents (the user's own files): third-party catalogs
+    the agent consults on demand via `reference_search`. Kept separate so
+    1,700 API listings never dilute memory recall. Rows are owned by their
+    `source` and replaced wholesale when that source is reinstalled.
+    """
+    __tablename__ = "reference_entries"
+
+    id = Column(String, primary_key=True, index=True)
+    source = Column(String, nullable=False, index=True)   # SOURCES key
+    kind = Column(String, nullable=False, index=True)     # api | tutorial | book | roadmap
+    category = Column(String, nullable=True, index=True)
+    title = Column(String, nullable=False)
+    url = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    meta = Column(JSON, default=dict)                     # auth/https/cors, language, …
+
+
 class Webhook(TimestampMixin, Base):
     """Outgoing webhooks fired on events."""
     __tablename__ = "webhooks"

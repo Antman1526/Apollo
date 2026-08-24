@@ -17,6 +17,7 @@ export function initEcosystemHub(el) {
   _initCatalog(el);
   _initPersonas(el);
   _initScan(el);
+  _initReference(el);
 }
 
 /* ── Catalog: skill packs + MCP presets ── */
@@ -179,4 +180,98 @@ function _initScan(el) {
       .catch(() => { if (summary) summary.textContent = 'Scan failed.'; })
       .finally(() => { btn.disabled = false; });
   });
+}
+
+/* ── Reference Library: installable catalogs + a live search box ── */
+function _initReference(el) {
+  const listEl = el('eco-ref-sources');
+  const msg = el('eco-ref-msg');
+  if (!listEl) return;
+
+  function render(sources) {
+    listEl.innerHTML = sources.map(s => {
+      const installed = s.installed > 0;
+      const badge = installed
+        ? `<span style="font-size:10px;opacity:0.65;">${s.installed} entries</span>`
+        : '';
+      const agentTag = s.agent_actionable
+        ? '<span style="font-size:9px;padding:1px 5px;border-radius:999px;background:color-mix(in srgb,var(--red) 18%,transparent);color:var(--red);">agent-usable</span>'
+        : '';
+      return `<div style="display:flex;gap:8px;align-items:flex-start;font-size:11px;">
+        <div style="flex:1;">
+          <div style="display:flex;gap:6px;align-items:center;">
+            <b>${_esc(s.name)}</b> ${agentTag} ${badge}
+          </div>
+          <div style="opacity:0.65;">${_esc(s.description)}</div>
+          <div style="opacity:0.45;font-size:10px;">${_esc(s.repo)} · ${_esc(s.license)}</div>
+        </div>
+        <button class="admin-btn-sm" data-ref-install="${_esc(s.id)}">${installed ? 'Update' : 'Install'}</button>
+        ${installed ? `<button class="admin-btn-sm" data-ref-remove="${_esc(s.id)}">Remove</button>` : ''}
+      </div>`;
+    }).join('');
+
+    listEl.querySelectorAll('[data-ref-install]').forEach(btn => {
+      btn.addEventListener('click', () => _refAction('install', btn.dataset.refInstall, btn, msg, el));
+    });
+    listEl.querySelectorAll('[data-ref-remove]').forEach(btn => {
+      btn.addEventListener('click', () => _refAction('remove', btn.dataset.refRemove, btn, msg, el));
+    });
+  }
+
+  function load() {
+    fetch('/api/hub/reference/sources', { credentials: 'same-origin' })
+      .then(r => r.json())
+      .then(d => render(d.sources || []))
+      .catch(() => { if (msg) msg.textContent = 'Could not load reference sources.'; });
+  }
+  _initReference._reload = load;
+  load();
+
+  const searchBtn = el('eco-ref-search-btn');
+  const queryEl = el('eco-ref-query');
+  const resultsEl = el('eco-ref-results');
+  if (searchBtn && queryEl && resultsEl) {
+    const run = () => {
+      const q = queryEl.value.trim();
+      if (!q) return;
+      searchBtn.disabled = true;
+      fetch('/api/hub/reference/search?q=' + encodeURIComponent(q) + '&limit=15',
+            { credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(d => {
+          const rows = d.results || [];
+          if (msg) msg.textContent = rows.length ? '' : 'No matches — install a catalog above first.';
+          resultsEl.innerHTML = rows.map(r => {
+            const auth = r.meta && r.meta.auth ? ` · auth: ${_esc(r.meta.auth)}` : '';
+            return `<div style="font-size:11px;">
+              <a href="${_esc(r.url)}" target="_blank" rel="noopener noreferrer">${_esc(r.title)}</a>
+              <span style="opacity:0.5;font-size:10px;"> [${_esc(r.category || r.kind)}]${auth}</span>
+              ${r.description ? `<div style="opacity:0.6;font-size:10px;">${_esc(r.description.slice(0, 120))}</div>` : ''}
+            </div>`;
+          }).join('');
+        })
+        .catch(e => { if (msg) msg.textContent = 'Search failed: ' + e.message; })
+        .finally(() => { searchBtn.disabled = false; });
+    };
+    searchBtn.addEventListener('click', run);
+    queryEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+  }
+}
+
+function _refAction(action, source, btn, msg, el) {
+  btn.disabled = true;
+  if (msg) msg.textContent = action === 'install' ? 'Fetching catalog…' : 'Removing…';
+  fetch('/api/hub/reference/' + action, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source })
+  }).then(r => r.json().then(d => { if (!r.ok) throw new Error(d.detail || 'failed'); return d; }))
+    .then(d => {
+      if (msg) msg.textContent = action === 'install'
+        ? `Indexed ${d.installed} entries from ${source}.`
+        : `Removed ${d.removed} entries.`;
+      if (_initReference._reload) _initReference._reload();
+    })
+    .catch(e => { if (msg) msg.textContent = 'Failed: ' + e.message; })
+    .finally(() => { btn.disabled = false; });
 }

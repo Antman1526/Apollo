@@ -92,6 +92,41 @@ dependency-audit, Docker-recovery, and remaining-platform evidence.
   - **Works on mobile** -- looks and runs great on your phone, not just desktop.<br>　<sub>responsive · installable (PWA) · touch gestures</sub>
   - **Extras** -- more to explore, happy if you give it a go!<br>　<sub>image editor · theme editor (24 themes, dark + light) · file uploads (vision + PDF) · presets · sessions · 2FA</sub>
 
+## Reference Library
+
+Apollo keeps three stores of knowledge — **memory** (facts about you), **skills**
+(procedures the agent follows), and **documents** (your own files). The Reference
+Library is a fourth: curated catalogs of *external* resources, kept deliberately
+separate so a few thousand third-party listings never dilute memory recall or
+masquerade as skills.
+
+Install catalogs from **Settings → AI → Ecosystem → Reference Library**:
+
+| Catalog | Entries | What it's for |
+| --- | --- | --- |
+| [public-apis](https://github.com/public-apis/public-apis) | ~1,670 | **Agent-usable.** Free public APIs with auth/HTTPS/CORS noted, so the agent can find and call a real endpoint instead of guessing one |
+| [build-your-own-x](https://github.com/codecrafters-io/build-your-own-x) | ~360 | "Build X from scratch" tutorials |
+| [free-programming-books](https://github.com/EbookFoundation/free-programming-books) | ~3,790 | Free books and courses by language and subject |
+| [developer-roadmap](https://github.com/nilbuild/developer-roadmap) | ~100 | roadmap.sh learning roadmaps |
+
+Only the specific catalog markdown files are fetched (a few hundred KB) through
+the same SSRF-guarded path the skill-pack installer uses — never whole repo
+tarballs. Entries are stored locally in `reference_entries` and replaced wholesale
+when a catalog is updated; nothing is sent anywhere at query time.
+
+The agent reaches them with the **`reference_search`** tool, which is read-only
+and runs entirely locally:
+
+```
+reference_search {"query": "weather", "kind": "api"}
+→ weather-api [Weather] — auth: none, https: Yes
+  https://github.com/robertoduessmann/weather-api
+```
+
+That `auth: none` is the point: the agent can call that endpoint for live data
+without a key. Filter by `kind` (`api` · `book` · `tutorial` · `roadmap`) to keep
+a broad word like "rust" from returning APIs when you wanted books.
+
 ## Why local: privacy as capability
 
 Privacy in Apollo is not a compliance checkbox — it is what unlocks the
