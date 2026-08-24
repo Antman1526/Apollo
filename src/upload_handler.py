@@ -88,13 +88,23 @@ class UploadHandler:
         # Create upload directory
         os.makedirs(self.upload_dir, exist_ok=True)
         
-        # Initialize file detector
-        try:
-            import magic
-            self.file_detector = magic.Magic(mime=True)
-        except Exception:
+        # Initialize file detector. The pinned dependency is `python-magic`
+        # (a ctypes wrapper around libmagic), not `python-magic-bin` — Windows
+        # ships no libmagic, so ctypes' DLL search/load there is a native
+        # fault, not a Python exception: it has produced both a "Windows
+        # fatal exception: access violation" crash and (nondeterministically,
+        # depending on loader-lock timing) an indefinite hang, neither of
+        # which `except Exception` can catch. Skip the attempt entirely on
+        # Windows and use the basic-detection fallback below instead.
+        if os.name == "nt":
             self.file_detector = None
-            logger.warning("python-magic not available, falling back to basic detection")
+        else:
+            try:
+                import magic
+                self.file_detector = magic.Magic(mime=True)
+            except Exception:
+                self.file_detector = None
+                logger.warning("python-magic not available, falling back to basic detection")
     
     def inside_base_dir(self, path: str) -> bool:
         """Check if path is inside base directory"""
