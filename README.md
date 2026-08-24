@@ -364,6 +364,10 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 Open `http://localhost:7000`, log in with the generated admin password,
 and configure everything else inside **Settings**.
 
+For running **local GGUF models** on Windows via llama.cpp — scan directories,
+the `llama-server` binary setting, and troubleshooting — see
+[WINDOWS-SETUP.md](WINDOWS-SETUP.md).
+
 ### Optional sidecars and runtimes
 
 <details>
