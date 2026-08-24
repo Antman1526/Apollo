@@ -66,6 +66,21 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "reference_search",
+            "description": "Search the local Reference Library — curated catalogs of free public APIs, programming books and courses, build-from-scratch tutorials, and learning roadmaps. Use it to find a real free API (with its auth/HTTPS/CORS requirements) before calling one for live data like weather or exchange rates, instead of guessing an endpoint; also answers 'what should I read/learn about X'. Local lookup, no network.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to look for, e.g. 'weather', 'currency exchange', 'rust'"},
+                    "kind": {"type": "string", "enum": ["api", "book", "tutorial", "roadmap"], "description": "Optional filter by resource type"}
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "web_search",
             "description": "Quick single web lookup for a fact or current event mid-task. NOT for 'research X' / 'do research on X' — those are deep-research jobs; use trigger_research instead.",
             "parameters": {

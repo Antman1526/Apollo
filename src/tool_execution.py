@@ -938,7 +938,25 @@ async def _execute_tool_block_inner(
     # Route MCP-extracted tools through the MCP manager. Forward
     # the progress callback so long-running subprocess tools
     # (bash, python) can stream `tool_progress` events to the UI.
-    if tool == "python_session":
+    if tool == "reference_search":
+        # Read-only local catalog lookup (Reference Library). Accepts either a
+        # bare query string or {"query": ..., "kind": ...} JSON.
+        query, kind = content.strip(), None
+        if query.startswith("{"):
+            try:
+                import json as _json
+                args = _json.loads(query)
+                query, kind = str(args.get("query", "")).strip(), args.get("kind")
+            except (ValueError, TypeError):
+                pass
+        desc = f"reference_search: {query[:60]}"
+        if not query:
+            result = {"error": "reference_search requires a query", "exit_code": 1}
+        else:
+            from services.reference_library import format_for_agent, search
+            hits = await asyncio.to_thread(search, query, kind=kind or None, limit=15)
+            result = {"output": format_for_agent(hits, query), "exit_code": 0}
+    elif tool == "python_session":
         # Direct dispatch (not MCP-routed): the persistent kernel is keyed
         # by session_id, which the MCP call path doesn't carry.
         desc = f"python_session: {content.split(chr(10))[0][:60]}"

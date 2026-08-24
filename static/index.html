@@ -1714,11 +1714,23 @@
               <div id="eco-persona-msg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
             </div>
 
-            <div>
+            <div style="margin-bottom:14px;">
               <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Security Scan</div>
               <button type="button" id="eco-scan-btn" class="admin-btn-sm">Scan MCP servers &amp; skills</button>
               <span id="eco-scan-summary" style="font-size:11px;margin-left:8px;"></span>
               <div id="eco-scan-findings" style="display:flex;flex-direction:column;gap:4px;margin-top:8px;"></div>
+            </div>
+
+            <div>
+              <div style="font-size:12px;font-weight:600;margin-bottom:2px;opacity:0.7;">Reference Library</div>
+              <div class="admin-toggle-sub" style="margin-bottom:8px;">Curated catalogs the agent can search on demand with the <code>reference_search</code> tool — kept out of memory and skills so nothing gets diluted. The API catalog lets it find and call a real free API instead of guessing an endpoint.</div>
+              <div id="eco-ref-sources" style="display:flex;flex-direction:column;gap:5px;"></div>
+              <div style="display:flex;gap:6px;align-items:center;margin-top:8px;">
+                <input id="eco-ref-query" type="text" class="settings-select" style="flex:1;" placeholder="Try a lookup, e.g. weather">
+                <button type="button" id="eco-ref-search-btn" class="admin-btn-sm">Search</button>
+              </div>
+              <div id="eco-ref-results" style="display:flex;flex-direction:column;gap:3px;margin-top:6px;max-height:200px;overflow-y:auto;"></div>
+              <div id="eco-ref-msg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 55%, transparent);"></div>
             </div>
           </div>
           <div class="admin-card">
