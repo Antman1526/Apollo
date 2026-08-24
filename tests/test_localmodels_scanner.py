@@ -126,4 +126,4 @@ def test_discover_piper_voices(tmp_path):
     (tmp_path / "cache" / "junk.onnx.json").write_text("{}")  # pruned (cache dir)
     voices = discover_piper_voices([str(tmp_path)])
     assert [v["name"] for v in voices] == ["en_US-amy-medium"]
-    assert voices[0]["path"].endswith("/TTS/en_US-amy-medium.onnx")
+    assert voices[0]["path"].replace(os.sep, "/").endswith("/TTS/en_US-amy-medium.onnx")

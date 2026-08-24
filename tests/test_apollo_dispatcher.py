@@ -1,6 +1,9 @@
 import importlib.machinery
 import importlib.util
+import os
 from pathlib import Path
+
+import pytest
 
 
 def _load_dispatcher():
@@ -12,6 +15,10 @@ def _load_dispatcher():
     return module
 
 
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="executable-bit semantics are POSIX-only; os.access(X_OK) is always true on Windows",
+)
 def test_is_runnable_subcommand_requires_executable_file(tmp_path):
     cli = _load_dispatcher()
     sub = tmp_path / "apollo-demo"

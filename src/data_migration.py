@@ -40,8 +40,14 @@ def _verify_sqlite_files(root: Path) -> None:
         if not path.is_file() or path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
             continue
         try:
-            with sqlite3.connect(path) as connection:
+            # `with sqlite3.connect(...)` only manages the transaction, not the
+            # connection: an unclosed handle keeps the file locked on Windows,
+            # which breaks the staging-dir rename (and rmtree on failure).
+            connection = sqlite3.connect(path)
+            try:
                 value = connection.execute("PRAGMA integrity_check").fetchone()[0]
+            finally:
+                connection.close()
         except sqlite3.DatabaseError as exc:
             raise MigrationError(f"SQLite integrity check failed for {path.name}") from exc
         if value != "ok":

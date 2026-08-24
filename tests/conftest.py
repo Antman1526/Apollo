@@ -27,6 +27,15 @@ for mod_name in [
     if mod_name not in sys.modules and not _has_module(mod_name):
         sys.modules[mod_name] = MagicMock()
 
+# On Windows, importing chromadb (only test_chroma_client's importorskip does)
+# loads native runtimes (onnxruntime and friends) whose background threads
+# crash the process mid-suite with "Windows fatal exception: access violation",
+# truncating the run and hiding later results. Block the import so
+# importorskip skips cleanly instead; production code treats chromadb as an
+# optional dependency and degrades the same way.
+if os.name == "nt":
+    sys.modules.setdefault("chromadb", None)
+
 if "src.database" not in sys.modules:
     _db = types.ModuleType("src.database")
     _db.SessionLocal = MagicMock()
