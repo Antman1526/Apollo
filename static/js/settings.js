@@ -9,7 +9,7 @@ import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 import { wireSystemStatusActions } from './systemStatusActions.js';
-import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub } from './settingsAiExtras.js';
+import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling } from './settingsAiExtras.js';
 import { endpointLabel, selectableModels } from './settings/models.js';
 
 let initialized = false;
@@ -5011,6 +5011,7 @@ export function open(tab) {
 
 export function close() {
   if (!modalEl) return;
+  stopGgufPolling();  // stop the Model Hub download poller on close
   // Always clear the appearance-tab body class so the rest of the app
   // doesn't keep its dimmed state if the modal got closed mid-tab.
   document.body.classList.remove('settings-appearance-open');

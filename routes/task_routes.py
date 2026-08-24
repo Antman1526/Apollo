@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, ScheduledTask, TaskRun
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 from src.task_scheduler import compute_next_run, HOUSEKEEPING_DEFAULTS
 from routes.prefs_routes import _load_for_user, _save_for_user
 from src.runtime_paths import data_path
@@ -186,7 +186,11 @@ def setup_task_routes(task_scheduler) -> APIRouter:
     router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
     def _owner(request: Request):
-        return get_current_user(request)
+        # Data-owner attribution must use the CANONICAL owner, not the
+        # compatibility principal: an API-token request has principal "api"
+        # but a real api_token_owner. Using get_current_user collapsed every
+        # token owner into a shared "api" bucket (cross-tenant leak).
+        return effective_user(request)
 
     async def _generate_task_name(prompt: str) -> str:
         """Use LLM to generate a short task name from the prompt."""

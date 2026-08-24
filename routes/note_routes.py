@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from core.database import SessionLocal, Note
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 from src.observability import report_exception
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -466,7 +466,11 @@ def setup_note_routes(task_scheduler=None):
     router = APIRouter(prefix="/api/notes", tags=["notes"])
 
     def _owner(request: Request) -> Optional[str]:
-        return get_current_user(request)
+        # Canonical owner, not the compatibility principal: an API-token
+        # request has principal "api" but a real api_token_owner. Using
+        # get_current_user collapsed every token owner into one shared
+        # "api" bucket (cross-tenant data leak).
+        return effective_user(request)
 
     # --- LIST ---
     @router.get("")

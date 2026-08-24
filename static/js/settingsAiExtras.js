@@ -165,6 +165,14 @@ function _esc(s) {
 
 function _gb(bytes) { return bytes ? (bytes / 1e9).toFixed(1) + ' GB' : '?'; }
 
+// Module-scoped so settings.close() can stop the download poller — otherwise
+// a started GGUF download kept polling /api/hub/gguf-downloads every 2s
+// forever, even after the Settings modal was closed.
+let _ggufPollTimer = null;
+export function stopGgufPolling() {
+  if (_ggufPollTimer) { clearTimeout(_ggufPollTimer); _ggufPollTimer = null; }
+}
+
 function _initGgufPull(el) {
   var query = el('set-hubGgufQuery');
   var searchBtn = el('set-hubGgufSearch');
@@ -172,7 +180,6 @@ function _initGgufPull(el) {
   var dls = el('set-hubGgufDownloads');
   var msg = el('set-hubGgufMsg');
   if (!query || !searchBtn || !results) return;
-  var pollTimer = null;
 
   function doSearch() {
     var q = query.value.trim();
@@ -244,8 +251,8 @@ function _initGgufPull(el) {
           }).join('');
         }
         var active = items.some(function(it) { return it.status === 'downloading'; });
-        clearTimeout(pollTimer);
-        if (active) pollTimer = setTimeout(pollDownloads, 2000);
+        stopGgufPolling();
+        if (active) _ggufPollTimer = setTimeout(pollDownloads, 2000);
       })
       .catch(function() {});
   }

@@ -1926,7 +1926,7 @@ function initCalDAV() {
   if (!urlIn || !saveBtn) return;
 
   // Load current config
-  fetch(`${API_BASE}/api/calendar/config`, { credentials: 'same-origin' })
+  fetch('/api/calendar/config', { credentials: 'same-origin' })
     .then(r => r.json()).then(d => {
       urlIn.value = d.caldav_url || '';
       userIn.value = d.caldav_username || '';
@@ -1936,7 +1936,7 @@ function initCalDAV() {
   saveBtn.addEventListener('click', async () => {
     status.textContent = 'Saving...';
     try {
-      const res = await fetch(`${API_BASE}/api/calendar/config`, {
+      const res = await fetch('/api/calendar/config', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caldav_url: urlIn.value, caldav_username: userIn.value, caldav_password: passIn.value }),
@@ -1952,12 +1952,12 @@ function initCalDAV() {
     status.textContent = 'Testing...';
     try {
       // Save first
-      await fetch(`${API_BASE}/api/calendar/config`, {
+      await fetch('/api/calendar/config', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ caldav_url: urlIn.value, caldav_username: userIn.value, caldav_password: passIn.value }),
       });
-      const res = await fetch(`${API_BASE}/api/calendar/test`, { method: 'POST', credentials: 'same-origin' });
+      const res = await fetch('/api/calendar/test', { method: 'POST', credentials: 'same-origin' });
       const d = await res.json();
       status.textContent = d.ok ? `Connected (${d.calendars} calendars)` : `Failed: ${d.error}`;
       status.style.color = d.ok ? 'var(--green)' : 'var(--red)';

@@ -1,6 +1,7 @@
 # routes/memory_routes.py
 from fastapi import APIRouter, Form, HTTPException, Request, UploadFile, File
 from typing import Dict, Any, Optional, List
+import asyncio
 import json
 import os
 import re
@@ -29,7 +30,7 @@ from src.llm_core import llm_call, llm_call_async
 from services.memory import brain
 from services.memory.chat_import import parse_export
 from services.memory.memory_extractor import audit_memories
-from src.auth_helpers import get_current_user, require_user
+from src.auth_helpers import get_current_user, require_user, effective_user
 from src.endpoint_resolver import resolve_endpoint
 from src.observability import report_exception
 
@@ -40,7 +41,11 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     router = APIRouter(prefix="/api/memory", tags=["memory"])
 
     def _owner(request: Request) -> Optional[str]:
-        return get_current_user(request)
+        # Canonical owner, not the compatibility principal: an API-token
+        # request has principal "api" but a real api_token_owner. Using
+        # get_current_user collapsed every token owner into one shared
+        # "api" bucket (cross-tenant data leak).
+        return effective_user(request)
 
     def _verify_memory_owner(memory: dict, user: Optional[str]):
         """Raise 404 if user doesn't own this memory.
@@ -304,12 +309,22 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
     @router.get("/by-session/{session_id}")
     def get_memory_by_session(request: Request, session_id: str):
         """Get all memories associated with a specific session."""
+        user = _owner(request)
+        # Ownership check BEFORE echoing the session name — a guessed
+        # session_id from another user must not disclose that session's
+        # name. Non-admins may only query their own (or shared/legacy) sessions.
         try:
-            session_manager.get_session(session_id)
+            _sess = session_manager.get_session(session_id)
         except KeyError:
+            _sess = None
+        if _sess is None:
+            raise HTTPException(404, f"Session {session_id} not found")
+        _sess_owner = getattr(_sess, "owner", None)
+        from src.auth_helpers import resolve_identity
+        _is_admin = resolve_identity(request).is_admin
+        if user and _sess_owner and _sess_owner != user and not _is_admin:
             raise HTTPException(404, f"Session {session_id} not found")
 
-        user = _owner(request)
         memories = memory_manager.load(owner=user)
         session_memories = [m for m in memories if m.get("session_id") == session_id]
 
@@ -497,7 +512,9 @@ def setup_memory_routes(memory_manager: MemoryManager, session_manager: SessionM
                 tmp.write(content)
                 tmp_path = tmp.name
             try:
-                text = _process_pdf(tmp_path)
+                # _process_pdf is a blocking pypdf + possible sync vision call;
+                # off-thread it so a scanned PDF upload can't stall the loop.
+                text = await asyncio.to_thread(_process_pdf, tmp_path)
             finally:
                 os.unlink(tmp_path)
         else:

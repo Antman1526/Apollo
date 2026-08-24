@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from services.memory.skills import SkillsManager
-from src.auth_helpers import get_current_user
+from src.auth_helpers import get_current_user, effective_user
 from src.observability import report_exception
 from core.middleware import require_admin
 
@@ -1085,7 +1085,11 @@ def setup_skills_routes(skills_manager: SkillsManager) -> APIRouter:
     router = APIRouter(prefix="/api/skills", tags=["skills"])
 
     def _owner(request: Request) -> Optional[str]:
-        return get_current_user(request)
+        # Canonical owner, not the compatibility principal: an API-token
+        # request has principal "api" but a real api_token_owner. Using
+        # get_current_user collapsed every token owner into one shared
+        # "api" bucket (cross-tenant data leak).
+        return effective_user(request)
 
     def _verify_owner(skill: dict, user: Optional[str]):
         if user is None:

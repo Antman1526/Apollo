@@ -2099,7 +2099,17 @@ async def stream_agent_loop(
                 yield (
                     f'data: {json.dumps({"type": "tool_progress", "tool": block.tool_type, "round": round_num, **evt})}\n\n'
                 )
-            desc, result = await _tool_task
+            # Defensive: the tool layer is contractually supposed to return
+            # error DICTS rather than raise (MCP and dispatch both catch),
+            # but that contract was implicit — an unexpected raise here
+            # previously killed the whole SSE stream mid-round. Convert it
+            # into a normal tool failure the model can react to instead.
+            try:
+                desc, result = await _tool_task
+            except Exception as _tool_err:
+                logger.exception("tool execution raised unexpectedly: %s", block.tool_type)
+                desc = f"{block.tool_type}: internal error"
+                result = {"error": f"Tool crashed internally: {_tool_err}", "exit_code": 1}
 
             # Extract structured web sources from web_search tool output.
             # web_search returns {"output": ..., "exit_code": 0}; check "output"
