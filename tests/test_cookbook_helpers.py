@@ -1,9 +1,18 @@
 import json
+import os
 import subprocess
 import sys
 
 import pytest
 from fastapi import HTTPException
+
+# Marks tests that EXECUTE the generated snippets. Those snippets only ever run
+# on POSIX hosts (remote Linux GPU servers via tmux/SSH), and on the Windows CI
+# runner a bare `bash` resolves to the WSL stub in System32, which fails without
+# an installed distribution. The string-shape tests still run everywhere.
+_needs_posix_shell = pytest.mark.skipif(
+    os.name == "nt", reason="executes generated POSIX shell via bash"
+)
 
 from routes.cookbook_helpers import (
     _cached_model_scan_script,
@@ -119,6 +128,7 @@ def test_pip_install_fallback_chain_allows_custom_python_command():
     sys.prefix == sys.base_prefix,
     reason="venv_check must detect a real venv; CI runs the system interpreter",
 )
+@_needs_posix_shell
 def test_pip_install_fallback_chain_propagates_failure_in_venv():
     """When base install fails inside a venv, the chain must exit non-zero.
 
@@ -145,6 +155,7 @@ def test_pip_install_fallback_chain_propagates_failure_in_venv():
     assert result.returncode != 0, "Chain should propagate failure when base fails in venv"
 
 
+@_needs_posix_shell
 def test_pip_install_fallback_chain_tries_user_outside_venv():
     """When base install fails outside a venv, the chain should try --user."""
     # Force "not in venv" by making venv_check return 1 directly.
@@ -190,6 +201,7 @@ def test_pip_install_attempt_no_bare_pipe_tail():
     assert "| tail" not in snippet
 
 
+@_needs_posix_shell
 def test_pip_install_attempt_failure_propagates_real_exit_code():
     """Run the generated snippet against a deliberately broken pip install
     to confirm the subshell exits with pip's non-zero status."""
@@ -203,6 +215,7 @@ def test_pip_install_attempt_failure_propagates_real_exit_code():
     assert result.returncode != 0, "pip install of a nonexistent package should fail"
 
 
+@_needs_posix_shell
 def test_pip_install_attempt_success_exits_zero():
     """When pip succeeds, the subshell should exit 0."""
     snippet = _pip_install_attempt("python3 -c 'pass'")
@@ -215,6 +228,7 @@ def test_pip_install_attempt_success_exits_zero():
     assert result.returncode == 0
 
 
+@_needs_posix_shell
 def test_pip_install_attempt_surfaces_stderr_on_failure():
     """On failure, the last 5 lines of pip output should appear in stdout."""
     snippet = _pip_install_attempt("python3 -m pip install __nonexistent_package_12345__")

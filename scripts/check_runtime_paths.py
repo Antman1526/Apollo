@@ -66,7 +66,9 @@ def main() -> int:
     args = parser.parse_args()
     issues = find_issues(args.root.resolve())
     for relative, line, kind in issues:
-        print(f"{relative}:{line}: checkout-relative runtime data path via {kind}")
+        # as_posix() keeps the report stable across platforms (Windows would
+        # otherwise print backslash-separated paths).
+        print(f"{relative.as_posix()}:{line}: checkout-relative runtime data path via {kind}")
     return 1 if issues else 0
 
 

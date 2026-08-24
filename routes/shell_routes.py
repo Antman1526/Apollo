@@ -252,7 +252,12 @@ def _prepend_user_install_bins_to_path() -> None:
     except Exception as error:
         report_exception(logger, "shell_user_install_bin_discovery_failed", error, outcome="best_effort")
         candidates = []
-    candidates.append(os.path.expanduser("~/.local/bin"))
+    # normpath: expanduser("~/.local/bin") on Windows naively concatenates
+    # the backslash-joined home dir with the literal "/.local/bin" suffix,
+    # producing a mixed-separator string that won't string-match a
+    # native-separator path built elsewhere (e.g. via os.path.join/pathlib) —
+    # which would also defeat the `path not in parts` de-dup check below.
+    candidates.append(os.path.normpath(os.path.expanduser("~/.local/bin")))
 
     parts = os.environ.get("PATH", "").split(os.pathsep) if os.environ.get("PATH") else []
     changed = False
