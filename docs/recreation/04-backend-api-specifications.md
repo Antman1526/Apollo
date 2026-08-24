@@ -1,843 +1,1439 @@
-# Apollo Backend API Specifications
+# 04 — Backend API Specifications
 
-**Project:** Apollo (`/Users/Antman/Apollo`)
-**Stack:** FastAPI (Starlette/ASGI) + SQLAlchemy + Playwright (embedded browser) + SSE streaming
-**Scope of this document:** the HTTP/WebSocket API surface — router catalog, the
-router-registration pattern, the Pydantic request models, the privilege/auth gates,
-and the streaming/SSE conventions. All `path:line` references point at real source
-as of the commit documented here. Secrets are redacted.
-
-> Conventions used below: `METHOD /path` — handler — gate. "Gate" is the
-> authorization check the handler performs (the global `AuthMiddleware` already
-> enforces *authentication* for non-exempt paths; see §2).
-
----
-
-## 1. Router catalog (`routes/`)
-
-`ls routes/` yields ~50 router modules. Each exports a `setup_*_routes(...) -> APIRouter`
-factory (a few use a different name; see §3). The full list:
-
-| Module | Factory | Mount prefix / notable paths |
-|---|---|---|
-| `admin_wipe_routes.py` | `setup_admin_wipe_routes` | admin data-wipe |
-| `api_token_routes.py` | `setup_api_token_routes` | `/api/tokens` (bearer-token CRUD) |
-| `assistant_routes.py` | `setup_assistant_routes` | scheduled assistants |
-| `auth_routes.py` | `setup_auth_routes` | `/api/auth/*` (login, settings, users, integrations) |
-| `backup_routes.py` | `setup_backup_routes` | export/import user data |
-| `browser_routes.py` | `setup_browser_routes` | `/api/browser/*` + WS `/api/browser/ws` |
-| `calendar_routes.py` | `setup_calendar_routes` | CalDAV calendar |
-| `chat_routes.py` | `setup_chat_routes` | `/api/chat`, `/api/chat_stream`, resume/stop |
-| `cleanup_routes.py` | `setup_cleanup_routes` | session cleanup |
-| `compare_routes.py` | `setup_compare_routes` | model A/B compare |
-| `contacts_routes.py` | `setup_contacts_routes` | contacts |
-| `cookbook_routes.py` | `setup_cookbook_routes` | model download/serve/cache |
-| `diagnostics_routes.py` | `setup_diagnostics_routes` | RAG/research diagnostics |
-| `document_routes.py` | `setup_document_routes` | artifacts / canvas docs |
-| `editor_draft_routes.py` | `setup_editor_draft_routes` | server-backed editor drafts |
-| `email_routes.py` | `setup_email_routes` | email (largest module, 155 KB) |
-| `embedding_routes.py` | `setup_embedding_routes` | embeddings |
-| `emoji_routes.py` | `setup_emoji_routes` | emoji |
-| `font_routes.py` | `setup_font_routes` | fonts |
-| `gallery_routes.py` | `setup_gallery_routes` | image library |
-| `history_routes.py` | `setup_history_routes` | chat history |
-| `hwfit_routes.py` | `setup_hwfit_routes` | hardware "What Fits?" |
-| `integration_routes.py` | `setup_integration_routes` | integration status |
-| `lmproxy_routes.py` | `setup_lmproxy_routes` | `/lmproxy` local-model OpenAI proxy |
-| `localmodels_routes.py` | `setup_localmodels_routes` | `/api/local-models/*` |
-| `mcp_routes.py` | `setup_mcp_routes` | MCP server management |
-| `memory_routes.py` | `setup_memory_routes` | mem0 memory |
-| `model_routes.py` | `setup_model_routes` | `/api/models`, `/api/model-endpoints/*` |
-| `note_routes.py` | `setup_note_routes` | notes |
-| `paperclip_routes.py` | `setup_paperclip_routes` | Paperclip sidecar reverse proxy + WS |
-| `personal_routes.py` | `setup_personal_routes` | personal docs / RAG |
-| `prefs_routes.py` | `setup_prefs_routes` | user preferences |
-| `preset_routes.py` | `setup_preset_routes` | character presets |
-| `research_routes.py` | `setup_research_routes` | `/api/research/*` (deep research) |
-| `search_routes.py` | `setup_search_routes` | `/api/search/*` incl. SearXNG sidecar |
-| `session_routes.py` | `setup_session_routes` | chat sessions CRUD |
-| `shell_routes.py` | `setup_shell_routes` | user-facing shell exec |
-| `signature_routes.py` | `setup_signature_routes` | signature image stamps |
-| `skills_routes.py` | `setup_skills_routes` | skills |
-| `stt_routes.py` | `setup_stt_routes` | speech-to-text |
-| `system_status_routes.py` | `setup_system_status_routes` | system status dashboard |
-| `task_routes.py` | `setup_task_routes` | scheduled tasks + per-task webhooks |
-| `tts_routes.py` | `setup_tts_routes` | text-to-speech |
-| `upload_routes.py` | `setup_upload_routes` | file uploads |
-| `vault_routes.py` | `setup_vault_routes` | secret vault |
-| `webhook_routes.py` | `setup_webhook_routes` | outbound webhooks |
-
-Plus helper modules that are **not** routers (imported by the above):
-`chat_helpers.py`, `cookbook_helpers.py`, `document_helpers.py`, `email_helpers.py`,
-`email_pollers.py`, `gallery_helpers.py`. The `companion/` package
-(`companion/routes.py:69` `setup_companion_routes`) adds the mobile-companion API.
-
-> **Note — there is no `settings_routes.py`.** App settings are served by the auth
-> router at `routes/auth_routes.py:403` (`GET /api/auth/settings`) and
-> `routes/auth_routes.py:414` (`POST /api/auth/settings`). See §10.
+Apollo's HTTP surface is assembled in `app.py` from **49 router modules**
+under `routes/` (57 files total in that directory; 8 are shared helper
+modules with no `@router` decorators of their own: `__init__.py`,
+`chat_helpers.py`, `cookbook_helpers.py`, `cookbook_runner_files.py`,
+`document_helpers.py`, `email_helpers.py`, `email_pollers.py`,
+`gallery_helpers.py`). Endpoint counts below come from
+`grep -cE '^\s*@router\.(get|post|put|delete|patch|websocket)\(' routes/*.py`
+— **465 endpoints** total, verified against the live decorators, not
+inferred.
 
 ---
 
-## 2. Authentication & authorization model
+## 1. Authentication & authorization model
 
-### 2.1 `AuthMiddleware` (request authentication)
+### 1.1 Two operating modes
 
-Defined and installed in `app.py` (`class AuthMiddleware` at `app.py:277`,
-`app.add_middleware(AuthMiddleware)` at `app.py:389`). It runs on every request and:
-
-1. **Exempts** a fixed set of paths so they work pre-login (`app.py:177`):
-   `/api/auth/setup`, `/signup`, `/login`, `/logout`, `/status`, `/features`,
-   **`/api/auth/settings`**, `/api/auth/integrations/presets`, `/api/health`,
-   `/api/version`, `/login`, `/api/paperclip/events`. Prefix exemptions
-   (`app.py:199`): `/static`, `/lmproxy`. Pattern exemption (`app.py:209`):
-   `^/api/tasks/[^/]+/webhook/[^/]+/?$` (per-task webhook tokens self-authenticate).
-2. Honors an **in-process internal-tool token** (`X-Apollo-Internal-Token`, constant
-   defined `core/middleware.py:16-17`). When present, valid, *and* the request is a
-   trusted **direct** loopback (`_is_trusted_loopback`, `app.py:261` — rejects any
-   request carrying proxy/tunnel forwarding headers like `cf-connecting-ip`,
-   `x-forwarded-for`), the agent tool layer can hit admin-gated routes. It may set
-   `request.state.current_user` to an impersonated owner via `X-Apollo-Owner`
-   (`app.py:294`) or fall back to the synthetic user `"internal-tool"`.
-3. Supports `LOCALHOST_BYPASS` for direct-loopback service calls (`app.py:309`).
-4. Otherwise validates the session cookie (`apollo_session`, see §10) or an API
-   bearer token (cached in `app.state._token_cache`, `app.py:225`), stamping
-   `request.state.current_user`.
-
-`SecurityHeadersMiddleware` (`core/middleware.py:48`) adds CSP / `X-Frame-Options` /
-`X-Content-Type-Options` to every response, with relaxed CSP for research report pages
-and tool-render iframes.
-
-### 2.2 Privilege gates (handler-level)
-
-- **`require_admin(request)`** — `core/middleware.py:20`. Raises `403 Admin only`
-  unless the caller is an admin, auth is disabled (`AUTH_ENABLED=false`), or the
-  internal-tool token/`current_user == "internal-tool"` bypass applies.
-- **`require_privilege(request, key)`** — `src/auth_helpers.py:91`. Returns the
-  username; raises `403` if `auth.json` has `privileges[key] is False`. **Fail-open
-  semantics:** admins get all privileges; a missing key defaults to permitted; empty
-  user (single-user / auth-disabled mode) is unenforced (`auth_helpers.py:100-113`).
-  Known privilege keys in use: `can_use_browser`, `can_use_research`.
-- **`get_current_user(request)`** — `src/auth_helpers.py:8` — reads
-  `request.state.current_user`.
-
-WebSockets bypass `BaseHTTPMiddleware` entirely, so WS handlers re-authenticate the
-cookie themselves (see §7 browser WS, and the paperclip proxy).
-
----
-
-## 3. Router-registration pattern (`services/app_startup.py`)
-
-Routers are built and mounted through small guarded helpers so a failure during
-startup produces a **labeled** error instead of an opaque stack trace.
-
-`build_and_include_router` (`services/app_startup.py:31`):
+Set by `AUTH_ENABLED` (`app.py:155`, default `"true"`):
 
 ```python
-def build_and_include_router(app, label, factory, *args, logger=None, **kwargs):
-    """Build a router inside the labeled registration guard, then include it."""
-    try:
-        router = factory(*args, **kwargs)
-    except Exception as exc:
-        if logger:
-            logger.exception("Failed to build %s routes", label)
-        raise RuntimeError(f"Failed to build {label} routes") from exc
-    return include_router_checked(app, router, label, logger=logger)
+# app.py:155-158
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
 ```
 
-`include_router_checked` (`services/app_startup.py:18`) wraps
-`app.include_router(router)` with the same labeled-error guard.
-
-For batch registration, `RouterSpec` (a frozen dataclass, `app_startup.py:10`) carries
-`(label, factory, args, kwargs)` and `register_router_specs` (`app_startup.py:49`)
-loops over them, returning `{label: router}`. Example from `app.py:572`:
+- **`AUTH_ENABLED=false` — loopback desktop mode.** `app.add_middleware(AuthMiddleware)`
+  is skipped entirely (`app.py:402-405`); no cookie/session/token check ever
+  runs. This is the mode the macOS `.dmg` launcher ships in — the app talks
+  to itself over `127.0.0.1` with no login screen. Every `Depends`-style
+  admin check (`core.middleware.require_admin`, `routes/auth_routes.py`'s
+  `_require_admin_user`) has an explicit `if os.getenv("AUTH_ENABLED", "true").lower() == "false": return`
+  early-out (or `return None`) so admin-gated routes still work with no
+  logged-in user.
+- **`AUTH_ENABLED=true` (default) — cookie-session mode.** `AuthMiddleware`
+  (a `BaseHTTPMiddleware`, `app.py:280-402`) runs on every request and
+  resolves `request.state.current_user` through one of four paths, in order:
 
 ```python
-register_router_specs(app, [
-    RouterSpec("Sessions", setup_session_routes, args=(session_manager, session_config),
-               kwargs={"webhook_manager": webhook_manager}),
-    RouterSpec("Chat", setup_chat_routes, args=(
-        session_manager, chat_handler, chat_processor,
-        memory_manager, research_handler, upload_handler,
-    ), kwargs={"memory_vector": memory_vector,
-               "webhook_manager": webhook_manager,
-               "skills_manager": skills_manager}),
-    RouterSpec("Research", setup_research_routes, args=(research_handler,),
-               kwargs={"session_manager": session_manager}),
-    RouterSpec("Search", setup_search_routes, args=(config,)),
-    RouterSpec("Models", setup_model_routes, args=(model_discovery,)),
-    ...
-], logger=logger)
+# app.py:280-400 (structure, not verbatim — see exact code below for each branch)
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if _is_auth_exempt(path):               # public paths — see 1.2
+            return await call_next(request)
+        # (a) internal-tool token — loopback agent tool calls
+        # (b) LOCALHOST_BYPASS + direct loopback — no-login desktop testing
+        # (c) Bearer ody_... — API token (external integrations)
+        # (d) apollo_session cookie — normal browser session
 ```
 
-So each `setup_*_routes` is a **closure factory**: it receives its service
-dependencies as arguments, defines route handlers that close over them, and returns the
-`APIRouter`. There is no module-global router — dependencies are injected at build time.
+**(a) Internal-tool bypass** (`app.py:289-310`): a per-process random token
+(`core.middleware.INTERNAL_TOOL_TOKEN = os.environ.get("APOLLO_INTERNAL_TOKEN") or secrets.token_hex(32)`,
+`core/middleware.py:21`) lets the agent's own tool layer (e.g. the `app_api`
+tool) call admin-gated routes over HTTP loopback without a session cookie.
+Requires the `X-Apollo-Internal-Token` header to match AND
+`_is_trusted_loopback(request)` (direct `127.0.0.1`/`::1` connection with
+**none** of `cf-connecting-ip`, `x-forwarded-for`, etc. — blocks a Cloudflare
+tunnel or reverse proxy from inheriting loopback trust). Sets
+`request.state.current_user = "internal-tool"` (or impersonates a real user
+via `X-Apollo-Owner` if that header names an existing account) and
+`request.state.internal_tool = True`.
 
-### 3.1 WebSocket auth injection (`ws_validate` / `ws_authorize`)
+**(b) `LOCALHOST_BYPASS=true` + trusted loopback** (`app.py:316-324`): acts as
+a real user (`_bypass_user()` — prefers an admin, else the first user, else
+`""`) so ownership-scoped routes (sessions, documents) don't 403 with no
+login. **Do not set this on a network-exposed instance.**
 
-Because WS handlers can't use the HTTP middleware, the *validators* are injected into
-the factory as callables. Two routers use this idiom:
+**(c) Bearer token** (`app.py:332-386`): `Authorization: Bearer ody_<43 base64
+chars>`. Prefix-sharded, bcrypt-checked against an in-memory cache of active
+`ApiToken` rows (invalidated on token create/revoke via
+`app.state.invalidate_token_cache`). Sets `request.state.current_user = "api"`,
+`request.state.api_token = True`, `request.state.api_token_owner`, and
+`request.state.api_token_scopes`.
 
-**Browser** (`app.py:796`):
+**(d) Session cookie** (`app.py:388-400`): `apollo_session` cookie, validated
+via `auth_manager.validate_token(token)`. Sets
+`request.state.current_user = auth_manager.get_username_for_token(token)`,
+`request.state.auth_mode = "cookie"`.
+
+Any request that matches none of (a)-(d) gets `401 {"error": "Not authenticated"}`
+for `/api/*` paths, or a `302` redirect to `/login` otherwise.
+
+### 1.2 Auth-exempt paths (only meaningful when `AUTH_ENABLED=true`)
 
 ```python
-build_and_include_router(
-    app, "Browser", setup_browser_routes,
-    ws_validate=lambda token: (not AUTH_ENABLED) or auth_manager.validate_token(token),
-    ws_authorize=lambda token: (not AUTH_ENABLED) or _browser_ws_authorize(token),
-    logger=logger,
-)
+# app.py:180-214
+AUTH_EXEMPT_EXACT = {
+    "/api/auth/setup", "/api/auth/signup", "/api/auth/login", "/api/auth/logout",
+    "/api/auth/status", "/api/auth/features", "/api/auth/settings",
+    "/api/auth/integrations/presets", "/api/health", "/api/version", "/login",
+    "/api/paperclip/events",   # self-authenticates via PAPERCLIP_EVENTS_TOKEN
+}
+AUTH_EXEMPT_PREFIXES = ["/static", "/lmproxy"]   # lmproxy has its own bearer token
+AUTH_EXEMPT_PATTERNS = [re.compile(r"^/api/tasks/[^/]+/webhook/[^/]+/?$")]  # path IS the credential
 ```
 
-`_browser_ws_authorize` (`app.py:780`) mirrors `require_privilege`'s fail-open rules:
-anonymous/valid sessions pass, otherwise it checks
-`privileges.get("can_use_browser", True)`. With `AUTH_ENABLED=false` both lambdas
-short-circuit to `True` (the HTTP middleware isn't even installed in that mode).
+Note `/api/auth/settings` is exempt at the *middleware* level (so the request
+reaches the handler without a cookie) but the handler itself
+(`GET /api/auth/settings`, §5.1) still gates the *full* settings payload
+behind `_require_admin_user` — non-admins/unauthenticated callers get
+`scrub_settings(settings)` instead of a 401.
 
-**Paperclip sidecar proxy** (`app.py:729`) injects
-`ws_validate=lambda token: auth_manager.validate_token(token)` and an event hub.
+### 1.3 `require_admin` vs `_require_admin_user` — two different gates, on purpose
 
----
-
-## 4. Pydantic request models (`src/request_models.py`)
-
-Shared request/response models live in `src/request_models.py`; many routers also
-define small local models inside their factory.
-
-### `ChatRequest` (`src/request_models.py:7`) — the JSON body for `POST /api/chat`
+**`core/middleware.py:25-55` — `require_admin(request)`.** Used by most
+admin-gated routers (`hub_routes`, `localmodels_routes`, `embedding_routes`,
+`preset_routes`, `contacts_routes`, `activity_routes`, `upload_routes`,
+`admin_wipe_routes`, `diagnostics_routes`, `system_status_routes`,
+`personal_routes`, `model_routes`'s `require_admin`-style checks, etc.):
 
 ```python
-class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=50000)
-    session: str = Field(...)
-    attachments: Optional[List[str]] = Field(default=[])
-    use_web: Optional[bool] = Field(default=False, description="Enable web search")
-    web_access: Optional[str] = Field(
-        default=None, description="Web access mode: off | auto | always")
-    use_research: Optional[bool] = Field(default=False)
-    time_filter: Optional[str] = Field(default=None)
-    preset_id: Optional[str] = Field(default=None)
+# core/middleware.py:25-55
+def require_admin(request: Request):
+    hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+    if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
+        return
+    if getattr(request.state, "internal_tool", False):
+        return
+    auth_mgr = getattr(request.app.state, "auth_manager", None)
+    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+        return
+    if not auth_mgr or not auth_mgr.is_configured:
+        raise HTTPException(403, "Admin only")
+    user = getattr(request.state, "current_user", None)
+    if not user or not auth_mgr.is_admin(user):
+        raise HTTPException(403, "Admin only")
 ```
 
-- `message` is `.strip()`-validated (`request_models.py:18`).
-- `time_filter` is coerced to `None` unless in `{day, week, month, year}`
-  (`request_models.py:23`) — invalid values are silently dropped, not rejected.
-- **`web_access`** is the tri-state field (`off | auto | always`, default `None`).
-  `None` means "fall back to settings / legacy flags". This is the field wired into
-  `resolve_web_access` — see §5.2 and §6. Note `ChatRequest` has **no `incognito`
-  field**; incognito only flows through the form-based `/api/chat_stream` path
-  (`chat_routes.py:290`).
+It **trusts `request.state.current_user`**, which `AuthMiddleware` populates
+through *every* branch in §1.1 — including the internal-tool and
+`LOCALHOST_BYPASS` paths. That's correct for routes where "an authenticated
+loopback caller acting as an admin" is the desired behavior (most admin
+CRUD — creating a model endpoint, scanning local models, etc.).
 
-Other shared models: `SessionCreateRequest` (`:31`), `MemoryAddRequest` (`:38`,
-validates `category` against a fixed set), `MemoryUpdateRequest` (`:52`),
-`PresetUpdateRequest` (`:57`), `DirectoryRequest` (`:97`). Response models:
-`ErrorResponse` (`:108`), `UploadResponse` (`:114`), `SessionResponse` (`:124`),
-`MemoryResponse` (`:132`).
-
----
-
-## 5. Chat router (`routes/chat_routes.py`)
-
-Factory `setup_chat_routes(...)` (`chat_routes.py:232`) takes `session_manager`,
-`chat_handler`, `chat_processor`, `memory_manager`, `research_handler`,
-`upload_handler`, plus optional `memory_vector`, `webhook_manager`, `skills_manager`.
-Tag `["chat"]`.
-
-### 5.1 `POST /api/chat` (non-streaming) — `chat_routes.py:248`
-
-- **Body:** `ChatRequest` (JSON). **Response:** `{"response": str}`
-  (`response_model=Dict[str, str]`).
-- **Gates (in order):** `_verify_session_owner(request, session)` (`:260` — prevents
-  posting into another user's chat) → session load (404 if missing) →
-  `_clear_orphaned_session_endpoint` / `_recover_empty_session_model` (400 if the
-  model endpoint was removed or no model is selected) → `_enforce_chat_privileges`
-  (`:282` — same `allowed_models` allowlist + `max_messages_per_day` cap as the stream
-  path; mirrored so the non-streaming path can't bypass it).
-- Inline memory commands are short-circuited (`:285`).
-- **Web wiring** (`:289`): calls `resolve_web_access(chat_request.web_access, "chat",
-  message, use_web, None, prev_message=...)`. No `apply_incognito` here (no incognito
-  field). Then `build_chat_context(...)` (`:317`) runs preset/preprocess/preface/
-  compaction; optional research injection (`:329`); `llm_call_async` (`:342`);
-  post-response background tasks (memory/webhook/auto-name) via
-  `run_post_response_tasks` (`:359`).
-
-### 5.2 `POST /api/chat_stream` (SSE) — `chat_routes.py:371`
-
-Accepts a **`multipart/form-data`** body (it can also read a JSON body for
-attachments). The form is parsed at `chat_routes.py:396`:
+**`routes/auth_routes.py:88-110` — `_require_admin_user(request)`.** Used
+**only** inside `auth_routes.py` itself (user list/create/delete/rename,
+settings, integrations, features-write). Deliberately does **not** delegate
+to `core.middleware.require_admin`:
 
 ```python
-form_data = await request.form()
-message          = form_data.get("message")
-session          = form_data.get("session")
-attachments      = form_data.get("attachments")        # JSON-encoded list of IDs
-use_web          = form_data.get("use_web")
-use_research     = form_data.get("use_research")
-time_filter      = form_data.get("time_filter")
-preset_id        = form_data.get("preset_id")
-allow_bash       = form_data.get("allow_bash")
-allow_web_search = form_data.get("allow_web_search")
-web_access       = form_data.get("web_access")          # off | auto | always
-use_rag          = form_data.get("use_rag")
-search_context   = form_data.get("search_context")      # pre-fetched results (compare mode)
-compare_mode     = str(form_data.get("compare_mode", "")).lower() == "true"
-incognito        = str(form_data.get("incognito", "")).lower() == "true"
-chat_mode        = str(form_data.get("mode", "")).lower()   # 'chat' or 'agent'
-```
+# routes/auth_routes.py:88-110
+def _require_admin_user(request: Request) -> Optional[str]:
+    """Admin gate for this router — strict, plus the desktop-mode allowance.
 
-Additional form fields read further down: `active_doc_id` (`:428`), `no_memory`
-(`:499`). An `x-tz-offset` **header** (`:389`) is stashed so calendar/notes tools
-interpret times in the user's timezone.
+    Delegating wholesale to core.middleware.require_admin is WRONG here:
+    that helper trusts ``request.state.current_user``, which the auth
+    middleware populates through loopback/bypass paths. On a direct
+    loopback request that turned GET /api/auth/users from 403 into 200
+    for an UNAUTHENTICATED caller (verified by A/B against main), leaking
+    usernames and privilege flags.
 
-**Key behaviors:**
-
-- **Auto-escalation** (`:424`): if `mode=chat` but `_message_needs_tools(message)`
-  matches a todo/reminder/calendar intent, the turn is silently promoted to `agent`
-  (a *light* promotion — shell/code/file tools are still withheld). `user_requested_agent`
-  (`:415`) records whether the user explicitly chose agent mode.
-- **Gates:** `coerce_message_and_session` (`:438`, allows empty message when an
-  attachment is present) → `_verify_session_owner` (`:443`, after coerce resolves a
-  default session, before load) → orphaned-endpoint / empty-model repair (`:446-459`)
-  → `_enforce_chat_privileges` (`:473`, must fire **before any token spend**) →
-  `resolve_session_auth` (`:476`).
-- **Research auto-trigger** (`:479`): `use_research=true` or a session in
-  `research_pending` mode triggers deep research.
-- **Web wiring** (`:522`):
-
-  ```python
-  from src.web_decider import resolve_web_access, apply_incognito
-  use_web, allow_web_search, _web_decision = await resolve_web_access(
-      web_access, chat_mode, message if isinstance(message, str) else "",
-      use_web, allow_web_search, prev_message=_prev_user_msg,
-  )
-  use_web, _web_decision = apply_incognito(incognito, use_web, _web_decision)
-  ```
-
-  `_prev_user_msg` (`:510`) is the previous user turn pulled from `sess.history`
-  (extracted *before* `build_chat_context` appends the current message) and feeds the
-  follow-up heuristic in the decider.
-- **Incognito** (`:617`) additionally denies tools that would expose the user's data
-  and suppresses memory writes/RAG.
-
-#### SSE conventions (`/api/chat_stream`)
-
-The body is an `async def stream_with_save()` generator (`:679`) yielded through
-`_safe_stream` (`:1125`) and run as a **detached** background task via
-`agent_runs.start(...)`; the response is
-`StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")`
-(`chat_routes.py:1140`). Because the run is detached, closing the SSE only drops a
-subscriber — the run continues and saves on completion. Reconnect via
-`/api/chat/resume/{session_id}`.
-
-Each event is `data: {json}\n\n`. The `type` field discriminates the event. Observed
-event types (with source lines):
-
-| `type` | Meaning | Line |
-|---|---|---|
-| `attachments` | attachment metadata | `:689` |
-| `doc_update` | a doc was auto-created/opened | `:696` |
-| `rag_sources` | RAG citations | `:700` |
-| `web_sources` | web search citations | `:703` |
-| `web_search_failed` | web requested but returned nothing (not fired for `auto-skip`) | `:712` |
-| `memories_used` | memories injected into context | `:716` |
-| `model_info` | model + suffix banner | `:734`, `:864` |
-| `research_progress` / `research_sources` / `research_findings` / `research_done` | deep-research lifecycle | `:816`–`:832` |
-| `compacted` | context was compacted | `:843` |
-| `tool_start` | a tool began (e.g. `generate_image`) | `:875` |
-| `metrics` | timing/token metrics | `:895`, `:951` |
-| `message_saved` | assistant message persisted, carries `id` | `:990` |
-| *(raw delta)* | `{"delta": "..."}` token chunks streamed from the model | `:886`, `:929` |
-
-Stream terminators: `data: [DONE]\n\n` on success (`:833`, `:896`); heartbeats are SSE
-comments `: heartbeat {n}\n\n` (`:820`, `:876`); errors are emitted as
-`event: error\ndata: {json}\n\n` and passed through unchanged (`:954`, the rewrite path
-uses the same convention at `:1358`).
-
-### 5.3 Other chat endpoints
-
-| Endpoint | Handler | Line | Notes |
-|---|---|---|---|
-| `GET /api/chat/resume/{session_id}` | `chat_resume` | `:1146` | reconnect to a still-running detached run; 404 if none active. Owner-verified. |
-| `POST /api/chat/stop/{session_id}` | `chat_stop` | `:1157` | cancels a detached run (Stop button); `{"stopped": bool}`. |
-| `GET /api/chat/stream_status/{session_id}` | `chat_stream_status` | `:1166` | reports active/needs-resume. |
-| `POST /api/inject_context/{session_id}` | `inject_context` | `:1184` | `context: str = Form(...)`. |
-| `GET /api/search` | `search_messages` | `:1199` | search within chat messages. |
-| `POST /api/rewrite` | `rewrite_message` | `:1252` | SSE stream, same `event: error` convention. |
-
----
-
-## 6. Web-access resolution (`src/web_decider.py`) — `resolve_web_access` / `apply_incognito`
-
-`resolve_web_access` (`web_decider.py:268`) maps the tri-state `web_access` onto the
-legacy `(use_web, allow_web_search, decision)` triple consumed by the chat pipeline:
-
-```python
-async def resolve_web_access(web_access, chat_mode, message, use_web,
-                             allow_web_search, prev_message="") -> Tuple:
-    mode = (web_access or "").strip().lower()
-    if mode not in ("off", "auto", "always"):
-        cfg = (load_settings().get("web_access_mode") or "manual").strip().lower()
-        _legacy_intent = (str(use_web).lower() == "true"
-                          or str(allow_web_search).lower() == "true")
-        if cfg not in ("off", "auto", "always") or _legacy_intent:
-            return use_web, allow_web_search, None      # manual / legacy — untouched
-        mode = cfg
-    if mode == "off":
-        return False, "false", "off"
-    if mode == "always":
-        if chat_mode == "agent":
-            return use_web, "true", "always"
-        return True, allow_web_search, "always"
-    # auto
-    if chat_mode == "agent":
-        return use_web, "true", "auto-tools"            # model decides per-call
-    needed = await decide_use_web(message or "", prev_message=prev_message)
-    return needed, allow_web_search, ("auto-search" if needed else "auto-skip")
-```
-
-Decision values: `None` (legacy manual, flags untouched), `off`, `always`,
-`auto-tools`, `auto-search`, `auto-skip`. The chat route logs the decision
-(`chat_routes.py:530`) and uses it to drive the `web_sources` / `web_search_failed`
-SSE events (§5.2).
-
-`apply_incognito` (`web_decider.py:257`):
-
-```python
-def apply_incognito(incognito, use_web, decision):
-    if incognito and use_web:
-        return False, "incognito-off"   # incognito must never hit a search engine
-    return use_web, decision
-```
-
-In `auto` chat mode, `decide_use_web` (`web_decider.py:209`) runs a heuristic
-(`heuristic_decision`, `:100` — URL/recency/question-shape signals) and falls back to a
-utility-model tie-break (`_ask_utility_model`, `:154`); conservative default is "no".
-
----
-
-## 7. Browser router (`routes/browser_routes.py`)
-
-Factory `setup_browser_routes(ws_validate=None, ws_authorize=None)`
-(`browser_routes.py:157`), mounted with `prefix="/api/browser"`, tag `["browser"]`.
-Backed by `services/browser/embedded_browser` (a single shared Playwright page). Every
-HTTP handler calls `_require_browser_privilege(request)` (`:141`, →
-`require_privilege(request, "can_use_browser")`). Errors map through
-`_handle_browser_error` (`:145`): `BrowserSecurityError`/`ValueError`→400,
-`BrowserUnavailable`→503, timeout→504, else 500.
-
-| Endpoint | Body model | Line |
-|---|---|---|
-| `GET /api/browser/status` | — | `:171` |
-| `POST /api/browser/navigate` | `NavigateRequest{url}` (`:115`) | `:176` |
-| `GET /api/browser/current` | — | `:184` |
-| `GET /api/browser/html` | — | `:192` |
-| `GET /api/browser/text` | — | `:200` |
-| `POST /api/browser/execute` | `ScriptRequest{script}` (`:119`) | `:208` |
-| `POST /api/browser/screenshot` | `ScreenshotRequest{full_page}` (`:133`) | `:216` |
-| `POST /api/browser/wait` | `SelectorRequest{selector,timeout_ms}` (`:123`) | `:224` |
-| `POST /api/browser/click` | `SelectorRequest` | `:232` |
-| `POST /api/browser/type` | `TypeRequest{selector,text}` (`:128`) | `:240` |
-| `GET /api/browser/events` | — | `:248` |
-| `POST /api/browser/detect-localhost` | `DetectRequest{text}` (`:137`) | `:253` |
-| `GET /api/browser/tools` | — | `:259` (self-describing tool/route map) |
-
-### 7.1 WebSocket `/api/browser/ws` — live screencast + input forwarding
-
-Handler `browser_ws` (`browser_routes.py:287`). Protocol:
-
-1. **Auth handshake** (`:294`): read the `apollo_session` cookie, run
-   `ws_validate(token)`; close with **1008 (policy violation)** if invalid. Then
-   `ws_authorize(token)` (the `can_use_browser` privilege); close 1008 if not.
-   `await websocket.accept()` (`:304`).
-2. **Reachability probe** (`:314`): `get_current_url()`; on `BrowserUnavailable` send
-   `{"type":"error","message":...}` and close.
-3. **Single-viewer takeover** (`:327`): a module-global `_current_viewer` ensures only
-   one live connection streams the shared page (CDP allows one screencast per page);
-   a new connection stops the previous one (last-one-wins).
-4. **Server→client frames** via `_LiveViewer` (`:61`) + `_FrameForwarder` (`:24`),
-   which enforces **strict backpressure** — at most one send in flight, dropping
-   frames if the previous send is still pending (favours latency over completeness).
-
-**Server→client message types** (JSON text frames):
-- `{"type":"frame","data":<base64 jpeg>,"w":int,"h":int}` (`:75`) — a screencast frame.
-- `{"type":"url","url":...,"title":...}` (`:91`, `:407`) — address-bar sync.
-- `{"type":"error","message":...}` — protocol / replay errors.
-
-**Client→server messages** dispatched by `_dispatch_ws_message` (`browser_routes.py:386`):
-
-| `type` | Fields | Action |
-|---|---|---|
-| `mouse` | `kind, x, y, button, clicks, dx, dy` | `session.input_mouse(...)` |
-| `key` | `kind, key` | `session.input_key(...)` |
-| `navigate` | `url` | `session.navigate(...)` → replies `{"type":"url",...}` |
-| `back` / `forward` / `reload` | — | history nav → replies `{"type":"url",...}` |
-
-Input/nav replay failures are caught and reported as `error` events but **never** tear
-down the stream (`:356-364`). On disconnect/exception the viewer is stopped and
-`_current_viewer` cleared (`:369-372`).
-
----
-
-## 8. Models routers
-
-### 8.1 `routes/model_routes.py`
-
-Factory `setup_model_routes(model_discovery)` (`model_routes.py:656`),
-`prefix="/api"`. Maintains a **per-user** 30-second model-list cache keyed by
-`(owner, is_admin)` (`:665`, `:874`) and a background re-probe thread
-(`_refresh_caches_bg`, `:678`) that probes endpoints in parallel with a 2s timeout and
-backs off endpoints that failed 3+ times in 5 min.
-
-Key endpoints:
-
-| Endpoint | Handler | Line | Gate / notes |
-|---|---|---|---|
-| `GET /api/models?refresh=` | `api_models` | `:841` | auth required (rejects anonymous when configured, `:856`); admins see all endpoints, users see owner-scoped (`:862`); per-user cache. |
-| `GET /api/model-endpoints/probe-local` | `probe_local_endpoints` | `:891` | `require_admin`; 8s cache; only probes local endpoints. |
-| `GET /api/ping` / `GET /api/probe` | | `:943`, `:1068` | reachability checks. |
-| `POST /api/probe-selected` | | `:1017` | |
-| `GET /api/providers` / `GET /api/discover` | | `:1141`, `:1153` | provider discovery. |
-| `GET /api/model-endpoints` | `list_model_endpoints` | `:1161` | `require_admin`; returns `{id,name,base_url,has_key,is_enabled,models,status,model_type,supports_tools,...}`. `api_key` is never returned (only `has_key`). |
-| `POST /api/model-endpoints` | `create_model_endpoint` | `:1209` | `require_admin`; **`Form(...)`** body: `name, base_url(req), api_key, skip_probe, require_models, model_type, supports_tools, container_local, shared`. Normalizes/resolves the URL (Tailscale fallback), dedupes existing rows. |
-| `POST /api/model-endpoints/test` | | `:1332` | `require_admin`. |
-| `GET /api/model-endpoints/{ep_id}/probe` | | `:1357` | |
-| `GET\|PATCH /api/model-endpoints/{ep_id}/models` | | `:1420`, `:1461` | list / hide models. |
-| `GET /api/default-chat` | | `:1484` | resolves the default chat endpoint/model. |
-| `PATCH /api/model-endpoints/{ep_id}` | | `:1589` | edit endpoint. |
-| `GET /api/model-endpoints/{ep_id}/dependents` | | `:1721` | sessions referencing this endpoint. |
-| `DELETE /api/model-endpoints/{ep_id}` | | `:1727` | `require_admin`. |
-| `GET /api/tools` | `list_tools` | `:1756` | lists agent tool tags with enabled flags. |
-| `POST /api/tools` | `update_tools` | `:1770` | `require_admin`; body `ToolsUpdate{disabled: list}` (`:1767`); persists `disabled_tools` to settings. |
-
-### 8.2 `routes/localmodels_routes.py` (on-disk GGUF models)
-
-Factory `setup_localmodels_routes()` (`localmodels_routes.py:26`),
-`prefix="/api/local-models"`, tag `["local-models"]`. **Every** route calls
-`require_admin(request)` — the module docstring (`:1`) notes these are strictly more
-privileged than the model-endpoint routes because they enumerate the filesystem,
-change a global scan directory, and launch/kill OS processes.
-
-| Endpoint | Handler | Line | Response |
-|---|---|---|---|
-| `GET /api/local-models` | `list_models` | `:29` | `{dirs, models:[{...,running:bool}]}` (merges scanner catalog with running-server status). |
-| `POST /api/local-models/scan` | `rescan` | `:44` | `{count, models}`. |
-| `GET /api/local-models/voices` | `list_voices` | `:50` | Piper TTS voices. |
-| `GET /api/local-models/dirs` | `get_dirs` | `:56` | `{dirs}`. |
-| `PUT /api/local-models/dirs` | `put_dirs` | `:61` | body `DirsBody{dirs:list[str]}` (`:22`); sets scan dirs + rescans. |
-| `POST /api/local-models/{model_id}/start` | `start` | `:68` | `{ok, base_url}` or 400 `{ok:false,error}`. |
-| `POST /api/local-models/{model_id}/stop` | `stop` | `:77` | `{ok}`/`{ok:false,error:"not running"}`. |
-
-A separate **local-model OpenAI proxy** (`routes/lmproxy_routes.py`, mounted at
-`/lmproxy`, auth-exempt) forwards to whichever GGUF model is warm — consumed by
-Paperclip's agents (`app.py:824`).
-
----
-
-## 9. Search router (`routes/search_routes.py`)
-
-Factory `setup_search_routes(config)` (`search_routes.py:44`), tag `["search"]`.
-`_request_values` (`:22`) accepts JSON **or** form **or** query params so both the
-FormData-posting UI and the JSON-posting agent tool work (the UI's FormData would
-otherwise 422 against `Form(...)`).
-
-| Endpoint | Handler | Line | Gate / notes |
-|---|---|---|---|
-| `GET /api/search/config` | `get_search_settings` | `:47` | returns `get_search_config()`. |
-| `POST /api/search` | `do_web_search` | `:51` | standalone search; `{query\|q, time_filter\|freshness}` → `{context, sources}`. Used by Compare mode to pre-search once. |
-| `GET /api/search/providers` | `list_search_providers` | `:73` | `[{id,label,available}]` per `PROVIDER_INFO`. |
-| `POST /api/search/query` | `search_with_provider` | `:92` | `{query, provider, count}` → `{results, provider, time}`; count capped at 20. |
-| `GET /api/search/searxng/status` | `searxng_status` | `:119` | **`require_admin`**; returns `{status, url, installing, install_ok, log_tail, runtime_log_tail}` — reads the last 20 lines of the sidecar runtime log. |
-| `POST /api/search/searxng/install` | `searxng_install` | `:141` | **`require_admin`**; runs `scripts/setup-searxng.{sh,ps1}` in a daemon thread (stops the sidecar, runs the installer, restarts on success); returns `{started:bool}` (or `{started:false,reason:"already running"}`). |
-
-The SearXNG sidecar is a no-Docker, locally-installed managed search backend with a
-DDG fallback (see the project's web-access architecture). Install progress is held in a
-module-local `_install_state` dict (`:117`) surfaced via the status endpoint.
-
----
-
-## 10. Auth & settings router (`routes/auth_routes.py`)
-
-Factory `setup_auth_routes(auth_manager)` (`auth_routes.py:76`), `prefix="/api/auth"`,
-tag `["auth"]`. Session cookie name is **`apollo_session`** (`auth_routes.py:73`), also
-imported by the browser/paperclip WS handlers. Per-IP rate limiters guard login (15/60s),
-signup (3/300s), setup (3/300s) (`:79-81`).
-
-### 10.1 Account / session endpoints
-
-| Endpoint | Body | Line | Notes |
-|---|---|---|---|
-| `POST /api/auth/setup` | `SetupRequest{username,password}` (`:42`) | `:87` | first-run admin; 400 if already configured; password ≥ 8. |
-| `POST /api/auth/signup` | `SignupRequest` (`:47`) | `:101` | only if `signup_enabled`; 403 otherwise. |
-| `POST /api/auth/login` | `LoginRequest{username,password,remember,totp_code}` (`:35`) | `:119` | verifies password, then TOTP if enabled; sets httponly `apollo_session` cookie (`secure` via `SECURE_COOKIES`, `samesite=lax`, 7-day max-age when `remember`). Returns `{ok:false,requires_totp:true}` when a code is needed. |
-| `POST /api/auth/logout` | — | `:151` | revokes token, deletes cookie. |
-| `GET /api/auth/status` | — | `:159` | public (auth-exempt); returns config/login status + the caller's effective `privileges`. |
-| `POST /api/auth/change-password` | `ChangePasswordRequest` (`:52`) | `:176` | revokes other sessions on success. |
-| `POST /api/auth/2fa/setup` | — | `:194` | returns TOTP secret + QR data-URI. |
-| `POST /api/auth/2fa/confirm` | `TotpVerifyRequest{code}` (`:214`) | `:217` | returns backup codes. |
-| `POST /api/auth/2fa/disable` | `TotpDisableRequest{password}` (`:228`) | `:231` | |
-| `GET /api/auth/2fa/status` | — | `:241` | |
-
-### 10.2 User management (admin)
-
-`GET/POST /api/auth/users` (`:250`, `:257`, `CreateUserRequest` `:57`),
-`PUT /api/auth/users/{username}/privileges` (`:269`),
-`PUT /api/auth/users/{username}/rename` (`:280`),
-`DELETE /api/auth/users` (`:370`),
-`POST /api/auth/signup-toggle` (deprecated, `:345`) /
-`PUT /api/auth/open-signup` (`:361`).
-
-### 10.3 Feature flags & **app settings** (these are the "settings routes")
-
-| Endpoint | Line | Gate |
-|---|---|---|
-| `GET /api/auth/features` | `:382` | public — which UI features are on. |
-| `POST /api/auth/features` | `:387` | admin only; only boolean keys that already exist are updated. |
-| `GET /api/auth/settings` | `:403` | **auth-exempt** (frontend needs keybinds/TTS prefs pre-admin). Admins get the full settings; non-admins get `scrub_settings(settings)` with secret keys blanked. |
-| `POST /api/auth/settings` | `:414` | **admin only** (`403` otherwise). Only keys present in `DEFAULT_SETTINGS` are written (`:422`), so unknown keys can't be injected. |
-
-```python
-@router.post("/settings")
-async def set_settings(request: Request):
-    user = _get_current_user(request)
+    So keep the strict cookie-validating check exactly as it was, and add
+    only the one thing that was missing: the no-login desktop mode
+    (AUTH_ENABLED=false) that the macOS bundle launcher ships and that
+    every require_admin route already honors.
+    """
+    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+        return None
+    user = _get_current_user(request)   # reads the apollo_session cookie DIRECTLY
     if not user or not auth_manager.is_admin(user):
         raise HTTPException(403, "Admin only")
-    body = await request.json()
-    current = _load_settings()
-    for key in DEFAULT_SETTINGS:
-        if key in body:
-            current[key] = body[key]
-    _save_settings(current)
-    return current
+    return user
 ```
 
-This is where `web_access_mode`, `searxng_managed`, `searxng_port`, `disabled_tools`,
-etc. are persisted. Settings themselves are loaded/saved by `src/settings.py`
-(`load_settings` `:192`, `save_settings` `:210`, `get_setting` `:217`,
-`get_user_setting` `:254`).
+**Why the split matters, concretely:** `GET /api/auth/users` returns every
+username plus `is_admin`/privilege flags. If it used `require_admin`, an
+internal-tool-token loopback call (or a `LOCALHOST_BYPASS` connection with no
+real login) would sail through and dump the full user list to whatever
+process holds the internal token — normally fine for "create a model
+endpoint," never fine for "list every account and its admin flag." So
+`_require_admin_user` re-reads the cookie itself (`_get_current_user`,
+bypassing `request.state.current_user` entirely) and only adds the one
+allowance every other admin route already has: `AUTH_ENABLED=false` desktop
+mode returns `None` (no gate) so the no-login launcher still works. **Rule of
+thumb for reimplementation:** any route that returns *account/privilege
+metadata itself* (not just performs an admin action) must use the strict
+cookie-only check, not the loopback-trusting one.
 
-### 10.4 Integrations CRUD (admin)
+### 1.4 Verified endpoints with no auth gate at all
 
-`GET /api/auth/integrations` (`:433`, keys masked),
-`GET /api/auth/integrations/presets` (`:444`, public/auth-exempt, api_key stripped),
-`POST /api/auth/integrations` (`:449`),
-`PUT /api/auth/integrations/{id}` (`:459`),
-`DELETE /api/auth/integrations/{id}` (`:471`),
-`POST /api/auth/integrations/{id}/test` (`:482`). All mutators are admin-gated and
-return secrets only through `mask_integration_secret(...)`.
+A second, independent read of every handler body (not just router-level
+imports) confirms these routes have **no** `require_admin`/`require_user`/
+`require_owner`/`require_privilege` call anywhere in the function — they are
+reachable by anyone who can reach the global middleware (i.e. anyone with a
+valid session in cookie mode, or literally anyone in `AUTH_ENABLED=false`
+desktop mode), regardless of what the rest of their router does:
 
----
+- **`GET /api/tools`** (`model_routes.py::list_tools`) — no auth, while the
+  sibling `POST /api/tools` is admin-gated. Read-only tool-list leak, low
+  severity but inconsistent with its own file.
+- **`POST /api/image/sharpen`** (`gallery_routes.py::sharpen_image`) — every
+  other `/api/image/*` op in the same file requires `can_generate_images`;
+  this one doesn't.
+- **`POST /api/presets/expand`** (`preset_routes.py::expand_character_prompt`)
+  — an AI-backed endpoint (spends an LLM call) with no gate.
+- **`POST /api/tasks/parse`** (`task_routes.py::parse_task`) — an LLM-backed
+  NL→task-draft endpoint, no gate (draft-only output limits blast radius).
+- **`POST /api/upload`** (`upload_routes.py::api_upload`) — no identity
+  check, only per-IP rate limiting (§5.9).
+- **`GET /api/upload/{file_id}`** and **`GET/PUT /api/upload/{file_id}/vision`**
+  — gated only by upload-id format validation; the owner check inside only
+  applies `if auth_configured`, so it's a no-op in desktop/unconfigured mode.
+- **`POST /api/tasks/{task_id}/webhook/{token}`** — intentionally open by
+  design (§5.8): the token in the path is the credential.
+- `lmproxy_routes.py` and `POST /api/paperclip/events` use their own bearer
+  tokens instead of the session system (by design, §1.2).
 
-## 11. Research router (`routes/research_routes.py`)
+### 1.5 Owner scoping
 
-Factory `setup_research_routes(research_handler, session_manager=None)`
-(`research_routes.py:53`), tag `["research"]`. Deep-research jobs are launched and
-streamed.
-
-| Endpoint | Body / model | Line | Gate |
-|---|---|---|---|
-| `GET /api/research/crawl4ai/status` | — | `:93` | crawl4ai availability. |
-| `POST /api/research/crawl4ai/crawl` | `Crawl4AIRequest` (`:87`) | `:98` | |
-| `GET /api/research/active` | — | `:162` | |
-| `GET /api/research/status/{session_id}` | — | `:181` | |
-| `POST /api/research/cancel/{session_id}` | — | `:192` | |
-| `POST /api/research/result/{session_id}` | — | `:201` | |
-| `GET /api/research/report/{session_id}` | — | `:228` | served as standalone HTML (relaxed CSP, §2.1). |
-| `POST /api/research/{session_id}/hide-image` | `HideImageRequest` (`:245`) | `:248` | |
-| `POST /api/research/{session_id}/unhide-images` | — | `:260` | |
-| `GET /api/research/library` | — | `:271` | saved research list. |
-| `GET /api/research/detail/{session_id}` | — | `:325` | |
-| `POST /api/research/{session_id}/archive` | — | `:343` | |
-| `DELETE /api/research/{session_id}` | — | `:363` | |
-| `POST /api/research/start` | `ResearchStartRequest` (`:389`) | `:401` | **`require_privilege(request, "can_use_research")`** (`:405`). For internal-tool callers, re-checks the impersonated `X-Apollo-Owner`'s `can_use_research` (`:407`). Resolves an endpoint via a fallback chain (`research → utility → default → chat → first enabled`, `:449-485`). Returns `{session_id, status:"running", query}`. |
-| `GET /api/research/stream/{session_id}` | — | `:507` | SSE progress; owner-verified (404 if not owned). |
-| `POST /api/research/result-peek/{session_id}` | — | `:541` | |
-| `POST /api/research/spinoff/{session_id}` | — | `:564` | |
-
-`ResearchStartRequest` (`research_routes.py:389`) fields: `query`, `max_rounds`
-(0=Auto, capped 20), `search_provider`, `endpoint_id`, `model`, `max_time` (60–1800s),
-`extraction_timeout` (15–3600s), `extraction_concurrency` (1–12), `category`.
-
----
-
-## 12. SSE / streaming conventions (summary)
-
-All Apollo streaming endpoints share these conventions:
-
-- **Transport:** `StreamingResponse(generator, media_type="text/event-stream")`.
-- **Frame format:** `data: {json}\n\n`, with a `"type"` discriminator on structured
-  events; raw token output uses `{"delta": "..."}`.
-- **Terminator:** `data: [DONE]\n\n`.
-- **Errors:** `event: error\ndata: {json}\n\n` (the error event line is preserved and
-  passed straight through any wrapping generator, e.g. `chat_routes.py:954`).
-- **Heartbeats:** SSE comment lines `: heartbeat {n}\n\n` keep proxies from idling out
-  long research/agent runs (`chat_routes.py:820`).
-- **Detached runs (chat only):** the chat stream is run by `agent_runs` independent of
-  the SSE subscriber, so a dropped connection doesn't cancel generation; reconnect via
-  `GET /api/chat/resume/{session_id}` and cancel via `POST /api/chat/stop/{session_id}`.
-- **Timeout exemptions:** streaming/long-running endpoints are exempt from the request
-  timeout middleware (`app.py:111`).
+Most domain tables carry a nullable `owner` column (see `03-database-schema-data-models.md`).
+`NULL` owner = legacy/shared, visible to everyone; a non-null owner scopes a
+row to one user, with admins generally seeing everything. `src/auth_helpers.py`
+provides `get_current_user`, `require_user`, `effective_user` (the *canonical*
+owner — resolves API-token requests to the token's real owner instead of the
+literal `"api"` principal, which several routers explicitly call out as a
+past cross-tenant leak, e.g. `routes/memory_routes.py:43-48`,
+`routes/task_routes.py:188-193`), and `require_privilege(request, "can_manage_memory")`
+for the fine-grained non-admin privilege system (`auth_manager.get_privileges(user)`).
 
 ---
 
-## 13. Reviewer, memory-graph, distill/import & skill-pack endpoints
+## 2. SSE streaming — `chat_stream` and friends
 
-These are the newer endpoints layered on top of the chat/memory subsystems. The
-*pure* logic they call is documented in `07-business-logic-core-algorithms.md`;
-this section covers the HTTP contract.
+### 2.1 `POST /api/chat_stream` (`routes/chat_routes.py:419`)
 
-### 13.1 `POST /api/review` — adversarial second-model critique (`chat_routes.py:1365`)
+Request is **multipart form**, not JSON:
 
-Defined inside `setup_chat_routes`, so it shares the chat router's tag/gates.
-JSON body `{question, answer}`; `answer` is required (400 if blank). It resolves
-the **`reviewer`** endpoint role via `resolve_endpoint("reviewer", owner=owner)`
-(`chat_routes.py:1379`) — a *new role* that reads `reviewer_endpoint_id` /
-`reviewer_model` from settings and, being neither `utility` nor `default`, falls
-back **utility → default** (`src/endpoint_resolver.py:251-256`). 400 if nothing
-resolves. It then builds the critique prompt and parses the reply with the pure
-`services/review/reviewer.py` helpers:
+| Field | Type | Notes |
+|---|---|---|
+| `message` | str | user message |
+| `session` | str | session id (or resolved default) |
+| `attachments` | str | JSON-encoded list of upload IDs |
+| `mode` | str | `"chat"` \| `"agent"` (auto-escalates chat→agent on tool-intent patterns) |
+| `use_web`, `use_research`, `allow_bash`, `allow_web_search`, `use_rag` | str (`"true"`/`"false"`) | feature toggles |
+| `preset_id`, `active_doc_id`, `time_filter`, `search_context` | str | optional |
+| `compare_mode`, `incognito` | str | mode flags |
+
+Response: `StreamingResponse(..., media_type="text/event-stream")`. Every
+event is `data: <json>\n\n` (SSE "data" framing); the payload's `type` field
+(or bare `delta` for a plain text token) discriminates the event:
+
+| `type` | Payload keys | Meaning |
+|---|---|---|
+| *(none, bare)* | `{"delta": str, "thinking"?: bool}` | one streamed text token; `thinking:true` = reasoning-model `<think>` content, forwarded but not saved |
+| `model_info` | `model`, `suffix?`, `character_name?` | sent early so the UI shows the model before tokens arrive |
+| `attachments` | `data` | attachment metadata for this turn |
+| `rag_sources` / `web_sources` | `data` | citations used to answer |
+| `web_search_failed` | — | web search was attempted and failed |
+| `memories_used` | `data` | memory entries injected into context |
+| `compacted` | `context_length` | auto-compaction fired for this turn |
+| `tool_start` | `tool`, `command` | agent-mode tool call beginning |
+| `tool_output` | `tool`, `command`, `output`, `exit_code` | agent-mode tool call finished |
+| `fallback` | `answered_by` | the session's primary model failed; a configured fallback answered instead |
+| `usage` / `metrics` | `data: {input_tokens, output_tokens, tokens_per_second, context_percent, response_time, model, ...}` | token/perf stats, sent once near the end |
+| `research_progress` / `research_sources` / `research_findings` / `research_done` | varies | deep-research sub-pipeline progress (`use_research=true`) |
+
+Plain SSE comment lines (`: heartbeat\n\n`) are sent during long-running
+non-streaming work (e.g. image generation) to keep the connection alive
+through proxies that time out idle SSE. Named error events use
+`event: error\ndata: {json}\n\n` (distinct from the bare `data:` frames).
+The stream **always** terminates with the literal line `data: [DONE]\n\n`.
+
+### 2.2 Detached-run architecture — survives client disconnect
+
+`chat_stream` does **not** stream directly from the HTTP handler. It starts
+the generator as a **background asyncio task** and the HTTP response merely
+*subscribes* to it:
 
 ```python
-@router.post("/api/review")
-async def review_answer(request: Request):
-    from services.review.reviewer import build_review_prompt, parse_review
-    ...
-    url, model, headers = resolve_endpoint("reviewer", owner=owner)
-    if not url or not model:
-        raise HTTPException(400, "No reviewer/utility model configured — set one in Settings")
-    text = await llm_call_async(url, model, build_review_prompt(question, answer),
-                                temperature=0.2, headers=headers, timeout=60)
-    return {**parse_review(text), "model": model}
+# routes/chat_routes.py:1222-1228
+# Run the stream as a DETACHED background task so it survives the client
+# closing the tab / navigating away (true terminal-agent behavior). The
+# SSE response just subscribes (replay buffered output + live); dropping
+# the SSE only removes a subscriber — the run keeps going and saves the
+# assistant message on completion regardless. Reconnect via /api/chat/resume.
+agent_runs.start(session, _safe_stream())
+return StreamingResponse(agent_runs.subscribe(session), media_type="text/event-stream")
 ```
 
-**Response:** `{verdict, issues, suggestion, raw, model}` — `verdict` is one of
-`accurate|incomplete|incorrect|needs context`, `issues` a list of bullet
-strings, `suggestion` a one-line fix (`""` when the model said "none"), `raw` the
-unparsed model text, `model` the resolved model id. See §07(f) for the prompt.
+`src/agent_runs.py` (`_Run` class) keeps an ordered in-memory replay buffer
+per session plus a set of subscriber queues; closing the SSE connection just
+drops one subscriber, the drain task (and the underlying LLM call) keeps
+running. A finished run's buffer is retained for `_EVICT_GRACE_S = 180`
+seconds after the last subscriber leaves, so a reconnect within that window
+replays everything. **Durability is in-memory only** — a server restart
+loses any in-flight run.
 
-### 13.2 Memory graph / distill / import (`routes/memory_routes.py`)
+- `GET /api/chat/resume/{session_id}` — reconnect to a still-running detached
+  stream; `404` if none is active (`agent_runs.is_active`).
+- `POST /api/chat/stop/{session_id}` — cancel an in-progress run.
+- `GET /api/chat/stream_status/{session_id}` — poll whether a run is active
+  without opening an SSE connection.
 
-Factory `setup_memory_routes(memory_manager, session_manager, memory_vector=None)`
-(`memory_routes.py:37`), `prefix="/api/memory"`, tag `["memory"]`. Every handler
-resolves the caller via `get_current_user` and scopes to that owner.
+On genuine client-side cancellation (`asyncio.CancelledError`/`GeneratorExit`
+inside the generator itself — not just an SSE disconnect, which the detached
+architecture above absorbs), the partial response is still saved to the
+session with `metadata={"stopped": True, ...}` (`routes/chat_routes.py:1193-1209`).
 
-| Endpoint | Handler | Line | Body / notes |
+### 2.3 Other SSE endpoints
+
+`POST /api/rewrite` (`routes/chat_routes.py:1345`) streams the same
+`data: {...}` / `event: error` / `data: [DONE]` framing for regenerating one
+assistant message. `GET /api/research/stream/{session_id}`
+(`routes/research_routes.py:453`) streams deep-research progress with the
+same SSE conventions. `POST /api/shell/stream`
+(`routes/shell_routes.py:777`) streams live command output.
+
+---
+
+## 3. Router index
+
+Prefix is the router's own `APIRouter(prefix=...)`; an empty prefix means
+every path below already has the full `/api/...` baked in (shown in §4 as
+the literal decorator path).
+
+| Router file | Prefix | Purpose | Endpoints |
 |---|---|---|---|
-| `GET /api/memory/graph` | `memory_graph` | `:118` | Owner-scoped knowledge graph. Loads the owner's memories, defines `neighbor_fn` = `memory_vector.search(text, k=6)` (or `[]` when the vector store is unhealthy → session-only edges), then returns `build_graph(mems, neighbor_fn, threshold=0.6, max_neighbors=4, max_nodes=300)` → `{nodes, edges}` (see §07(e)). |
-| `POST /api/memory/distill-session` | `distill_session_route` | `:487` | `session_id: str = Form(...)`; `require_privilege(request, "can_manage_memory")`. Calls `brain.distill_session(...)` (loads the session, reads its own `endpoint_url`/`model` for the LLM call, extracts atomic facts, dedups, stores with `source="agent"` + `session_id`). Returns `{ok:true, added, skipped}`; 502 on failure. |
-| `POST /api/memory/import-chat-export` | `import_chat_export_route` | `:509` | `file: UploadFile = File(...)`; `require_privilege(..., "can_manage_memory")`. Reads the uploaded JSON, `parse_export(obj)` auto-detects ChatGPT vs Claude and returns conversations; resolves a **utility** endpoint (imports have no session), then `brain.import_conversations(...)` distills+stores each with `source="import"`. Returns `{ok:true, added, skipped, conversations}`; empty/unrecognized → `{ok:true, added:0, ..., message:"No recognizable conversations in export"}`; 400 on non-JSON; 502 on failure. |
+| `activity_routes.py` | `/api/activity` | Agent activity ledger ("computer history") — admin-only, undo file writes | 5 |
+| `admin_wipe_routes.py` | `/api/admin` | Per-category "Danger Zone" data wipes | 1 |
+| `api_token_routes.py` | `/api` | API bearer-token management for external integrations | 3 |
+| `assistant_routes.py` | `/api/assistant` | Personal-assistant singleton (a flagged CrewMember + 3 daily check-in tasks) | 6 |
+| `auth_routes.py` | `/api/auth` | Login/logout/signup, 2FA, users, settings, integrations CRUD | 27 |
+| `backup_routes.py` | *(none)* | Export/import user data bundle | 2 |
+| `browser_routes.py` | `/api/browser` | Agent-controlled browser panel + websocket | 14 |
+| `calendar_routes.py` | `/api/calendar` | Local SQLite calendar CRUD, RRULE, ICS import/export | 15 |
+| `chat_routes.py` | *(none)* | `/api/chat`, `/api/chat_stream`, search, rewrite, review | 9 |
+| `cleanup_routes.py` | `/api/cleanup` | Old-session cleanup preview + execute | 2 |
+| `compare_routes.py` | `/api/compare` | A/B model comparison | 5 |
+| `contacts_routes.py` | `/api/contacts` | CardDAV (Radicale) contacts integration | 10 |
+| `cookbook_routes.py` | *(none)* | Model download/serve/cache scanning ("Cookbook") | 12 |
+| `diagnostics_routes.py` | *(none)* | DB/RAG stats, YouTube transcript test, research test | 4 |
+| `document_routes.py` | *(none)* | Living-document CRUD + PDF fill/export/versions | 23 |
+| `editor_draft_routes.py` | *(none)* | Persisted gallery-editor drafts | 5 |
+| `email_routes.py` | `/api/email` | IMAP/SMTP email client (largest router) | 41 |
+| `embedding_routes.py` | `/api/embeddings` | Local fastembed model + custom embedding endpoint mgmt | 7 |
+| `emoji_routes.py` | `/api/emoji` | Same-origin emoji SVG proxy/cache | 1 |
+| `font_routes.py` | `/api/fonts` | Custom font file discovery | 1 |
+| `gallery_routes.py` | *(none)* | Photo/AI-image library + editing ops | 32 |
+| `history_routes.py` | *(none)* | Session history: truncate, edit, fork, compact, topics | 11 |
+| `hub_routes.py` | `/api/hub` | Model hub: free cloud models, HF GGUF pulls, personas, reference library | 15 |
+| `hwfit_routes.py` | `/api/hwfit` | Hardware-fit model recommendation simulator | 4 |
+| `integration_routes.py` | *(none)* | Cross-integration status (agent workbench) | 1 |
+| `lmproxy_routes.py` | *(none)* | Localhost OpenAI-compatible proxy for Paperclip's local agents | 1 |
+| `localmodels_routes.py` | `/api/local-models` | On-disk GGUF model discovery + llama-server lifecycle | 9 |
+| `mcp_routes.py` | `/api/mcp` | MCP server management + OAuth | 11 |
+| `memory_routes.py` | `/api/memory` | Long-term memory CRUD, extraction, import/export, graph | 19 |
+| `model_routes.py` | `/api` | Model/provider endpoint management, `/models`, `/model-endpoints` | 19 |
+| `note_routes.py` | `/api/notes` | Google-Keep-style notes/checklists | 10 |
+| `paperclip_routes.py` | *(none)* | Reverse proxy + status for the bundled Paperclip sidecar | 6 |
+| `personal_routes.py` | `/api/personal` | Personal-document RAG indexing | 6 |
+| `prefs_routes.py` | `/api/prefs` | Per-user JSON key/value preference store | 3 |
+| `preset_routes.py` | *(none)* | Chat persona/system-prompt presets + templates | 8 |
+| `research_routes.py` | *(none)* | Deep-research background task lifecycle | 17 |
+| `search_routes.py` | *(none)* | Web search config/providers/query, SearXNG install | 6 |
+| `session_routes.py` | `/api` | Session CRUD, archive, export, fork-adjacent ops | 19 |
+| `shell_routes.py` | *(none)* | User-facing shell command execution (sync + SSE) | 4 |
+| `signature_routes.py` | *(none)* | Saved visual-signature CRUD | 3 |
+| `skill_pack_routes.py` | `/api/skills/packs` | Install Agent Skills packs from GitHub/zip | 2 |
+| `skills_routes.py` | `/api/skills` | Skills system CRUD, testing, audit | 18 |
+| `stt_routes.py` | `/api/stt` | Speech-to-text (multi-provider) | 2 |
+| `system_status_routes.py` | *(none)* | Unified system status + admin actions | 2 |
+| `task_routes.py` | `/api/tasks` | Scheduled/event/webhook task CRUD + runs | 23 |
+| `tts_routes.py` | `/api/tts` | Text-to-speech (multi-provider) | 3 |
+| `upload_routes.py` | `/api/upload` | File upload, download, vision-OCR cache | 6 |
+| `vault_routes.py` | `/api/vault` | Vaultwarden/Bitwarden CLI integration | 6 |
+| `webhook_routes.py` | `/api` | Outgoing webhooks + a `/v1/chat` compat endpoint | 6 |
 
-`neighbor_fn` (`memory_routes.py:128`):
+---
+
+## 4. Full endpoint reference
+
+Grouped by router; path is the full route (prefix + decorator path). Auth
+column: **Admin** = gated by `require_admin`/`_require_admin_user`/equivalent
+role check; **User** = requires any authenticated identity
+(`require_user`/`get_current_user`/owner check) when `AUTH_ENABLED=true`;
+**Open** = no explicit gate beyond the global middleware (still requires a
+valid session/token in cookie-session mode, since the global `AuthMiddleware`
+covers all non-exempt `/api/*` paths by default); **Public** = in
+`AUTH_EXEMPT_EXACT`/prefix, reachable with zero credentials;
+**Self-auth** = the handler authenticates itself independently of Apollo's
+session system (webhook token, internal bearer token, path secret).
+
+### activity_routes.py — Admin (all routes call `require_admin`)
+| Method | Path |
+|---|---|
+| GET | `/api/activity` |
+| POST | `/api/activity/undo-session/{session_id}` |
+| GET | `/api/activity/autonomy` |
+| PUT | `/api/activity/autonomy` |
+| POST | `/api/activity/{event_id}/undo` |
+
+### admin_wipe_routes.py — Admin
+| Method | Path |
+|---|---|
+| DELETE | `/api/admin/wipe/{kind}` — `kind` ∈ chats/memory/skills/notes/tasks/documents/gallery/calendar |
+
+### api_token_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| GET | `/api/tokens` |
+| POST | `/api/tokens` |
+| DELETE | `/api/tokens/{token_id}` |
+
+### assistant_routes.py — User
+| Method | Path |
+|---|---|
+| GET | `/api/assistant/session` |
+| GET | `/api/assistant/settings` |
+| PATCH | `/api/assistant/settings` |
+| POST | `/api/assistant/run/{task_id}` |
+| GET | `/api/assistant/run-status/{task_id}` |
+| GET | `/api/assistant/available-timezones` |
+
+### auth_routes.py — see §5.1 for full detail
+| Method | Path | Auth |
+|---|---|---|
+| POST | `/api/auth/setup` | Public (only works pre-configuration) |
+| POST | `/api/auth/signup` | Public (only if signup enabled) |
+| POST | `/api/auth/login` | Public |
+| POST | `/api/auth/logout` | User |
+| GET | `/api/auth/status` | Public |
+| POST | `/api/auth/change-password` | User |
+| POST | `/api/auth/2fa/setup` | User |
+| POST | `/api/auth/2fa/confirm` | User |
+| POST | `/api/auth/2fa/disable` | User |
+| GET | `/api/auth/2fa/status` | User |
+| GET | `/api/auth/users` | Admin (strict) |
+| POST | `/api/auth/users` | Admin (strict) |
+| PUT | `/api/auth/users/{username}/privileges` | Admin (strict) |
+| PUT | `/api/auth/users/{username}/rename` | Admin (strict) |
+| POST | `/api/auth/signup-toggle` *(deprecated)* | Admin (strict) |
+| PUT | `/api/auth/open-signup` | Admin (strict) |
+| DELETE | `/api/auth/users` | Admin (strict) |
+| GET | `/api/auth/features` | Public |
+| POST | `/api/auth/features` | Admin (strict) |
+| GET | `/api/auth/settings` | Public path, admin-scrubbed response |
+| POST | `/api/auth/settings` | Admin (strict) |
+| GET | `/api/auth/integrations` | Admin (strict) |
+| GET | `/api/auth/integrations/presets` | Public |
+| POST | `/api/auth/integrations` | Admin (strict) |
+| PUT | `/api/auth/integrations/{integration_id}` | Admin (strict) |
+| DELETE | `/api/auth/integrations/{integration_id}` | Admin (strict) |
+| POST | `/api/auth/integrations/{integration_id}/test` | Admin (strict) |
+
+### backup_routes.py — Admin
+| Method | Path |
+|---|---|
+| GET | `/api/export` |
+| POST | `/api/import` |
+
+### browser_routes.py — Privilege-gated (`require_privilege(request, "can_use_browser")` on every route)
+| Method | Path |
+|---|---|
+| GET | `/api/browser/status` |
+| POST | `/api/browser/navigate` |
+| GET | `/api/browser/current` |
+| GET | `/api/browser/html` |
+| GET | `/api/browser/text` |
+| POST | `/api/browser/execute` |
+| POST | `/api/browser/screenshot` |
+| POST | `/api/browser/wait` |
+| POST | `/api/browser/click` |
+| POST | `/api/browser/type` |
+| GET | `/api/browser/events` |
+| POST | `/api/browser/detect-localhost` |
+| GET | `/api/browser/tools` |
+| WS | `/api/browser/ws` |
+
+### calendar_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| GET | `/api/calendar/config` |
+| POST | `/api/calendar/config` |
+| POST | `/api/calendar/test` |
+| POST | `/api/calendar/sync` |
+| GET | `/api/calendar/calendars` |
+| GET | `/api/calendar/events` |
+| POST | `/api/calendar/events` |
+| PUT | `/api/calendar/events/{uid}` |
+| DELETE | `/api/calendar/events/{uid}` |
+| POST | `/api/calendar/calendars` |
+| PUT | `/api/calendar/calendars/{cal_id}` |
+| DELETE | `/api/calendar/calendars/{cal_id}` |
+| POST | `/api/calendar/import` |
+| GET | `/api/calendar/export/{cal_id}` |
+| POST | `/api/calendar/quick-parse` |
+
+### chat_routes.py — see §5.2
+| Method | Path |
+|---|---|
+| POST | `/api/chat` |
+| POST | `/api/chat_stream` |
+| GET | `/api/chat/resume/{session_id}` |
+| POST | `/api/chat/stop/{session_id}` |
+| GET | `/api/chat/stream_status/{session_id}` |
+| POST | `/api/inject_context/{session_id}` |
+| GET | `/api/search` |
+| POST | `/api/rewrite` |
+| POST | `/api/review` |
+
+### cleanup_routes.py — User
+| Method | Path |
+|---|---|
+| GET | `/api/cleanup/preview` |
+| POST | `/api/cleanup` |
+
+### compare_routes.py — User
+| Method | Path |
+|---|---|
+| POST | `/api/compare/start` |
+| POST | `/api/compare/{comp_id}/vote` |
+| POST | `/api/compare/record` |
+| GET | `/api/compare/history` |
+| DELETE | `/api/compare/{comp_id}` |
+
+### contacts_routes.py — Admin
+| Method | Path |
+|---|---|
+| GET | `/api/contacts/list` |
+| GET | `/api/contacts/search` |
+| POST | `/api/contacts/add` |
+| POST | `/api/contacts/import` |
+| GET | `/api/contacts/export` |
+| GET | `/api/contacts/config` |
+| PUT | `/api/contacts/config` |
+| DELETE | `/api/contacts/clear` |
+| PUT | `/api/contacts/{uid}` |
+| DELETE | `/api/contacts/{uid}` |
+
+### cookbook_routes.py — User (some sub-actions admin-gated internally)
+| Method | Path |
+|---|---|
+| GET | `/api/cookbook/ssh-key` |
+| POST | `/api/cookbook/ssh-key` |
+| POST | `/api/model/download` |
+| GET | `/api/model/cached` |
+| POST | `/api/model/serve` |
+| POST | `/api/cookbook/setup` |
+| GET | `/api/cookbook/gpus` |
+| POST | `/api/cookbook/kill-pid` |
+| GET | `/api/cookbook/state` |
+| POST | `/api/cookbook/state` |
+| GET | `/api/cookbook/hf-latest` |
+| GET | `/api/cookbook/tasks/status` |
+
+### diagnostics_routes.py — Admin (`require_admin` imported; used on the mutating/expensive routes)
+| Method | Path |
+|---|---|
+| GET | `/api/db/stats` |
+| GET | `/api/rag/stats` |
+| GET | `/api/test/youtube` |
+| POST | `/api/test-research` |
+
+### document_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| POST | `/api/document` |
+| POST | `/api/documents/import-pdf` |
+| GET | `/api/documents/library` |
+| GET | `/api/documents/{session_id}` |
+| GET | `/api/document/{doc_id}` |
+| POST | `/api/document/{doc_id}/archive` |
+| POST | `/api/document/{doc_id}/extract-pdf-text` |
+| POST | `/api/documents/export-zip` |
+| PUT | `/api/document/{doc_id}` |
+| PATCH | `/api/document/{doc_id}` |
+| DELETE | `/api/document/{doc_id}` |
+| GET | `/api/document/{doc_id}/versions` |
+| GET | `/api/document/{doc_id}/version/{num}` |
+| POST | `/api/document/{doc_id}/restore/{num}` |
+| POST | `/api/documents/tidy` |
+| POST | `/api/documents/ai-tidy` |
+| POST | `/api/document/{doc_id}/export-pdf/preview` |
+| GET | `/api/document/{doc_id}/render-pages` |
+| GET | `/api/document/{doc_id}/page/{page_no}.png` |
+| POST | `/api/document/{doc_id}/ai-fill-annotations` |
+| GET | `/api/document/{doc_id}/render-pdf` |
+| GET | `/api/document/{doc_id}/export-pdf` |
+| POST | `/api/document/{doc_id}/prepare-signed-reply` |
+
+### editor_draft_routes.py — User
+| Method | Path |
+|---|---|
+| GET | `/api/editor-drafts` |
+| GET | `/api/editor-drafts/{draft_id}` |
+| POST | `/api/editor-drafts` |
+| PUT | `/api/editor-drafts/{draft_id}` |
+| DELETE | `/api/editor-drafts/{draft_id}` |
+
+### email_routes.py — User (`require_owner`/`require_user`, owner-scoped throughout)
+| Method | Path |
+|---|---|
+| GET | `/api/email/list` |
+| POST | `/api/email/{uid}/unflag-spam` |
+| GET | `/api/email/contacts` |
+| GET | `/api/email/search` |
+| GET | `/api/email/read/{uid}` |
+| GET | `/api/email/attachments/{uid}` |
+| GET | `/api/email/attachment/{uid}/{index}` |
+| POST | `/api/email/attachment-as-doc/{uid}/{index}` |
+| POST | `/api/email/attachment-path/{uid}/{index}` |
+| POST | `/api/email/mark-unread/{uid}` |
+| POST | `/api/email/mark-read/{uid}` |
+| POST | `/api/email/archive/{uid}` |
+| DELETE | `/api/email/delete/{uid}` |
+| DELETE | `/api/email/delete-permanent/{uid}` |
+| DELETE | `/api/email/apollo/reminders` |
+| POST | `/api/email/move/{uid}` |
+| GET | `/api/email/folders` |
+| POST | `/api/email/mark-answered/{uid}` |
+| POST | `/api/email/clear-answered/{uid}` |
+| POST | `/api/email/compose-upload` |
+| DELETE | `/api/email/compose-upload/{token}` |
+| POST | `/api/email/schedule` |
+| GET | `/api/email/scheduled` |
+| DELETE | `/api/email/scheduled/{sid}` |
+| GET | `/api/email/resolve-contact` |
+| POST | `/api/email/send` |
+| POST | `/api/email/draft` |
+| POST | `/api/email/extract-style` |
+| POST | `/api/email/summarize` |
+| POST | `/api/email/ai-reply` |
+| GET | `/api/email/style` |
+| PUT | `/api/email/style` |
+| GET | `/api/email/config` |
+| PUT | `/api/email/config` |
+| GET | `/api/email/urgency-state` |
+| GET | `/api/email/accounts` |
+| POST | `/api/email/accounts` |
+| PUT | `/api/email/accounts/{account_id}` |
+| DELETE | `/api/email/accounts/{account_id}` |
+| POST | `/api/email/accounts/test` |
+| POST | `/api/email/accounts/{account_id}/set-default` |
+
+### embedding_routes.py — Admin (`Depends(require_admin)`)
+| Method | Path |
+|---|---|
+| GET | `/api/embeddings/models` |
+| POST | `/api/embeddings/models/{model_name:path}/download` |
+| GET | `/api/embeddings/models/{model_name:path}/status` |
+| DELETE | `/api/embeddings/models/{model_name:path}` |
+| GET | `/api/embeddings/endpoint` |
+| POST | `/api/embeddings/endpoint` |
+| DELETE | `/api/embeddings/endpoint` |
+
+### emoji_routes.py — Public (same-origin proxy, cached on disk)
+| Method | Path |
+|---|---|
+| GET | `/api/emoji/{code}.svg` |
+
+### font_routes.py — Open
+| Method | Path |
+|---|---|
+| GET | `/api/fonts/custom` |
+
+### gallery_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| POST | `/api/gallery/upload` |
+| POST | `/api/gallery/{image_id}/replace` |
+| POST | `/api/gallery/{image_id}/rename` |
+| POST | `/api/gallery/{image_id}/rotate` |
+| POST | `/api/gallery/ai-upscale` |
+| POST | `/api/gallery/style-transfer` |
+| GET | `/api/gallery/tags` |
+| GET | `/api/gallery/library` |
+| GET | `/api/gallery/albums` |
+| POST | `/api/gallery/albums` |
+| GET | `/api/gallery/stats` |
+| POST | `/api/gallery/ai-tag-batch` |
+| GET | `/api/gallery/{image_id}` |
+| PATCH | `/api/gallery/{image_id}` |
+| POST | `/api/gallery/download-zip` |
+| POST | `/api/gallery/clear-user-tags` |
+| POST | `/api/gallery/clear-ai-tags` |
+| POST | `/api/gallery/dedupe-tags` |
+| DELETE | `/api/gallery/{image_id}` |
+| POST | `/api/image/inpaint` |
+| POST | `/api/image/harmonize` |
+| POST | `/api/image/sharpen` |
+| POST | `/api/image/denoise` |
+| POST | `/api/image/upscale-local` |
+| POST | `/api/image/remove-bg` |
+| POST | `/api/image/enhance-face` |
+| PUT | `/api/gallery/albums/{album_id}` |
+| DELETE | `/api/gallery/albums/{album_id}` |
+| POST | `/api/gallery/albums/{album_id}/add` |
+| POST | `/api/gallery/albums/{album_id}/remove` |
+| POST | `/api/gallery/{image_id}/favorite` |
+| POST | `/api/gallery/{image_id}/ai-tag` |
+
+### history_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| GET | `/api/history/{session_id}` |
+| POST | `/api/session/{session_id}/truncate` |
+| POST | `/api/session/{session_id}/message` |
+| POST | `/api/session/{session_id}/delete-messages` |
+| POST | `/api/session/{session_id}/edit-message` |
+| POST | `/api/session/{session_id}/mark-stopped` |
+| POST | `/api/session/{session_id}/update-last-meta` |
+| POST | `/api/session/{session_id}/merge-last-assistant` |
+| POST | `/api/session/{session_id}/fork` |
+| GET | `/api/conversations/topics` |
+| POST | `/api/session/{session_id}/compact` |
+
+### hub_routes.py — see §5.3 (all `require_admin`)
+| Method | Path |
+|---|---|
+| GET | `/api/hub/free-models` |
+| POST | `/api/hub/free-endpoint` |
+| GET | `/api/hub/gguf-search` |
+| GET | `/api/hub/gguf-files` |
+| POST | `/api/hub/gguf-download` |
+| GET | `/api/hub/gguf-downloads` |
+| GET | `/api/hub/codex-router` |
+| GET | `/api/hub/security-scan` |
+| GET | `/api/hub/catalog` |
+| POST | `/api/hub/personas/preview` |
+| POST | `/api/hub/personas/install` |
+| GET | `/api/hub/reference/sources` |
+| POST | `/api/hub/reference/install` |
+| POST | `/api/hub/reference/remove` |
+| GET | `/api/hub/reference/search` |
+
+### hwfit_routes.py — Open
+| Method | Path |
+|---|---|
+| GET | `/api/hwfit/system` |
+| GET | `/api/hwfit/models` |
+| GET | `/api/hwfit/profiles` |
+| GET | `/api/hwfit/image-models` |
+
+### integration_routes.py — Open
+| Method | Path |
+|---|---|
+| GET | `/api/integrations/agent-workbench/status` |
+
+### lmproxy_routes.py — Self-auth (bearer token, exempt from session middleware)
+| Method | Path |
+|---|---|
+| GET | `/lmproxy/v1/models` |
+
+### localmodels_routes.py — see §5.4 (all `require_admin`)
+| Method | Path |
+|---|---|
+| GET | `/api/local-models` |
+| POST | `/api/local-models/scan` |
+| GET | `/api/local-models/voices` |
+| GET | `/api/local-models/dirs` |
+| PUT | `/api/local-models/dirs` |
+| GET | `/api/local-models/binary` |
+| PUT | `/api/local-models/binary` |
+| POST | `/api/local-models/{model_id}/start` |
+| POST | `/api/local-models/{model_id}/stop` |
+
+### mcp_routes.py — Admin
+| Method | Path |
+|---|---|
+| GET | `/api/mcp/servers` |
+| POST | `/api/mcp/servers` |
+| POST | `/api/mcp/servers/{server_id}/reconnect` |
+| PATCH | `/api/mcp/servers/{server_id}` |
+| DELETE | `/api/mcp/servers/{server_id}` |
+| GET | `/api/mcp/tools` |
+| GET | `/api/mcp/servers/{server_id}/tools` |
+| PATCH | `/api/mcp/servers/{server_id}/tools` |
+| GET | `/api/mcp/oauth/authorize/{server_id}` |
+| GET | `/api/mcp/oauth/callback` |
+| POST | `/api/mcp/oauth/exchange/{server_id}` |
+
+### memory_routes.py — see §5.5 (User, owner-scoped; `can_manage_memory` privilege on mutating routes)
+| Method | Path |
+|---|---|
+| POST | `/api/memory/debug` |
+| POST | `/api/memory/add` |
+| GET | `/api/memory` |
+| GET | `/api/memory/{memory_id}/provenance` |
+| GET | `/api/memory/export-pack` |
+| POST | `/api/memory/import-pack` |
+| GET | `/api/memory/graph` |
+| POST | `/api/memory/search` |
+| GET | `/api/memory/timeline` |
+| GET | `/api/memory/by-session/{session_id}` |
+| POST | `/api/memory/extract` |
+| POST | `/api/memory/audit` |
+| POST | `/api/memory/import` |
+| POST | `/api/memory/distill-session` |
+| POST | `/api/memory/import-chat-export` |
+| POST | `/api/memory/{memory_id}/pin` |
+| GET | `/api/memory/{memory_id}` |
+| PUT | `/api/memory/{memory_id}` |
+| DELETE | `/api/memory/{memory_id}` |
+
+### model_routes.py — see §5.6 (Admin on `/model-endpoints*`; `/models`, `/providers` open to any authenticated user)
+| Method | Path |
+|---|---|
+| GET | `/api/models` |
+| GET | `/api/model-endpoints/probe-local` |
+| GET | `/api/ping` |
+| POST | `/api/probe-selected` |
+| GET | `/api/probe` |
+| GET | `/api/providers` |
+| GET | `/api/discover` |
+| GET | `/api/model-endpoints` |
+| POST | `/api/model-endpoints` |
+| POST | `/api/model-endpoints/test` |
+| GET | `/api/model-endpoints/{ep_id}/probe` |
+| GET | `/api/model-endpoints/{ep_id}/models` |
+| PATCH | `/api/model-endpoints/{ep_id}/models` |
+| GET | `/api/default-chat` |
+| PATCH | `/api/model-endpoints/{ep_id}` |
+| GET | `/api/model-endpoints/{ep_id}/dependents` |
+| DELETE | `/api/model-endpoints/{ep_id}` |
+| GET | `/api/tools` |
+| POST | `/api/tools` |
+
+### note_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| GET | `/api/notes` |
+| POST | `/api/notes` |
+| GET | `/api/notes/{note_id}` |
+| PUT | `/api/notes/{note_id}` |
+| DELETE | `/api/notes/{note_id}` |
+| POST | `/api/notes/{note_id}/pin` |
+| POST | `/api/notes/{note_id}/archive` |
+| POST | `/api/notes/{note_id}/items/{index}/toggle` |
+| POST | `/api/notes/fire-reminder` |
+| POST | `/api/notes/reorder` |
+
+### paperclip_routes.py — Mixed (HTTP gated by global middleware; websocket self-authenticates)
+| Method | Path |
+|---|---|
+| GET | `/api/paperclip/status` |
+| POST | `/api/paperclip/events` — Self-auth: `PAPERCLIP_EVENTS_TOKEN` or loopback-only |
+| GET | `/api/paperclip/stream` |
+| POST | `/api/paperclip/agent-tokens` |
+| GET | `/api/paperclip/agent-tokens` |
+| WS | `/paperclip/{path:path}` — Self-auth: websocket handler validates the session cookie itself (bypasses `BaseHTTPMiddleware`) |
+
+### personal_routes.py — User AND Admin (most routes require both `require_user` and `require_admin`; `/upload` is user-only)
+| Method | Path |
+|---|---|
+| GET | `/api/personal` |
+| POST | `/api/personal/reload` |
+| POST | `/api/personal/add_directory` |
+| DELETE | `/api/personal/remove_directory` |
+| POST | `/api/personal/upload` — User only, not admin-gated |
+| DELETE | `/api/personal/file` |
+
+### prefs_routes.py — see §5.7 (User)
+| Method | Path |
+|---|---|
+| GET | `/api/prefs` |
+| GET | `/api/prefs/{key}` |
+| PUT | `/api/prefs/{key}` |
+
+### preset_routes.py — Admin (`Depends(require_admin)` on mutating routes)
+| Method | Path |
+|---|---|
+| GET | `/api/presets` |
+| POST | `/api/presets/custom` |
+| GET | `/api/presets/templates` |
+| POST | `/api/presets/templates` |
+| DELETE | `/api/presets/templates/{template_id}` |
+| POST | `/api/presets/expand` |
+| GET | `/api/presets/groups` |
+| POST | `/api/presets/groups` |
+
+### research_routes.py — User (owner-scoped); `crawl4ai/crawl` and `start` require the `can_use_research` privilege
+| Method | Path |
+|---|---|
+| GET | `/api/research/crawl4ai/status` |
+| POST | `/api/research/crawl4ai/crawl` |
+| GET | `/api/research/active` |
+| GET | `/api/research/status/{session_id}` |
+| POST | `/api/research/cancel/{session_id}` |
+| POST | `/api/research/result/{session_id}` |
+| GET | `/api/research/report/{session_id}` |
+| POST | `/api/research/{session_id}/hide-image` |
+| POST | `/api/research/{session_id}/unhide-images` |
+| GET | `/api/research/library` |
+| GET | `/api/research/detail/{session_id}` |
+| POST | `/api/research/{session_id}/archive` |
+| DELETE | `/api/research/{session_id}` |
+| POST | `/api/research/start` |
+| GET | `/api/research/stream/{session_id}` — SSE |
+| POST | `/api/research/result-peek/{session_id}` |
+| POST | `/api/research/spinoff/{session_id}` |
+
+### search_routes.py — Open / Admin (SearXNG install is admin)
+| Method | Path |
+|---|---|
+| GET | `/api/search/config` |
+| POST | `/api/search` |
+| GET | `/api/search/providers` |
+| POST | `/api/search/query` |
+| GET | `/api/search/searxng/status` |
+| POST | `/api/search/searxng/install` |
+
+### session_routes.py — User (owner-scoped)
+| Method | Path |
+|---|---|
+| GET | `/api/sessions` |
+| POST | `/api/session` |
+| PATCH | `/api/session/{sid}` |
+| POST | `/api/session/{sid}/inject_messages` |
+| POST | `/api/session/{sid}/delete` |
+| POST | `/api/sessions/bulk-delete` |
+| DELETE | `/api/session/{sid}` |
+| DELETE | `/api/sessions/all` |
+| POST | `/api/session/{sid}/archive` |
+| POST | `/api/session/{sid}/unarchive` |
+| GET | `/api/sessions/archived` |
+| GET | `/api/history/{sid}` |
+| GET | `/api/session/{sid}/export` |
+| POST | `/api/sessions/save` |
+| POST | `/api/session/openai` |
+| POST | `/api/session/{session_id}/important` |
+| POST | `/api/session/{session_id}/compact` |
+| POST | `/api/sessions/auto-sort` |
+| GET | `/api/session/{session_id}/context_info` |
+
+### shell_routes.py — User
+| Method | Path |
+|---|---|
+| POST | `/api/shell/exec` |
+| POST | `/api/shell/stream` — SSE |
+| GET | `/api/cookbook/packages` |
+| POST | `/api/cookbook/packages/install` |
+
+### signature_routes.py — User
+| Method | Path |
+|---|---|
+| GET | `/api/signatures` |
+| POST | `/api/signatures` |
+| DELETE | `/api/signatures/{sig_id}` |
+
+### skill_pack_routes.py — Admin
+| Method | Path |
+|---|---|
+| POST | `/api/skills/packs/preview` |
+| POST | `/api/skills/packs/install` |
+
+### skills_routes.py — User (mix; built-in skill edits admin-flavored)
+| Method | Path |
+|---|---|
+| GET | `/api/skills` |
+| GET | `/api/skills/index` |
+| GET | `/api/skills/builtin` |
+| GET | `/api/skills/builtin/{name}` |
+| PUT | `/api/skills/builtin/{name}` |
+| DELETE | `/api/skills/builtin/{name}` |
+| POST | `/api/skills/add` |
+| GET | `/api/skills/{skill_id}` |
+| GET | `/api/skills/{skill_id}/markdown` |
+| POST | `/api/skills/{skill_id}/test` |
+| GET | `/api/skills/{skill_id}/test-status` |
+| POST | `/api/skills/audit-all` |
+| GET | `/api/skills/audit-all/status` |
+| POST | `/api/skills/audit-all/cancel` |
+| POST | `/api/skills/{skill_id}/markdown` |
+| PUT | `/api/skills/{skill_id}` |
+| DELETE | `/api/skills/{skill_id}` |
+| POST | `/api/skills/search` |
+
+### stt_routes.py — User
+| Method | Path |
+|---|---|
+| GET | `/api/stt/stats` |
+| POST | `/api/stt/transcribe` |
+
+### system_status_routes.py — Admin
+| Method | Path |
+|---|---|
+| GET | `/api/system/status` |
+| POST | `/api/system/actions/{action_id}` |
+
+### task_routes.py — see §5.8 (User, owner-scoped; shell-executing actions admin-only)
+| Method | Path |
+|---|---|
+| GET | `/api/tasks` |
+| GET | `/api/tasks/onboarding` |
+| POST | `/api/tasks/onboarding` |
+| POST | `/api/tasks` |
+| POST | `/api/tasks/assign` |
+| GET | `/api/tasks/notifications` |
+| POST | `/api/tasks/{task_id}/clear-cache` |
+| GET | `/api/tasks/{task_id}` |
+| PUT | `/api/tasks/{task_id}` |
+| DELETE | `/api/tasks/{task_id}` |
+| POST | `/api/tasks/{task_id}/pause` |
+| POST | `/api/tasks/{task_id}/resume` |
+| POST | `/api/tasks/{task_id}/revert` |
+| POST | `/api/tasks/{task_id}/run` |
+| POST | `/api/tasks/{task_id}/stop` |
+| GET | `/api/tasks/runs/recent` |
+| GET | `/api/tasks/{task_id}/runs` |
+| GET | `/api/tasks/meta/output-targets` |
+| GET | `/api/tasks/meta/actions` |
+| GET | `/api/tasks/meta/events` |
+| POST | `/api/tasks/{task_id}/webhook/{token}` — Self-auth (path-embedded token; middleware-exempt regex) |
+| POST | `/api/tasks/{task_id}/webhook-regenerate` |
+| POST | `/api/tasks/parse` |
+
+### tts_routes.py — User
+| Method | Path |
+|---|---|
+| GET | `/api/tts/stats` |
+| POST | `/api/tts/synthesize` |
+| POST | `/api/tts/clear-cache` |
+
+### upload_routes.py — see §5.9 (User for upload/download; Admin for cleanup/stats)
+| Method | Path |
+|---|---|
+| POST | `/api/upload` |
+| POST | `/api/upload/cleanup` |
+| GET | `/api/upload/stats` |
+| GET | `/api/upload/{file_id}` |
+| GET | `/api/upload/{file_id}/vision` |
+| PUT | `/api/upload/{file_id}/vision` |
+
+### vault_routes.py — Admin
+| Method | Path |
+|---|---|
+| GET | `/api/vault/config` |
+| POST | `/api/vault/config` |
+| POST | `/api/vault/login` |
+| POST | `/api/vault/unlock` |
+| POST | `/api/vault/lock` |
+| POST | `/api/vault/logout` |
+
+### webhook_routes.py — Admin (webhook CRUD); `/v1/chat` is API-token/self-auth
+| Method | Path |
+|---|---|
+| GET | `/api/webhooks` |
+| POST | `/api/webhooks` |
+| POST | `/api/webhooks/{webhook_id}/test` |
+| PATCH | `/api/webhooks/{webhook_id}` |
+| DELETE | `/api/webhooks/{webhook_id}` |
+| POST | `/api/v1/chat` |
+
+---
+
+## 5. Deep detail — the 10 priority routers
+
+### 5.1 `auth_routes.py`
+
+See §1.3 for the `require_admin` vs `_require_admin_user` split. Request/response
+shapes, verbatim from the Pydantic models and handlers:
 
 ```python
-def neighbor_fn(mem):
-    if not (memory_vector and getattr(memory_vector, "healthy", False)):
-        return []
+# routes/auth_routes.py:36-72
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    remember: bool = True
+    totp_code: Optional[str] = None
+
+class SetupRequest(BaseModel):
+    username: str
+    password: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+    is_admin: bool = False
+```
+
+**`POST /api/auth/login`** — request `{"username","password","remember"?,"totp_code"?}`.
+If the account has TOTP enabled and no code was sent, responds
+`{"ok": false, "requires_totp": true, "username": ...}` (200, not an error) so
+the client can prompt for the code and resubmit. On success, sets the
+`apollo_session` cookie (`httponly`, `samesite=lax`, `secure` from
+`SECURE_COOKIES` env, `max_age=7 days` if `remember`) and returns
+`{"ok": true, "username": ...}`. Rate-limited 15 req/60s per client IP.
+
+**`GET /api/auth/status`** — public. Returns
+`{...auth_manager.status(token), "signup_enabled": bool, "privileges"?: {...}}`
+— the caller's effective privileges (admins get the full `ADMIN_PRIVILEGES`
+set; regular users get their stored privileges merged with
+`DEFAULT_PRIVILEGES`) so the frontend can grey out UI the user can't use.
+
+**`GET /api/auth/users`** (strict admin) — `{"users": auth_manager.list_users()}`.
+
+**`GET /api/auth/settings`** — a rare split-behavior endpoint:
+```python
+# routes/auth_routes.py:412-427
+@router.get("/settings")
+async def get_settings(request: Request):
+    settings = _load_settings()
     try:
-        return memory_vector.search(mem.get("text") or "", k=6)
-    except Exception:
-        return []
+        _require_admin_user(request)
+        return settings
+    except HTTPException:
+        return scrub_settings(settings)
 ```
+Reachable without a cookie (middleware-exempt), always returns *something*,
+but the *content* differs: full settings for a genuine admin (or desktop
+`AUTH_ENABLED=false` mode), `scrub_settings()`-redacted (secret keys blanked)
+for anyone else.
 
-(The full memory router also has `add`, `search`, `timeline`, `by-session`,
-`extract`, `audit`, `import` (document→facts), `pin`, and the wildcard
-`GET/PUT/DELETE /{memory_id}` CRUD — the wildcards are registered **last** so
-they don't swallow `/graph`, `/import`, `/distill-session`, etc.
-(`memory_routes.py:566`).)
+### 5.2 Chat / session / streaming — `chat_routes.py` + `session_routes.py`
 
-### 13.3 Skill-pack install (`routes/skill_pack_routes.py`)
+See §2 for the full SSE event catalogue and the detached-run architecture.
 
-Factory `setup_skill_pack_routes(skills_manager)`, `prefix="/api/skills/packs"`,
-tag `["skills"]`. Both routes are **`require_admin`**. Pure discover/classify/
-install logic lives in `services/skills/pack_installer.py` (see §07(g)).
+**`POST /api/session`** (`session_routes.py:280`, `response_model=SessionResponse`)
+creates a session — request typically `{"name","endpoint_url","model","rag"?,"folder"?}`
+(form-encoded); response mirrors `core.database.Session.to_dict()` (§03 doc:
+`id, name, model, endpoint_url, rag, archived, created_at, updated_at,
+last_accessed, last_message_at, message_count, is_important, folder,
+total_input_tokens, total_output_tokens, crew_member_id`).
 
-| Endpoint | Body model | Line | Behavior |
-|---|---|---|---|
-| `POST /api/skills/packs/preview` | `PreviewRequest{source, ref=""}` | `:40` | `pi.fetch_pack(source, ref)` (SSRF-guarded GitHub tarball → temp dir) → `pi.discover_skills(root)`. Returns `{ok:true, root, skills:[{name, description, tier, rel_dir, error}]}` — **nothing is written**. `tier` is `prose` or `script`. |
-| `POST /api/skills/packs/install` | `InstallRequest{source, ref="", category="imported", names=[], overwrite=false}` | `:49` | Re-fetches + re-discovers, filters to `names` if given, builds `InstallOpts` (owner = current user, `now_iso` = tz-aware UTC), `pi.install_skills(found, opts, skills_root, src_root=root)`. Returns `{ok:true, installed, skipped, errored}`. |
+**`GET /api/sessions`** — list, owner-scoped, supports archived/folder
+filters via query params; each row is the same `to_dict()` shape.
 
-Provenance frontmatter (`imported_from`, `imported_ref`, `imported_at`,
-`imported_tier`) is written into each installed `SKILL.md`; `script`-tier skills
-are installed with `status: draft` (quarantined, never auto-run) while `prose`
-skills install `published`.
+**`DELETE /api/sessions/all`** — bulk-delete every session for the caller
+(dangerous, used by the Danger Zone / `admin_wipe_routes.py`'s `chats` kind).
 
----
+**`POST /api/session/{sid}/archive` / `/unarchive`** — soft-delete toggle
+(`Session.archived`); archived sessions drop out of the default list but
+stay in `GET /api/sessions/archived`.
 
-## 14. Voicebox TTS/STT provider (`/api/tts/*`, `/api/stt/*`)
+### 5.3 `hub_routes.py`
 
-Apollo's speech services are multi-provider dispatchers that read
-`data/settings.json` on **every** call. Providers: `disabled`, `browser` (client
-Web Speech), `local` (Kokoro/Whisper), `piper` (TTS only), `endpoint:<id>`
-(OpenAI-compatible), and **`voicebox`** — a local "voice studio" sidecar.
-
-### 14.1 Routes
-
-- **TTS** (`routes/tts_routes.py`, `prefix="/api/tts"`): `GET /stats`,
-  `POST /synthesize` (`TTSRequest` body → audio bytes / base64),
-  `POST /clear-cache`.
-- **STT** (`routes/stt_routes.py`, `prefix="/api/stt"`): `GET /stats`,
-  `POST /transcribe` — `file: UploadFile = File(...)` → `{text}`. This is the
-  endpoint `voiceCall.js` posts recorded WebM blobs to (`stt_routes.py:23`).
-
-### 14.2 Voicebox provider behavior
-
-Config keys: `tts_provider`/`stt_provider = "voicebox"` and `voicebox_url`
-(default `http://127.0.0.1:17493`). Every Voicebox request carries the header
-`X-Voicebox-Client-Id: apollo`. The base is normalized with a trailing-slash
-strip (`tts_service.py:148`, `stt_service.py:162`).
-
-**Availability probe** — `_voicebox_reachable` GETs `/profiles` with a 2s timeout
-and treats HTTP 200 as up (`tts_service.py:151`, `stt_service.py:165`). This is
-what `is_available()` returns for the `voicebox` provider.
-
-**TTS synthesis** — `_synthesize_voicebox` (`tts_service.py:186`) POSTs
-`/generate` with `{text, profile_id, language:"en"}` and a 120s timeout,
-returning the raw audio bytes. When `voice` (the profile id) is blank it fetches
-`/profiles` and uses the first profile's id (`_voicebox_profile_id` tolerates a
-bare string or a dict with `id`/`profile_id`/`name`/`slug`):
+All routes call `require_admin(request)` first — see the module docstring:
+"these routes create model endpoints (with API keys), write files into the
+local-models directories, and report on local services." Full Pydantic
+bodies:
 
 ```python
-def _synthesize_voicebox(self, text, voice, url=None):
-    base = self._voicebox_base(url)
-    profile_id = voice
-    if not profile_id:
-        profiles = self._voicebox_profiles(url)
-        if profiles:
-            profile_id = self._voicebox_profile_id(profiles[0])
-    payload = {"text": text, "profile_id": profile_id, "language": "en"}
-    r = httpx.post(base + "/generate", json=payload,
-                   headers=self._VOICEBOX_HEADERS, timeout=120)
-    r.raise_for_status()
-    return r.content
+# routes/hub_routes.py:40-63
+class FreeEndpointBody(BaseModel):
+    provider: str
+    api_key: str
+
+class GgufDownloadBody(BaseModel):
+    repo_id: str
+    file: str
+    hf_token: Optional[str] = None
+
+class ReferenceSourceBody(BaseModel):
+    source: str
+
+class PersonaPreviewBody(BaseModel):
+    source: str
+    ref: Optional[str] = ""
+
+class PersonaInstallBody(BaseModel):
+    source: str
+    names: list[str]
+    ref: Optional[str] = ""
 ```
 
-**STT transcription** — `_transcribe_voicebox` (`stt_service.py:195`) POSTs
-`/transcribe` as multipart (`files={"audio": ("audio.webm", <bytes>, "audio/webm")}`,
-`data={"model": model or "base"}`, 120s). The reply is parsed tolerantly by
-`_parse_voicebox_text` (`stt_service.py:174`): a bare string, `{"text":...}`,
-`{"transcription":...}`, or `{"segments":[{"text":...}]}` (segments joined).
+**`POST /api/hub/free-endpoint`** — creates/refreshes a `ModelEndpoint` row
+scoped to a provider's free-tier models only. Response:
+`{"ok": true, "endpoint_id": str, "name": str, "free_models": int}`.
+`cached_models` is pinned to the free-list snapshot so the model picker
+never surfaces the provider's paid catalog through this endpoint.
 
-**Profiles for the UI** — `_voicebox_profiles` (`tts_service.py:160`) GETs
-`/profiles` (5s) and tolerates a bare list, `{"profiles":[...]}`, or
-`{"data":[...]}`. The settings UI hits the same `/profiles` endpoint directly to
-populate a voice datalist (`settings.js:1137`).
+**`GET /api/hub/security-scan`** — reads every `McpServer` row, decodes its
+`args`/`env` JSON, and runs `scan_mcp_servers()` + `scan_skills()` (if a
+skills manager is wired in) for risky patterns (secret-shaped env var
+*names* only — "Never returns secret values"). Response:
+`{"findings": [...], "summary": {...}}`.
+
+**`/api/hub/reference/*`** (Reference Library — "a fourth store alongside
+memory/skills/documents," per the `reference_entries` table in doc 03):
+- `GET /sources` → `{"sources": [...]}` (installed catalog sources + status)
+- `POST /install` (body `{"source": str}`) → installs/reinstalls one catalog
+- `POST /remove` (body `{"source": str}`) → uninstalls
+- `GET /search?q=&source=&kind=&limit=20` →
+  `{"query": str, "count": int, "results": [...]}` — same search surface the
+  agent's `reference_search` tool uses.
+
+### 5.4 `localmodels_routes.py`
+
+Module docstring: "All routes require admin: they enumerate the filesystem,
+change a global scan-directory setting, and launch/kill OS processes —
+strictly more privileged than the already admin-gated model-endpoint
+routes." Every handler calls `require_admin(request)` as its first line.
+
+```python
+# routes/localmodels_routes.py:31-37
+class DirsBody(BaseModel):
+    dirs: list[str]
+
+class BinaryBody(BaseModel):
+    path: str
+```
+
+**`GET /api/local-models`** → `{"dirs": [...], "models": [{...asdict(m), "running": bool}, ...]}`
+— filesystem scan of the configured GGUF directories, cross-referenced
+against `get_server().status()` for which are currently loaded.
+
+**`POST /api/local-models/{model_id}/start`** → `{"ok": true, "base_url": str}`
+on success (launches a `llama-server` child process bound to a free port),
+or `400 {"ok": false, "error": "Model could not be started"}`.
+
+**`GET /api/local-models/binary`** → `{"path": <configured>, "resolved": <what actually resolves right now>}`.
+
+### 5.5 `memory_routes.py`
+
+Owner resolution uses `effective_user(request)` throughout, not
+`get_current_user` — an explicit fix noted in-code because an API-token
+request's literal principal is `"api"`, which would otherwise bucket every
+token's memories together (cross-tenant leak, `routes/memory_routes.py:43-48`).
+Ownership checks are **strict**: `memory.get("owner") != user` → `404` (not
+`403`, to avoid confirming the memory's existence), a documented fix for a
+previous bug where empty/null owners were treated as visible to everyone.
+
+**IMPORTANT — storage layer:** despite the `Memory` SQLAlchemy table
+existing (doc 03 §2), this router's `memory_manager` (`services/memory/memory.py`,
+`MemoryManager`) reads/writes `<data_root>/memory.json` directly
+(`self.memory_file = os.path.join(data_dir, "memory.json")`) — **not** the
+SQL table. See doc 03's uncertainty note; the `memories` table appears to be
+legacy/unused by this router.
+
+```python
+# request_models.py — MemoryAddRequest (imported by memory_routes.py)
+```
+
+**`POST /api/memory/add`** — requires `can_manage_memory` privilege
+(`require_privilege`). Accepts either a `MemoryAddRequest` JSON body or a
+form fallback: `{text, category="fact", source="user", session_id?}`.
+Deduplicates via `memory_manager.find_duplicates` before inserting; on
+success also calls `memory_vector.add(id, text)` (ChromaDB `apollo_memories`
+collection, doc 03 §5) and fires the `memory_added` event. Response:
+`{"ok": true, "count": <owner's total memory count>}`.
+
+**`GET /api/memory/export-pack`** / **`POST /api/memory/import-pack`** — the
+cross-install sync mechanism ("the sync path between two brains"). Export
+shape:
+```json
+{
+  "apollo_memory_pack": 1,
+  "exported_at": 1712345678,
+  "count": 42,
+  "memories": [
+    {"text": "...", "category": "fact", "pinned": false, "timestamp": 1712340000, "source": "user"}
+  ]
+}
+```
+Import skips exact-duplicate texts, tags new rows `source="import"`,
+`provenance={"kind": "import-pack"}`.
+
+**`GET /api/memory/graph`** — owner-scoped knowledge graph;
+`build_graph(mems, neighbor_fn, threshold=0.6, max_neighbors=4, max_nodes=300)`
+where `neighbor_fn` queries the ChromaDB vector store (degrades to
+session-only edges if the vector store is unhealthy).
+
+**`POST /api/memory/{memory_id}/pin`**, **`GET/PUT/DELETE /api/memory/{memory_id}`**
+— note in the source: *"Wildcard routes MUST come last — otherwise they
+swallow /import, /search, etc."* (FastAPI matches path routes in declaration
+order, and `/{memory_id}` is a catch-all relative to the router prefix).
+
+### 5.6 `model_routes.py`
+
+**`GET /api/models`** — per-user cached (30s TTL) model list. Owner resolved
+via `get_current_user`; unauthenticated callers get `401` only when auth is
+configured and enabled (desktop/unconfigured mode = "see everything," per
+comment at `model_routes.py:854-856`). Admins see every `ModelEndpoint`
+regardless of `owner`; regular users see their own + null-owner
+(legacy/shared) rows. Response is a list of per-endpoint items:
+```json
+[
+  {
+    "host": "custom", "port": 0,
+    "url": "http://localhost:8002/v1/chat/completions",
+    "models": ["llama-3-8b-instruct"],
+    "models_display": ["llama-3-8b-instruct"],
+    "models_extra": [], "models_extra_display": [],
+    "endpoint_id": "a1b2c3d4", "endpoint_name": "Local vLLM",
+    "category": "local", "model_type": "llm",
+    "model_meta": {"llama-3-8b-instruct": {"kind": "chat", "arch": "llama"}}
+  }
+]
+```
+An unreachable endpoint is still listed with `"offline": true` and empty
+model arrays rather than omitted, so the picker can show it greyed out.
+
+**`POST /api/model-endpoints`** (admin) — form-encoded:
+`name, base_url (required), api_key, skip_probe, require_models, model_type="llm",
+supports_tools, container_local, shared="true"`. Dedupes by `base_url` (scoped
+to the caller's own + shared rows) before creating — returns the existing row
+with `"existing": true` rather than a duplicate. `shared="false"` stamps the
+creating admin as `owner` so the endpoint is private to them; default is
+shared (`owner=NULL`, visible to everyone, matching the app's historical
+behavior). Response on create: the new `ModelEndpoint` fields plus probed
+`models`.
+
+**`GET /api/model-endpoints`** (admin) — per-row status derived from
+`cached_models`/`hidden_models` plus a live ping when the cache is empty:
+`{"id","name","base_url","has_key": bool,"is_enabled","models": [...],
+"hidden_count": int, "online": bool, "status": "online"|"offline"|"empty",
+"ping_error"?, "model_type","supports_tools"}`.
+
+### 5.7 `prefs_routes.py`
+
+The entire router is 76 lines — a per-user JSON key/value store, no
+Pydantic models, request bodies are raw `dict`. Storage:
+`<data_root>/user_prefs.json`, shape `{"_users": {"<username>": {...prefs}}}`
+(new format) or a flat `{...prefs}` dict (legacy single-user format, used
+directly when `AUTH_ENABLED=false` / `user is None`).
+
+```python
+# routes/prefs_routes.py:56-73
+@router.get("")
+async def get_all_prefs(request): return _load_for_user(get_current_user(request))
+
+@router.get("/{key}")
+async def get_pref(request, key): return {"key": key, "value": prefs.get(key)}
+
+@router.put("/{key}")
+async def set_pref(request, key, body: dict):
+    prefs[key] = body.get("value")
+    _save_for_user(user, prefs)
+    return {"key": key, "value": prefs[key]}
+```
+
+`PUT /api/prefs/{key}` request: `{"value": <anything JSON-serializable>}`.
+This module also exports `_load_for_user`/`_save_for_user` as an internal
+API — `task_routes.py` and `auth_routes.py`'s rename flow both import and
+call them directly rather than going through HTTP.
+
+### 5.8 `task_routes.py`
+
+Full request models:
+
+```python
+# routes/task_routes.py:23-67
+class TaskCreate(BaseModel):
+    name: Optional[str] = None
+    prompt: Optional[str] = None
+    task_type: str = "llm"                        # "llm" | "action" | "research"
+    action: Optional[str] = None
+    schedule: Optional[str] = None                # "once" | "daily" | "weekly" | "monthly" | "cron"
+    scheduled_time: str = "09:00"
+    scheduled_day: Optional[int] = None
+    scheduled_date: Optional[str] = None
+    cron_expression: Optional[str] = None
+    trigger_type: str = "schedule"                # "schedule" | "event" | "webhook"
+    trigger_event: Optional[str] = None
+    trigger_count: Optional[int] = None
+    output_target: str = "session"
+    model: Optional[str] = None
+    endpoint_url: Optional[str] = None
+    then_task_id: Optional[str] = None
+    notifications_enabled: Optional[bool] = None
+
+class AssignBody(BaseModel):
+    prompt: str
+    name: Optional[str] = None
+    model: Optional[str] = None
+    endpoint_url: Optional[str] = None
+```
+`TaskUpdate` mirrors `TaskCreate` with every field `Optional` (PATCH-style
+partial update via `PUT`).
+
+Admin gate for a **subset** of action types:
+```python
+# routes/task_routes.py:311-333
+_ADMIN_ONLY_ACTIONS = {"run_local", "run_script", "ssh_command"}
+```
+`POST /api/tasks` and `PUT /api/tasks/{task_id}` both reject
+(`403 "Action '{action}' requires admin privileges"`) a non-admin creating or
+retargeting a task onto one of these shell-executing built-in actions.
+
+**`POST /api/tasks/{task_id}/webhook/{token}`** — the one genuinely
+unauthenticated endpoint in this router (also globally exempted from the
+session middleware, §1.2): *"Unauthenticated endpoint — the token IS the
+auth."* Validates `ScheduledTask.webhook_token == token` and
+`status == "active"`, then triggers `task_scheduler.run_task_now(task_id)`.
+
+**`POST /api/tasks/parse`** — natural-language → task draft via LLM. Sends a
+strict-JSON-schema system prompt (task_type/name/prompt/schedule/scheduled_time/
+scheduled_day/scheduled_date/cron_expression/output_target) to the resolved
+`"utility"` (falling back to `"default"`) model endpoint, whitelists/validates
+the parsed fields, and returns `{"success": true, "draft": {...}}` — a draft
+only, never auto-saved, so a misparsed schedule needs explicit user review.
+
+**`GET /api/tasks/runs/recent`** — cross-task run history driving the
+Activity view; de-dupes near-identical `check_email_urgency` scanner rows
+(same minute + status + result text) that would otherwise flood the feed
+when auth is bypassed and legacy multi-owner rows are all visible together.
+
+### 5.9 `upload_routes.py`
+
+**`POST /api/upload`** (`files: List[UploadFile]`) — per-IP concurrent-upload
+rate limiting via `count_recent_uploads` (counts genuine upload *events*, not
+files-in-this-batch — a documented fix for issue #1346 where a single
+multi-file attach falsely tripped the limit). Response:
+`{"files": [{"id","name","mime","size","hash","uploaded_at","width"?,"height"?,"is_duplicate": bool}, ...]}`.
+Per-file failures are swallowed and skipped (`continue`); only if *every*
+file fails does the route 500.
+
+**`GET /api/upload/{file_id}?thumb=1`** — serves the raw file, or (with
+`thumb=1` on an image) a cached 320×320 JPEG thumbnail generated once via
+PIL (EXIF-rotation baked into pixels before caching, since PIL strips EXIF
+on save) and reused on subsequent requests unless the source file is newer.
+Owner-checked against `uploads.json` when auth is configured — a mismatched
+owner returns `404` (not `403`) to avoid confirming the file exists.
+
+**`GET /api/upload/{file_id}/vision`** — vision-model OCR/description for an
+image attachment, cached at `<UPLOAD_DIR>/.vision/{file_id}.txt`; `force=1`
+recomputes. **`PUT`** on the same path lets the user hand-edit the cached
+OCR text (used as an override on the next chat send).
 
 ---
 
-## 15. Secrets handling notes
+## 6. UNCERTAIN — flagged gaps in this pass
 
-No secret values appear in this document. Relevant redaction points in the code:
-endpoint listing returns `has_key` only, never `api_key` (`model_routes.py:1195`);
-non-admin settings are passed through `scrub_settings` (`auth_routes.py:412`);
-integrations are masked via `mask_integration_secret` (`auth_routes.py:441`); the
-internal-tool token and session cookie are never persisted or returned in responses
-(`core/middleware.py:16`, `auth_routes.py:138`).
+Every router file was independently read handler-by-handler (not just
+router-level imports) to confirm the per-endpoint auth calls in §1.4 and §4.
+A handful of endpoints could not be fully confirmed within that pass and are
+flagged here rather than guessed — re-check these specifically before
+treating their auth requirement as load-bearing:
 
-## 16. 2026-07-19 API-contract refresh
-
-Owner-sensitive handlers now resolve the principal through
-`src.auth_helpers.resolve_identity` / `effective_user` and should use
-`owner_filter` for query scoping. A route must honor `AUTH_ENABLED=false` as a
-local single-user deployment mode without accidentally making an authenticated
-deployment anonymous. `/api/health` is a liveness probe, `/api/ready` verifies
-critical local storage, and `/api/system/status` is the operator-facing
-diagnostic surface.
+- `calendar_routes.py::test_connection` (`POST /api/calendar/test`) and
+  `::quick_parse` (`POST /api/calendar/quick-parse`).
+- `memory_routes.py::api_add_memory` (uses `require_privilege(..., "can_manage_memory")`
+  per the handler body in §5.5 — confirmed there, but not cross-checked
+  against every other memory-mutating route in the file).
+- `note_routes.py::fire_reminder` (`POST /api/notes/fire-reminder`).
+- `session_routes.py::bulk_delete_sessions` (`POST /api/sessions/bulk-delete`).
+- `upload_routes.py::put_vision_text` — the handler checks
+  `if auth_configured:` further down (visible in the full read, §5.9) rather
+  than calling a `require_*` helper at the top, so it's owner-scoped only
+  when auth is configured — effectively open in desktop/unconfigured mode,
+  same caveat as its GET sibling (§1.4).
+- `gallery_routes.py::remove_background` (`POST /api/image/remove-bg`) — every
+  sibling `/api/image/*` route requires `can_generate_images` except the
+  confirmed-open `sharpen` (§1.4); `remove_background`'s gate was not
+  independently re-confirmed in this pass.

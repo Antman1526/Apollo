@@ -1,519 +1,813 @@
-# 06 — Authentication & Authorization
+# 06 — Authentication & Authorization System
 
-> Scope: how Apollo decides *who you are* (authentication) and *what you may
-> do* (authorization). All references are `path:line` into the real tree at
-> `/Users/Antman/Apollo`. Secrets are shown as `<REDACTED>`; this document
-> copies no live tokens or password hashes.
-
-Apollo's own framing (see `THREAT_MODEL.md`) is "treat it like an admin
-console": it is built for **trusted users on a private network**, not public
-exposure. A logged-in admin can run shell commands, read/write files, send
-email, and control model serving. The auth layer's job is therefore narrow but
-critical: keep unauthenticated callers out, and keep non-admins away from
-admin-only capabilities.
+Apollo layers four identity-resolution paths behind one FastAPI middleware — cookie sessions, a per-process internal-tool token for the agent's own loopback tool calls, an optional `LOCALHOST_BYPASS` for trusted-network deployments, and `ody_`-prefixed bearer API tokens for external integrations — plus a hard `AUTH_ENABLED=false` kill switch for the single-user desktop bundle. The core user/session store is `core/auth.py:AuthManager`, the request-level identity resolver is `AuthMiddleware` in `app.py`, a small shared admin-gate helper lives in `core/middleware.py`, and route-level identity/ownership helpers live in `src/auth_helpers.py`. `routes/auth_routes.py` additionally defines its own **local, stricter** admin gate (`_require_admin_user`) after a real security incident where the shared gate leaked an admin-only endpoint to unauthenticated loopback callers — documented in detail in §6.
 
 ---
 
-## 1. The master switch — `AUTH_ENABLED`
+## 1. `core/auth.py` — `AuthManager`
 
-Auth is toggled by a single env var, parsed in `app.py`:
+### 1.1 Storage — flat JSON files, not a database table
+
+Users and sessions are **not** in SurrealDB/SQLite — they're two sibling JSON files written with atomic writes:
 
 ```python
-# app.py:153
-AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
-LOCALHOST_BYPASS = os.getenv("LOCALHOST_BYPASS", "false").lower() == "true"
+# core/auth.py:39-43
+DEFAULT_AUTH_PATH = str(data_path("auth.json"))
+TOKEN_TTL = 60 * 60 * 24 * 7  # 7 days
 ```
 
-- Default is **on** (`"true"`). Only the literal string `false` disables it.
-- The same parse is duplicated, deliberately, in three places that must agree
-  on what "off" means: the HTTP middleware (`app.py:153`),
-  `core/middleware.py:require_admin` (`app.py`/middleware), and the route-layer
-  helper `_auth_disabled()` in `src/auth_helpers.py:39-43`.
-- When `AUTH_ENABLED=false`, the `AuthMiddleware` is **never added** to the app
-  at all (`app.py:176` guards the whole block; the `else` at `app.py:391`
-  just logs "Auth middleware disabled").
-
-There is a BOM caveat noted in the source: a `.env` saved with a UTF-8 byte
-order mark can yield a key like `﻿AUTH_ENABLED` instead of `AUTH_ENABLED`
-(`app.py:33` comment), which would silently leave auth in its default-on state.
-
-**Desktop-launcher behavior.** The native launchers (`start-macos.sh`,
-`launch-windows.ps1`) do **not** hard-set `AUTH_ENABLED`, so the default-on
-value from `app.py:153` stands unless the user overrides it in their `.env`.
-Consequently a stock desktop launch runs **with auth on** and performs first-run
-admin setup — the launchers explicitly document that first run "creates data
-dirs and prints an initial admin password" (`start-macos.sh:142`,
-`launch-windows.ps1:118`). A user who wants the single-user, no-login experience
-sets `AUTH_ENABLED=false` in `.env` themselves; there is no launcher flag that
-flips it. This is why the recreation must keep the toggle purely env-driven and
-never assume the launcher injects it.
-
-### LOCALHOST_BYPASS
-
-`LOCALHOST_BYPASS=true` (default `false`) skips the login flow for **direct
-loopback** callers. It is dev-only and logs a warning at startup
-(`app.py:155-156`). Crucially it is gated by `_is_trusted_loopback()`
-(`app.py:262-273`), which only returns true for a *direct* `127.0.0.1`/`::1`
-connection carrying **none** of the proxy-forwarding headers
-(`cf-connecting-ip`, `x-forwarded-for`, `forwarded`, …; `_PROXY_FWD_HEADERS`,
-`app.py:251-254`). A remote visitor arriving through a Cloudflare tunnel
-connects *from* loopback but carries those headers, so they cannot inherit
-local trust.
-
-When the bypass fires, the request is attributed to a real account via
-`_bypass_user()` (`app.py:158-174`) — preferring an admin, then the first user,
-then `""` — so ownership-scoped routes (sessions, documents) work instead of
-403-ing on an empty identity.
-
----
-
-## 2. The AuthMiddleware
-
-Defined inside the `if AUTH_ENABLED:` block as
-`class AuthMiddleware(BaseHTTPMiddleware)` (`app.py:276`), added at
-`app.py:389`. Its `dispatch` runs a fixed precedence ladder for every request:
-
-1. **Exempt paths** (`_is_auth_exempt`, `app.py:213-219`) — short-circuit
-   before any auth. Exact set includes `/api/auth/setup`, `/api/auth/login`,
-   `/api/auth/logout`, `/api/auth/status`, `/api/health`, `/login`, and the
-   self-authenticating `/api/paperclip/events` ingest
-   (`AUTH_EXEMPT_EXACT`, `app.py:177-193`). Prefix exemptions are `/static` and
-   `/lmproxy` (the bearer-guarded local-model proxy)
-   (`AUTH_EXEMPT_PREFIXES`, `app.py:199`). A regex pattern exempts per-task
-   webhook URLs `^/api/tasks/[^/]+/webhook/[^/]+/?$` because the path itself is
-   the credential (`AUTH_EXEMPT_PATTERNS`, `app.py:208-210`).
-
-2. **Internal-tool loopback** (`app.py:283-304`) — the in-process agent tool
-   layer HTTP-loopbacks to admin-gated routes. It presents
-   `X-Apollo-Internal-Token` (`INTERNAL_TOOL_HEADER`); the middleware accepts it
-   only with `secrets.compare_digest(...)` **and** `_is_trusted_loopback`:
-
-   ```python
-   # app.py:288-291
-   from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
-   _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-   if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
-   ```
-
-   An optional `X-Apollo-Owner` header lets the loopback impersonate a real
-   user *for attribution only* (it must exist in `auth_manager.users`), else
-   the identity is the `"internal-tool"` sentinel (`app.py:296-303`).
-
-3. **LOCALHOST_BYPASS** (`app.py:311-316`) — direct loopback only, acts as
-   `_bypass_user()`.
-
-4. **First-run / unconfigured** (`app.py:318-322`) — if no users exist,
-   non-API paths redirect to `/login`, API paths return `401 Setup required`.
-
-5. **Bearer API tokens** (`app.py:325-377`) — `Authorization: Bearer ody_…`.
-   Tokens are `ody_` + 43 base64 chars; the prefix (first 8 chars) indexes an
-   in-memory cache (`_token_cache`, `app.py:222`) of
-   `prefix → [(id, bcrypt_hash, owner, scopes)]`, and the candidate is matched
-   with `bcrypt.checkpw`. The cache is rebuilt lazily on a dirty flag
-   (`_refresh_token_cache`, `app.py:238-251`) bumped by token create/revoke, so
-   the DB isn't scanned per request. A matched bearer caller is stamped
-   `current_user = "api"` with `api_token=True` plus `api_token_owner` /
-   `api_token_scopes` on `request.state` (`app.py:368-373`). `last_used_at` is
-   updated fire-and-forget off the hot path (`app.py:347-366`).
-
-6. **Cookie session** (`app.py:380-388`) — the fallback. Reads the
-   `apollo_session` cookie and calls `auth_manager.validate_token`. On failure,
-   API paths get `401 Not authenticated`, everything else redirects to
-   `/login`. On success the username is stamped onto `request.state.current_user`.
-
 ```python
-# app.py:380-388
-token = request.cookies.get(SESSION_COOKIE)
-if not auth_manager.validate_token(token):
-    if path.startswith("/api/"):
-        return JSONResponse(status_code=401, content={"error": "Not authenticated"})
-    return RedirectResponse(url="/login", status_code=302)
-request.state.current_user = auth_manager.get_username_for_token(token)
-request.state.api_token = False
+# core/auth.py:73-75
+def __init__(self, auth_path: str = DEFAULT_AUTH_PATH):
+    self.auth_path = auth_path
+    self._sessions_path = os.path.join(os.path.dirname(auth_path), "sessions.json")
 ```
 
----
+Both files are persisted through `core.atomic_io.atomic_write_json` (imported as `from core.atomic_io import atomic_write_json as _atomic_write_json`), so a crash mid-write can't leave `auth.json`/`sessions.json` truncated or half-written. `data_path()` comes from `src/runtime_paths.py` — the same resolver `setup.py` uses for its own `auth.json` write (§8), so both code paths agree on where the file lives regardless of how Apollo is launched (native, packaged `.app`, Docker).
 
-## 3. Session cookie
-
-The cookie name is a module constant:
+Users are a dict keyed by **lowercased username**:
 
 ```python
-# routes/auth_routes.py:69
-SESSION_COOKIE = "apollo_session"
-```
-
-It is imported into `app.py` (`app.py:149`) and into both WebSocket handlers.
-Cookie attributes are set on successful login (`routes/auth_routes.py:135-147`):
-
-```python
-# routes/auth_routes.py:135-147
-cookie_kwargs = dict(
-    key=SESSION_COOKIE,
-    value=token,
-    httponly=True,
-    samesite="lax",
-    secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
-    path="/",
-)
-if body.remember:
-    cookie_kwargs["max_age"] = 60 * 60 * 24 * 7  # 7 days
-```
-
-- `httponly=True` — not readable by JS, mitigating XSS token theft.
-- `samesite="lax"` — CSRF mitigation for cross-site top-level navigations.
-- `secure` is driven by `SECURE_COOKIES` (default off; `SECURITY.md` says set
-  it to `true` behind HTTPS).
-- Tokens are 64 hex chars (`secrets.token_hex(32)`, `core/auth.py:485`) and
-  live in `data/sessions.json` with a 7-day TTL (`TOKEN_TTL`, `core/auth.py:43`).
-  They are persisted atomically and lock-guarded
-  (`_save_sessions`, `core/auth.py:130-138`).
-
----
-
-## 4. Login / 2FA flow
-
-`POST /api/auth/login` (`routes/auth_routes.py:117-149`):
-
-1. Rate-limited to 15 requests / 60 s per client IP
-   (`_login_limiter`, `routes/auth_routes.py:75`).
-2. Password verified first via `auth_manager.verify_password`
-   (bcrypt `checkpw`, `core/auth.py:64-65` / `465-469`).
-3. If the user has 2FA enabled (`totp_enabled`, `core/auth.py:359-362`):
-   - With no `totp_code` in the body, the handler returns
-     `{"ok": False, "requires_totp": True}` so the client prompts for a code
-     (`routes/auth_routes.py:124-126`).
-   - With a code, `totp_verify` must pass or it `401`s
-     (`routes/auth_routes.py:127-128`).
-4. Only then is a session minted (`create_session`) and the cookie set.
-
-### TOTP internals (`core/auth.py`)
-
-- Secrets generated with `pyotp.random_base32()` and stored as
-  `totp_secret_pending` until confirmed (`totp_generate_secret`,
-  `core/auth.py:369-377`).
-- Provisioning URI uses issuer `"Apollo"` (`core/auth.py:379-382`); the
-  `/api/auth/2fa/setup` route renders it to a base64 QR PNG
-  (`routes/auth_routes.py:193-208`).
-- `totp_confirm_enable` verifies against the pending secret with
-  `valid_window=1`, then promotes it and generates **8 single-use backup codes**
-  (`secrets.token_hex(4)`, `core/auth.py:384-401`).
-- `totp_verify` checks backup codes first (consuming them on use), then the
-  TOTP. Note the **fail-closed** fix: if 2FA is enabled but the secret is
-  missing (corrupt `auth.json`), it returns `False` rather than silently
-  passing (`core/auth.py:403-425`).
-
-Login attempts also hit `_signup_limiter` (3/300 s) and `_setup_limiter`
-(3/300 s) on their respective routes (`routes/auth_routes.py:76-77`).
-
----
-
-## 5. Admin account bootstrap (first run)
-
-Handled by `create_default_admin()` in `setup.py:73-125`. If
-`data/auth.json` already exists it is skipped. Otherwise the priority is
-**env vars > interactive prompt > random password**:
-
-```python
-# setup.py:84-98
-username = os.getenv("APOLLO_ADMIN_USER", "").strip().lower()
-password = os.getenv("APOLLO_ADMIN_PASSWORD", "").strip()
-
-if username and password:
-    pass  # use them directly
-elif sys.stdin.isatty() and not os.getenv("APOLLO_SKIP_ADMIN_PROMPT"):
-    username, password = _prompt_admin_credentials()
-else:
-    # Non-interactive (Docker, CI) — generated password
-    username = username or "admin"
-    password = password or __import__("secrets").token_urlsafe(18)
-```
-
-In the non-interactive/generated case the temporary password is printed once
-to stdout with a change-it warning (`setup.py:112-118`):
-
-```python
-# setup.py:116-118
-if not os.getenv("APOLLO_ADMIN_PASSWORD"):
-    print(f"        Temporary password: <REDACTED>")
-    print(f"        ** Change it after first login. Set APOLLO_ADMIN_PASSWORD to choose your own. **")
-```
-
-(`start-macos.sh:142` and `launch-windows.ps1:118` document that first-run prints
-this initial admin password.) The created record is written directly as
-`{"users": {username: {"password_hash": <bcrypt>, "is_admin": True}}}`
-(`setup.py:99-111`).
-
-The runtime path has a parallel, lock-guarded first-run setup:
-`AuthManager.setup()` (`core/auth.py:177-182`) only succeeds while
-`is_configured` is false, guarded by `self._setup_lock` so two concurrent
-`/api/auth/setup` calls can't both create an admin. The route enforces a
-≥8-char password (`routes/auth_routes.py:90-91`).
-
----
-
-## 6. Privilege model
-
-### Default privileges (`core/auth.py:23-35`)
-
-```python
-DEFAULT_PRIVILEGES = {
-    "can_use_agent": True,
-    "can_use_browser": True,
-    "can_use_bash": False,
-    "can_use_documents": True,
-    "can_use_research": True,
-    "can_generate_images": True,
-    "can_manage_memory": True,
-    "max_messages_per_day": 0,
-    "allowed_models": [],
+# core/auth.py — create_user, ~207-212
+self._config["users"][username] = {
+    "password_hash": _hash_password(password),
+    "created": time.time(),
+    "is_admin": is_admin,
+    "privileges": dict(ADMIN_PRIVILEGES if is_admin else DEFAULT_PRIVILEGES),
 }
 ```
 
-Admins receive `ADMIN_PRIVILEGES` — every boolean forced true, ints zeroed,
-lists emptied (`core/auth.py:38`). `get_privileges()` returns
-`ADMIN_PRIVILEGES` wholesale for admins, else stored values merged over
-`DEFAULT_PRIVILEGES` so newly added keys default sanely
-(`core/auth.py:295-302`). `set_privileges()` refuses to modify an admin and
-only accepts known keys (`core/auth.py:304-318`).
+`DEFAULT_PRIVILEGES` gates individual capabilities per non-admin user (e.g. `can_use_bash` defaults to `False` even for a signed-up regular user) — this is the same `privileges` object the frontend reads from `/api/auth/status` to cosmetically hide UI controls (see doc 05 §1.4).
 
-Note `can_use_bash` defaults **False** even for regular users — but the harder
-gate for shell/file/email/etc. is at the tool layer, not here.
+Reserved usernames block sentinel-impersonation — a user cannot register as `internal-tool`, `api`, `demo`, or `system` (`RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})`), because those exact strings are the identities the middleware stamps onto `request.state.current_user` for non-cookie auth paths (§3).
 
-### Reserved usernames (`core/auth.py:57`)
+### 1.2 Password hashing — bcrypt, default cost factor
 
 ```python
-RESERVED_USERNAMES = frozenset({"internal-tool", "api", "demo", "system"})
+# core/auth.py:62-67
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 ```
 
-`create_user` and `rename_user` refuse these (`core/auth.py:191-193`,
-`core/auth.py:255-257`). The dangerous one is **`internal-tool`**: because the
-cookie path stamps `current_user` to the raw username and
-`require_admin` grants admin to any request whose `current_user ==
-"internal-tool"`, a real account literally named `internal-tool` would silently
-pass every admin gate (see the long comment at `core/auth.py:45-56`).
+`bcrypt.gensalt()` is called with no explicit `rounds=` argument, so the cost factor is whatever the installed `bcrypt` package defaults to (12, as of the versions bcrypt has shipped for years). There is no pepper, no per-install salt beyond bcrypt's own per-hash salt, and no configurable work factor — a recreation should preserve `bcrypt.hashpw(pw.encode('utf-8'), bcrypt.gensalt())` exactly, since changing the cost factor would silently invalidate every existing `auth.json`.
 
-### `require_admin` (`core/middleware.py:20-46`)
+### 1.3 Session tokens — opaque random hex, not JWT
+
+Sessions are **not** signed tokens (no JWT, no `itsdangerous`). `create_session` verifies the password, mints a random 256-bit hex token, and stores a server-side mapping from token → `{username, expiry}`:
 
 ```python
-# core/middleware.py:31-41
-hdr = request.headers.get(INTERNAL_TOOL_HEADER)
-if hdr and secrets.compare_digest(hdr, INTERNAL_TOOL_TOKEN):
-    return
-if getattr(request.state, "current_user", None) == "internal-tool":
-    return
+# core/auth.py:419-431
+def create_session(self, username: str, password: str) -> Optional[str]:
+    """Verify credentials and return a session token, or None."""
+    username = username.strip().lower()
+    if not self.verify_password(username, password):
+        return None
+    token = secrets.token_hex(32)
+    with self._sessions_lock:
+        self._sessions[token] = {
+            "username": username,
+            "expiry": time.time() + TOKEN_TTL,
+        }
+    self._save_sessions()
+    return token
+```
+
+Because the token carries no embedded claims, **validity is a dictionary lookup, not a signature check** — every request that presents a cookie triggers `sessions.json` (in-memory cache backed by the file) being consulted. `TOKEN_TTL = 60 * 60 * 24 * 7` (7 days) is the server-side session lifetime, independent of the cookie's own `max_age` (§2).
+
+### 1.4 Token validation — verbatim, including the deleted-user fail-safe
+
+```python
+# core/auth.py:433-456
+def validate_token(self, token: Optional[str]) -> bool:
+    if not token:
+        return False
+    expired = False
+    deleted_user = False
+    with self._sessions_lock:
+        session = self._sessions.get(token)
+        if session is None:
+            return False
+        if time.time() > session["expiry"]:
+            self._sessions.pop(token, None)
+            expired = True
+        else:
+            # SECURITY: if the user record has since been removed (admin
+            # deleted them while their cookie was still valid), drop the
+            # session so the next request kicks them out instead of
+            # silently authenticating against a non-existent account.
+            if session.get("username") not in self.users:
+                self._sessions.pop(token, None)
+                deleted_user = True
+    if expired or deleted_user:
+        self._save_sessions()
+        return False
+    return True
+```
+
+This closes a real class of bug: a session token minted for a now-deleted user would otherwise stay "valid" (lookup succeeds, not expired) until its 7-day TTL elapsed, even though `AuthManager.users` no longer contains that account. The check re-validates against the live user table on every request, not just at login.
+
+### 1.5 Two-factor auth (TOTP) — fail-closed on corrupt state
+
+`core/auth.py` also implements TOTP 2FA (`pyotp`): `totp_generate_secret`, `totp_confirm_enable`, `totp_verify`, `totp_disable`. The verify path fails **closed**, not open, if the enabled flag and the secret disagree:
+
+```python
+# core/auth.py:373-384
+def totp_verify(self, username: str, code: str) -> bool:
+    """Verify a TOTP code for login."""
+    username = username.strip().lower()
+    user = self.users.get(username, {})
+    if not user.get("totp_enabled"):
+        return True  # 2FA not enabled, always pass
+    secret = user.get("totp_secret")
+    if not secret:
+        # 2FA is enabled but no secret is stored (corrupt/partially-written
+        # auth.json). Fail closed — returning True here bypassed the second
+        # factor entirely.
+        return False
+```
+
+### 1.6 Admin flag and legacy migration
+
+```python
+# core/auth.py:283-284
+def is_admin(self, username: str) -> bool:
+    return self.users.get(username, {}).get("is_admin", False)
+```
+
+An older `role: "admin"` marker (from an earlier version of `setup.py`) is migrated forward automatically the first time `AuthManager` loads a legacy file:
+
+```python
+# core/auth.py:153-162
+def _migrate_legacy_admin_role(self):
+    """Normalize setup.py's old role='admin' marker to is_admin=True."""
+    changed = False
+    for username, user in self.users.items():
+        if user.get("role") == "admin" and "is_admin" not in user:
+            user["is_admin"] = True
+            changed = True
+            logger.info(f"Migrated legacy admin role for '{username}'")
+    if changed:
+        self._save()
+```
+
+---
+
+## 2. Login flow, end to end
+
+### 2.1 Frontend form — `static/login.html`
+
+```html
+<!-- static/login.html:251-279 (abridged) -->
+<form id="authForm" autocomplete="on">
+  <input id="username" name="username" type="text" required autofocus autocomplete="username">
+  <input type="checkbox" class="remember-check" id="remember" checked aria-label="Remember me">
+  <input id="password" name="password" type="password" required autocomplete="current-password">
+  <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password">
+  <button type="submit" id="submitBtn">Sign In</button>
+</form>
+```
+
+### 2.2 Submission JS
+
+```js
+// static/login.html:465-477
+async function doLogin(totpCode) {
+  const loginBody = { username, password, remember };
+  if (totpCode) loginBody.totp_code = totpCode;
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    credentials: 'same-origin',
+    body: JSON.stringify(loginBody)
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || 'Login failed');
+  return data;
+}
+```
+
+If the response carries `requires_totp: true` (password accepted, 2FA still pending), the JS injects a TOTP code field and resubmits the same request with `totp_code` set (lines ~384-406, 481-495). On success, `finishLogin()` (lines 448-463) prefetches `/api/sessions`, `/api/auth/features`, and `/api/auth/settings` into `sessionStorage` (a warm-cache optimization for the SPA's first paint) and then does a **hard redirect**, not an SPA transition:
+
+```js
+window.location.replace('/');
+```
+
+The page also guards the reverse case at load — if already authenticated (`GET /api/auth/status` succeeds), it immediately `window.location.replace('/')`s away from `/login` without rendering the form.
+
+### 2.3 Backend handler — `routes/auth_routes.py:144-174`
+
+```python
+@router.post("/login")
+async def login(body: LoginRequest, request: Request, response: Response):
+    if not _login_limiter.check(request.client.host):
+        raise HTTPException(429, "Too many requests — try again later")
+    # Verify password first
+    username = body.username.strip().lower()
+    if not await asyncio.to_thread(auth_manager.verify_password, username, body.password):
+        raise HTTPException(401, "Invalid credentials")
+    # Check 2FA if enabled
+    if auth_manager.totp_enabled(username):
+        if not body.totp_code:
+            # Password OK but need TOTP — tell client to show code input
+            return {"ok": False, "requires_totp": True, "username": username}
+        if not auth_manager.totp_verify(username, body.totp_code):
+            raise HTTPException(401, "Invalid 2FA code")
+    # All checks passed — create session
+    token = await asyncio.to_thread(auth_manager.create_session, username, body.password)
+    if not token:
+        raise HTTPException(401, "Invalid credentials")
+    cookie_kwargs = dict(
+        key=SESSION_COOKIE,
+        value=token,
+        httponly=True,
+        samesite="lax",
+        secure=os.getenv("SECURE_COOKIES", "false").lower() == "true",
+        path="/",
+    )
+    if body.remember:
+        cookie_kwargs["max_age"] = 60 * 60 * 24 * 7  # 7 days
+    response.set_cookie(**cookie_kwargs)
+    return {"ok": True, "username": username}
+```
+
+Key details:
+- **Rate limiting**: `_login_limiter = RateLimiter(max_requests=15, window_seconds=60)`, keyed by `request.client.host` — 15 attempts/minute per client IP before a `429`.
+- Password is verified **before** touching 2FA, so a wrong-password attempt never leaks whether 2FA is enabled for that account.
+- Password verification and session creation both run via `asyncio.to_thread` — bcrypt is CPU-bound and synchronous, so it's offloaded off the event loop rather than blocking other requests.
+- Cookie name constant: `SESSION_COOKIE = "apollo_session"`.
+- Cookie flags: `httponly=True` (no JS access, XSS-resistant), `samesite="lax"`, `secure` gated behind `SECURE_COOKIES` env var (defaults `false` — appropriate for plain-HTTP localhost deployments, must be set `true` behind HTTPS in production).
+- **"Remember me" semantics**: if `body.remember` is false, `max_age` is never set, so the browser treats it as a *session cookie* that dies when the browser closes — but the server-side token in `sessions.json` still lives the full 7-day `TOKEN_TTL` regardless. Unchecking "remember me" only changes how long the *browser* keeps the cookie, not how long the *server* would honor it if replayed.
+
+Frontend then does a hard page reload to `/`, which re-runs the full module bootstrap in doc 05 with the new cookie already set.
+
+---
+
+## 3. `AuthMiddleware` — identity resolution and loopback trust
+
+There is a small shared file at `core/middleware.py` with `require_admin()` and `SecurityHeadersMiddleware`, but the middleware that actually populates `request.state.current_user` from the cookie/token on every request is `AuthMiddleware`, defined inline in **`app.py`** (lines ~150-405) and registered conditionally:
+
+```python
+# app.py:155, 179
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
 ...
+if AUTH_ENABLED:
+    app.add_middleware(AuthMiddleware)
+else:
+    logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
+```
+
+### 3.1 Exempt paths
+
+Before any identity check, a fixed allowlist of paths passes straight through: `/api/auth/setup`, `/api/auth/signup`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/status`, `/api/auth/features`, `/api/auth/settings`, `/api/auth/integrations/presets`, `/api/health`, `/api/version`, `/login`, `/api/paperclip/events`; prefix-exempt `/static`, `/lmproxy`; and a regex-exempt webhook path `^/api/tasks/[^/]+/webhook/[^/]+/?$` (so external webhook callers don't need a session cookie at all — those routes authenticate themselves per-webhook-secret instead).
+
+### 3.2 Trusted-loopback detection — proxy-aware
+
+A bare `request.client.host in ("127.0.0.1", "::1")` check is unsafe once anything (a Cloudflare Tunnel, an nginx/Caddy reverse proxy, Tailscale Funnel) sits in front of the app: those all connect to the FastAPI process *from* loopback, so a bare host check would let a remote visitor inherit local trust. The middleware instead requires loopback **and** the absence of any proxy-forwarding header:
+
+```python
+# app.py:255-278
+_PROXY_FWD_HEADERS = (
+    "cf-connecting-ip", "cf-ray", "cf-visitor",
+    "x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded",
+)
+
+def _is_trusted_loopback(request: Request) -> bool:
+    """True ONLY for a DIRECT loopback connection with no proxy/tunnel
+    forwarding headers. A bare ``client.host in ('127.0.0.1','::1')`` check is
+    unsafe behind a Cloudflare tunnel / reverse proxy: those connect from
+    loopback, so a remote visitor would otherwise inherit local trust and
+    slip past LOCALHOST_BYPASS or spoof the internal-tool path. Apollo's own
+    in-process agent loopback calls carry none of these headers, so they still
+    qualify."""
+    host = request.client.host if request.client else None
+    if host not in ("127.0.0.1", "::1"):
+        return False
+    for _h in _PROXY_FWD_HEADERS:
+        if request.headers.get(_h):
+            return False
+    return True
+```
+
+This exact predicate gates **both** the internal-tool token path and `LOCALHOST_BYPASS` below — a request carrying `X-Forwarded-For` (proof it was tunneled/proxied) can never take either shortcut, even if its raw TCP peer is `127.0.0.1`.
+
+### 3.3 `dispatch()` — full decision order
+
+```python
+# app.py:280-400 (identity-resolution excerpt, verbatim)
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        if _is_auth_exempt(path):
+            return await call_next(request)
+
+        # In-process internal-tool token bypass.
+        try:
+            from core.middleware import INTERNAL_TOOL_HEADER, INTERNAL_TOOL_TOKEN as _ITT
+            _hdr = request.headers.get(INTERNAL_TOOL_HEADER)
+            if _hdr and secrets.compare_digest(_hdr, _ITT) and _is_trusted_loopback(request):
+                _impersonate = (request.headers.get("X-Apollo-Owner") or "").strip()
+                _auth_mgr = getattr(request.app.state, "auth_manager", None) or auth_manager
+                if _impersonate and _impersonate in getattr(_auth_mgr, "users", {}):
+                    request.state.current_user = _impersonate
+                    request.state.internal_tool_owner = _impersonate
+                else:
+                    request.state.current_user = "internal-tool"
+                    request.state.internal_tool_owner = None
+                request.state.internal_tool = True
+                request.state.auth_mode = "internal_tool"
+                request.state.api_token = False
+                return await call_next(request)
+        except Exception as e:
+            logger.debug("Internal tool loopback auth check failed: %s", e, exc_info=True)
+
+        # LOCALHOST_BYPASS — direct localhost only, never over a tunnel/proxy.
+        if LOCALHOST_BYPASS and _is_trusted_loopback(request):
+            request.state.current_user = _bypass_user()
+            request.state.internal_tool = False
+            request.state.auth_mode = "localhost_bypass"
+            request.state.api_token = False
+            return await call_next(request)
+
+        if not auth_manager.is_configured:
+            if not path.startswith("/api/"):
+                return RedirectResponse(url="/login", status_code=302)
+            return JSONResponse(status_code=401, content={"error": "Setup required"})
+
+        # --- Bearer token auth (API tokens for external integrations) ---
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer ody_"):
+            ...   # see §7
+
+        # --- Cookie-based session auth ---
+        token = request.cookies.get(SESSION_COOKIE)
+        if not auth_manager.validate_token(token):
+            if path.startswith("/api/"):
+                return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+            return RedirectResponse(url="/login", status_code=302)
+
+        request.state.current_user = auth_manager.get_username_for_token(token)
+        request.state.internal_tool = False
+        request.state.auth_mode = "cookie"
+        request.state.api_token = False
+        return await call_next(request)
+```
+
+Six mutually-exclusive outcomes stamp `request.state`, always including `auth_mode` (useful for downstream logging/telemetry) and `api_token` (a boolean any route can check to require a "real" bearer-token caller — see §7):
+
+| Path | `current_user` | `auth_mode` | Notes |
+|---|---|---|---|
+| Exempt path | *(unset)* | — | Falls through untouched |
+| Internal-tool token + trusted loopback | `X-Apollo-Owner` if valid, else `"internal-tool"` | `internal_tool` | `request.state.internal_tool = True` |
+| `LOCALHOST_BYPASS=true` + trusted loopback | `_bypass_user()` | `localhost_bypass` | Only reached if internal-tool path didn't match |
+| Auth unconfigured (0 users) | *(unset)* | — | `401`/`302` to force setup |
+| Valid `Bearer ody_...` | `"api"` | `api_token` | `request.state.api_token = True` |
+| Valid `apollo_session` cookie | actual username | `cookie` | Normal browser session |
+| Invalid/missing cookie | *(unset)* | — | `401` for `/api/*`, `302` to `/login` otherwise |
+
+### 3.4 The internal-tool token itself — `core/middleware.py`
+
+```python
+# core/middleware.py:17-25 (constants + doc)
+# Per-process token that lets the in-app tool layer hit admin-gated
+# routes via HTTP loopback (the agent's tool calls don't carry the
+# admin user's session cookie). Set once at import; tools read the
+# same value from this module. Never persisted or exposed externally.
+INTERNAL_TOOL_TOKEN = os.environ.get("APOLLO_INTERNAL_TOKEN") or secrets.token_hex(32)
+INTERNAL_TOOL_HEADER = "X-Apollo-Internal-Token"
+```
+
+This token exists because the agent's own tool-calling loop makes HTTP calls back into Apollo's own API (loopback) to execute tools — those internal requests have no browser session cookie to present. Comparison uses `secrets.compare_digest` (constant-time) to avoid a timing side-channel on the token check.
+
+### 3.5 `_bypass_user()` — who `LOCALHOST_BYPASS` requests act as
+
+```python
+# app.py:161-177
+def _bypass_user() -> str:
+    """Identity that loopback-bypass requests act as. ..."""
+    try:
+        users = auth_manager.users or {}
+    except Exception as error:
+        report_exception(logger, "localhost_bypass_user_lookup_failed", error, outcome="best_effort")
+        users = {}
+    for name, data in users.items():
+        if isinstance(data, dict) and data.get("is_admin"):
+            return name
+    return next(iter(users), "")
+```
+
+Prefers the first admin found; falls back to the first user of any kind; falls back to `""` (empty owner, single-user semantics) if no users exist yet.
+
+### 3.6 `src/auth_helpers.py` — the companion route-level resolver
+
+Most route handlers don't read `request.state.current_user` directly — they call `resolve_identity(request)` / `require_user(request)` from `src/auth_helpers.py`, which layers the same three "who is this" fallbacks (unconfigured+loopback, `LOCALHOST_BYPASS`, `AUTH_ENABLED=false`) on top of whatever the middleware already stamped, returning an empty-string owner (`""`, meaning "single-user mode, no ownership filtering") rather than raising in the desktop-mode/unconfigured/bypass cases. It uses its own, simpler loopback check for this fallback layer:
+
+```python
+# src/auth_helpers.py:38-41
+def _is_loopback(request: Request) -> bool:
+    client = getattr(request, "client", None)
+    host = (getattr(client, "host", None) or "").lower()
+    return host in {"127.0.0.1", "::1", "localhost"}
+```
+
+This simpler check is safe to use here specifically because it only fires *after* `AuthMiddleware`'s stricter `_is_trusted_loopback` has already run earlier in the request pipeline and left `request.state.current_user` unset — i.e. this is a second-layer fallback for the already-filtered "nobody claimed this request" case, not a fresh trust boundary of its own.
+
+Owner-scoped query filtering — the no-op-when-single-user pattern used throughout the DB layer:
+
+```python
+# src/auth_helpers.py
+def owner_filter(query, model_cls, user: str, *, include_shared: bool = True):
+    """No-op when `user` is empty (single-user mode)."""
+    if not user:
+        return query
+    if include_shared:
+        return query.filter((model_cls.owner == user) | (model_cls.owner == None))  # noqa: E711
+    return query.filter(model_cls.owner == user)
+```
+
+---
+
+## 4. `AUTH_ENABLED=false` — desktop-mode semantics
+
+Three separate files parse the same env var, and comments in each explicitly note they must agree:
+
+```python
+# app.py:155
+AUTH_ENABLED = os.getenv("AUTH_ENABLED", "true").lower() != "false"
+```
+When false, `AuthMiddleware` is **never registered** on the app at all (see §3, the `if AUTH_ENABLED: app.add_middleware(...)` gate) — no cookie/bearer/loopback logic runs on any request, and `request.state.current_user` is simply never set by the middleware layer for any route.
+
+```python
+# core/middleware.py:49 (inside require_admin)
 if os.getenv("AUTH_ENABLED", "true").lower() == "false":
     return
-if not auth_mgr or not auth_mgr.is_configured:
-    raise HTTPException(403, "Admin only")
-user = getattr(request.state, "current_user", None)
-if not user or not auth_mgr.is_admin(user):
-    raise HTTPException(403, "Admin only")
 ```
-
-The `INTERNAL_TOOL_TOKEN` is a per-process random secret
-(`secrets.token_hex(32)`, or `APOLLO_INTERNAL_TOKEN` if set) that is never
-persisted or sent to clients (`core/middleware.py:15-16`).
-
-### `require_privilege` / `require_user` (`src/auth_helpers.py`)
-
-`require_user(request)` (`src/auth_helpers.py:46-89`) is a defence-in-depth
-route dependency that re-rejects unauthenticated callers if the middleware was
-somehow bypassed. It returns `""` (no enforcement) in three documented cases:
-`AUTH_ENABLED=false`, unconfigured-first-run loopback, and `LOCALHOST_BYPASS`
-loopback.
-
-`require_privilege(request, key)` (`src/auth_helpers.py:91-119`):
+Every route using the shared `require_admin` gate (the majority of admin-only routes — see the table in §5) passes through unconditionally when auth is disabled.
 
 ```python
-# src/auth_helpers.py:113-117
-privs = auth_mgr.get_privileges(user) or {}
-...
-if not privs.get(key, True):
-    raise HTTPException(403, f"Your account is not allowed to {key.replace('_', ' ')}.")
-return user
+# src/auth_helpers.py:121-125
+def _auth_disabled() -> bool:
+    """True when the operator has explicitly turned off auth via .env.
+    Mirrors the AUTH_ENABLED parse in app.py / core/middleware.py so the
+    three call sites agree on what "off" means."""
+    return os.getenv("AUTH_ENABLED", "true").lower() == "false"
 ```
+Used inside `resolve_identity()`/`require_user()` to let unauthenticated callers through with an empty owner string rather than redirecting to `/login` — this exists specifically to prevent a past regression (referenced in-code as issue #622) where the login page kept appearing even with `AUTH_ENABLED=false` set.
 
-Two important properties: it is a **no-op for admins** (their privileges are all
-true) and for single-user/anonymous mode (`user == ""`), and it **fails open**
-on unknown keys (`privs.get(key, True)`) — the UI is expected to gate display.
+**What is open**: with `AUTH_ENABLED=false`, effectively the entire API surface — chat, sessions, documents, memory, and every admin-only route gated purely through `core.middleware.require_admin` — is reachable with no identity check at all. This is the intended behavior for the packaged macOS desktop bundle, which binds only to `127.0.0.1` and treats "can reach this process's port" as sufficient authorization (single physical user, single machine).
 
-`effective_user(request)` (`src/auth_helpers.py:13-35`) resolves the real owner
-for attribution: cookie sessions → logged-in user; bearer tokens → their
-`api_token_owner` (so a paired companion client sees the SAME data as the
-owner's desktop UI) rather than the sandboxed `"api"` pseudo-user.
+**What still requires a real gate even here**: `routes/auth_routes.py`'s local `_require_admin_user()` (§6) is the one place that does not fully hand-wave desktop mode away — but note carefully what it actually does: when `AUTH_ENABLED=false` it also returns `None` (proceeds, no identity required), matching every other `require_admin`-gated route. The distinction that matters is the *opposite* case — when auth **is** enabled, `_require_admin_user` is strictly cookie-only and does not trust anything the middleware stamped onto `request.state`, whereas the shared `core.middleware.require_admin` does trust `request.state.current_user` (populated via loopback/bypass paths). §6 explains exactly why that distinction was necessary.
 
-#### Endpoint role fallback — the `reviewer` role (`src/endpoint_resolver.py`)
-
-Not an *auth* gate, but the same "resolve a role to a concrete backend" shape:
-`resolve_endpoint(setting_prefix, …)` maps a named role
-(`"default"`, `"utility"`, `"task"`, `"research"`, `"reviewer"`) to
-`(chat_url, model, headers)` by reading `{prefix}_endpoint_id` /
-`{prefix}_model` from settings. Roles that are left unconfigured fall back down
-a fixed chain so a new role works out of the box without its own endpoint:
-
-- `"utility"` unset → **Default Chat** (`default_endpoint_id`/`default_model`,
-  `endpoint_resolver.py:245-247`).
-- Any other prefix (`task`, `research`, and the newer **`reviewer`**) unset →
-  **utility → default** (`endpoint_resolver.py:251-256`): it first tries
-  `utility_endpoint_id`, and if that is also unset falls through to
-  `default_endpoint_id`.
-
-So the adversarial-reviewer feature (`POST /api/review`) resolves its model via
-`resolve_endpoint("reviewer", …)`, which — with no `reviewer_endpoint_id`
-configured — silently becomes **reviewer → utility → default**. This is pinned
-by `tests/test_resolve_endpoint_fallbacks.py::test_reviewer_uses_utility_when_reviewer_endpoint_unset`.
-No new auth model or privilege key is involved; the reviewer role is just
-another entry in the endpoint-resolution fallback ladder, and the `/api/review`
-route returns **400** when nothing resolves (no model configured at all).
-
-### Tool-layer enforcement (the real privilege wall)
-
-`require_privilege` covers UI-level feature gates; the high-risk capabilities
-are blocked in `src/tool_security.py`. `NON_ADMIN_BLOCKED_TOOLS`
-(`src/tool_security.py:14-46`) denies non-admins: `bash`, `python`,
-`read_file`, `write_file`, `manage_memory/skills/tasks/endpoints/mcp/webhooks/
-tokens/documents/settings`, `send_email`/`read_email`/`list_emails`,
-`manage_calendar`, `vault_*`, and all model-serving tools. Any tool name
-starting with `mcp__` is also blocked (`src/tool_security.py:54`). Admin status
-is verified via `owner_is_admin_or_single_user` (`src/tool_security.py:57`)
-before the agent issues its internal-tool loopback, so a non-admin agent
-session cannot reach admin tools.
+In short: `AUTH_ENABLED=false` is a deliberate, total bypass for a single-operator local deployment, not a partial "admin still gated" mode — nothing is admin-gated once it's set.
 
 ---
 
-## 7. WebSocket authentication (outside the HTTP middleware)
+## 5. Admin vs. regular user
 
-`BaseHTTPMiddleware` does **not** run for WebSocket upgrades, so each WS handler
-must authenticate the `apollo_session` cookie itself. Apollo wires this through
-`build_and_include_router` callbacks in `app.py`, honoring `AUTH_ENABLED`.
+Admin status is a single boolean per user (`is_admin`, §1.6), checked via `AuthManager.is_admin(username)`. Three enforcement mechanisms exist:
 
-### Paperclip sidecar proxy WS
+1. **`core/middleware.require_admin(request)`** — the canonical, shared gate, used across most of `routes/*.py`.
+2. **Local per-router gates** that intentionally re-derive identity from the cookie instead of trusting `request.state` — `routes/shell_routes.py::_require_admin` ("Shell exec is admin-only — never expose to regular users; that's RCE-after-signup"), and `routes/auth_routes.py::_require_admin_user` (§6).
+3. **Ad hoc `auth_manager.is_admin(user)` checks** inside route bodies for owner-vs-admin authorization on shared resources rather than blanket gating — e.g. `routes/upload_routes.py` (`if file_owner != current_user and not auth_mgr.is_admin(current_user): raise 403`), `routes/session_routes.py::_current_user_is_admin`, `routes/model_routes.py` (deciding whether a user sees other owners' model endpoints), `routes/memory_routes.py` (`_is_admin = resolve_identity(request).is_admin`).
 
-Wired with a single validate callback (`app.py:730-740`):
+### 5.1 Representative admin-gated surface (via `require_admin`/`_require_admin`)
 
-```python
-# app.py:734
-ws_validate=lambda token: auth_manager.validate_token(token),
-```
+| Router | Admin-only endpoints |
+|---|---|
+| `routes/activity_routes.py` | `GET ""`, `POST /undo-session/{id}`, `GET`/`PUT /autonomy`, `POST /{id}/undo` |
+| `routes/admin_wipe_routes.py` | `DELETE /wipe/{kind}` |
+| `routes/api_token_routes.py` | `GET`/`POST /tokens`, `DELETE /tokens/{id}` |
+| `routes/backup_routes.py` | `GET /api/export`, `POST /api/import` |
+| `routes/diagnostics_routes.py` | `GET /api/db/stats`, `/api/rag/stats`, `/api/test/youtube`, `POST /api/test-research` |
+| `routes/hub_routes.py` | free-model listing/install, GGUF search/download, codex-router, security-scan, catalog, persona install, reference install |
+| `routes/localmodels_routes.py` | scan, voices, dirs (get/put), binary (get/put), start/stop |
+| `routes/mcp_routes.py` | server CRUD, tool listing/toggling, OAuth flow endpoints |
+| `routes/model_routes.py` | 16 admin-only sites — local-model/inference-config management |
+| `routes/search_routes.py` | SearXNG status/install |
+| `routes/session_routes.py` | `DELETE /sessions/all` |
+| `routes/skills_routes.py` | built-in skill update/delete |
+| `routes/shell_routes.py` | `POST /api/shell/exec`, `/stream`, cookbook package install |
+| `routes/webhook_routes.py` | webhook CRUD/test |
+| `routes/upload_routes.py` | `POST /cleanup`, `GET /stats` |
+| `routes/vault_routes.py` | vault config/login/unlock/lock/logout |
+| `routes/system_status_routes.py` | system status, system actions |
+| `routes/skill_pack_routes.py` | preview/install |
+| `routes/paperclip_routes.py` | agent-token issuance/listing |
+| `routes/cookbook_routes.py` | 11 admin-only sites |
+| `routes/auth_routes.py` | user list/create, privilege edits, rename, signup toggle, settings write (§6) |
 
-The handler (`routes/paperclip_routes.py:263-278`):
+### 5.2 Open to any authenticated (non-admin) user
 
-```python
-# routes/paperclip_routes.py:264-272
-async def proxy_ws(websocket, path: str):
-    from routes.auth_routes import SESSION_COOKIE  # local import: avoid cycle
-    token = websocket.cookies.get(SESSION_COOKIE)
-    ok = ws_validate(token) if ws_validate is not None else bool(token)
-    if not cfg.enabled or not ok:
-        await websocket.close(code=1008)  # policy violation
-        return
-```
-
-A valid session is required, then the connection is reverse-proxied to the
-Paperclip upstream (the `http→ws` rewrite at `routes/paperclip_routes.py:275`).
-
-The companion HTTP ingest `/api/paperclip/events` is exempted from session auth
-(`AUTH_EXEMPT_EXACT`) but **self-authenticates**: when
-`PAPERCLIP_EVENTS_TOKEN` is set the `X-Paperclip-Events-Token` header must match
-via `hmac.compare_digest`; otherwise only direct loopback (no `x-forwarded-for`)
-is accepted (`routes/paperclip_routes.py:98-108`).
-
-### Embedded browser WS
-
-This one needs **two** gates — a valid session *and* the `can_use_browser`
-privilege. Both honor `AUTH_ENABLED` (`app.py:796-806`):
-
-```python
-# app.py:803-804
-ws_validate=lambda token: (not AUTH_ENABLED) or auth_manager.validate_token(token),
-ws_authorize=lambda token: (not AUTH_ENABLED) or _browser_ws_authorize(token),
-```
-
-`_browser_ws_authorize` (`app.py:780-793`) mirrors `require_privilege`'s
-fail-open semantics — anonymous/single-user and missing-key both return true,
-admins pass, otherwise it checks `privs.get("can_use_browser", True)`.
-
-The handler runs both checks in order (`routes/browser_routes.py:287-304`):
-
-```python
-# routes/browser_routes.py:288-304
-async def browser_ws(websocket: WebSocket):
-    from routes.auth_routes import SESSION_COOKIE  # local import: avoid cycle
-    token = websocket.cookies.get(SESSION_COOKIE)
-    valid = ws_validate(token) if ws_validate is not None else True
-    if not valid:
-        await websocket.close(code=1008)  # policy violation
-        return
-    privileged = ws_authorize(token) if ws_authorize is not None else True
-    if not privileged:
-        await websocket.close(code=1008)
-        return
-    await websocket.accept()
-```
-
-The `(not AUTH_ENABLED) or …` shape is the key to the `AUTH_ENABLED=false`
-story: in that mode the HTTP `AuthMiddleware` isn't installed at all, and there
-is no session cookie to validate, so the WS callbacks short-circuit to `True`
-and the stream is allowed — mirroring the HTTP behaviour exactly. With auth on,
-the cookie must validate and (for the browser) the privilege must hold.
+Chat/session streaming, owner-scoped document/upload routes, `GET /api/auth/status`, `GET /api/auth/2fa/*`, `POST /api/auth/change-password`, `GET /api/auth/features` (no auth at all — publicly exempt), most of `routes/session_routes.py`, `routes/memory_routes.py`, personal document/contacts routes. These are gated by `require_user`/per-privilege checks (`DEFAULT_PRIVILEGES`), not `require_admin` — a regular user is authenticated but capability-limited by their `privileges` dict rather than blocked outright.
 
 ---
 
-## 8. Account lifecycle security notes
+## 6. The `_require_admin_user` pattern — `routes/auth_routes.py`
 
-- **Deleting a user** also revokes all their active sessions immediately
-  (`delete_user`, `core/auth.py:209-235`) — otherwise a deleted user's cookie
-  would keep working until natural expiry.
-- **Orphan-session check:** both `validate_token` (`core/auth.py:493-516`) and
-  `get_username_for_token` (`core/auth.py:518-543`) re-verify the user still
-  exists on every call and drop the session if not, so a deleted account can't
-  ride a still-valid cookie.
-- **Renaming a user** rewrites every owner-scoped DB row (iterating
-  `Base.registry.mappers` for models with an `owner` column) and per-user JSON
-  prefs before changing auth, so the account keeps its data
-  (`routes/auth_routes.py:284-330`).
-- **Changing a password** revokes all *other* sessions but preserves the
-  current one (`change_password` route, `routes/auth_routes.py:171-184`).
-- **Open signup** is off by default (`signup_enabled`, `core/auth.py:165`); the
-  `/api/auth/signup` route 403s unless an admin enabled it
-  (`routes/auth_routes.py:101-102`).
+### 6.1 Full verbatim source
+
+```python
+# routes/auth_routes.py — inside the router factory, ~lines 84-110
+def _get_current_user(request: Request) -> Optional[str]:
+    token = request.cookies.get(SESSION_COOKIE)
+    return auth_manager.get_username_for_token(token)
+
+
+def _require_admin_user(request: Request) -> Optional[str]:
+    """Admin gate for this router — strict, plus the desktop-mode allowance.
+
+    Delegating wholesale to core.middleware.require_admin is WRONG here:
+    that helper trusts ``request.state.current_user``, which the auth
+    middleware populates through loopback/bypass paths. On a direct
+    loopback request that turned GET /api/auth/users from 403 into 200
+    for an UNAUTHENTICATED caller (verified by A/B against main), leaking
+    usernames and privilege flags.
+
+    So keep the strict cookie-validating check exactly as it was, and add
+    only the one thing that was missing: the no-login desktop mode
+    (AUTH_ENABLED=false) that the macOS bundle launcher ships and that
+    every require_admin route already honors. Without this, Settings
+    saves, integrations CRUD and the Users panel all 403 in the mode the
+    app ships in.
+    """
+    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+        return None
+    user = _get_current_user(request)
+    if not user or not auth_manager.is_admin(user):
+        raise HTTPException(403, "Admin only")
+    return user
+```
+
+The critical property: `_get_current_user` reads `request.cookies.get(SESSION_COOKIE)` and resolves the username **directly from the session store**, `auth_manager.get_username_for_token(token)`. It never reads `request.state.current_user`. This matters because `request.state.current_user` can be populated by paths that are *not* "a human proved their password" — the internal-tool token path and `LOCALHOST_BYPASS` both set it, and both are reachable via direct loopback without any credentials.
+
+### 6.2 The endpoint this protects
+
+```python
+# routes/auth_routes.py:275-278
+# Admin-only routes
+@router.get("/users")
+async def list_users(request: Request):
+    _require_admin_user(request)
+    return {"users": auth_manager.list_users()}
+```
+
+### 6.3 The security history — verbatim commit message
+
+The pattern was introduced by commit `3d5570a` (`fix(auth): admin routes work in the no-login desktop mode`). Its message documents both the *original* bug it was fixing (admin routes 403'ing in desktop mode) and the *regression it caught in its own first draft* — a wholesale delegation to the shared `require_admin` helper, which turned out to leak the endpoint to unauthenticated loopback callers:
+
+> The macOS bundle launcher ships AUTH_ENABLED=false ("The desktop bundle serves 127.0.0.1 only"), but auth_routes' 14 admin endpoints did their own `if not user or not auth_manager.is_admin(user)` check instead of honoring that mode. With auth CONFIGURED (users exist) but DISABLED — exactly the state the shipped app runs in — every one of them 403'd: Settings saves, integrations CRUD, feature toggles, and the whole Users panel were dead in the mode the app ships in. Found while setting a default model: the UI's save silently failed with 403.
+>
+> Adds a local `_require_admin_user()` gate: the strict cookie-validating check, unchanged, plus the one missing allowance for AUTH_ENABLED=false. GET /settings uses the same gate so desktop mode sees full settings rather than a scrubbed copy.
+>
+> **NOT a wholesale delegation to core.middleware.require_admin. That was the first attempt and it introduced a real leak: require_admin trusts request.state.current_user, which the auth middleware populates through loopback/bypass paths, so on a direct loopback request GET /api/auth/users went from 403 to 200 for an UNAUTHENTICATED caller — returning usernames and privilege flags. Caught by A/B-ing the built server against main (baseline 403 vs patched 200) before it ever left the branch. These routes must resolve identity from the session cookie itself.**
+>
+> Tests: desktop mode allows admin routes; auth-enabled + unauthenticated still rejects; and a regression test that STAMPS an admin identity onto request.state exactly as the loopback middleware does, presents no cookie, and requires 403 anyway. test_auth_regressions' fake request gained the attributes a real Starlette Request always carries (assertions unchanged).
+>
+> Verified live in both modes against a copy of the real auth config: AUTH_ENABLED=false -> 200 and persisted; AUTH_ENABLED=true unauthenticated -> 403 on users, integrations and settings, with settings untouched. Full suite: 2076 passed.
+
+**Security rationale, stated plainly**: `core.middleware.require_admin` is correct and safe for the routes that use it, because those routes only need "is *some* trusted-enough caller present" (which loopback/internal-tool/bypass all satisfy). But `GET /api/auth/users` (and the router's other admin endpoints — user creation, privilege edits, rename, signup toggle, integrations CRUD, settings write) return **credential-adjacent data** (usernames, privilege flags, integration secrets, full settings) — exactly the kind of response an unauthenticated caller reaching the app over loopback (e.g. a script, another local process, or in a shared/multi-tenant loopback scenario) should never receive. The fix is two independent, additive requirements: (1) identity must come from an actual validated session cookie — not from any `request.state` value a middleware bypass path could have set — and (2) the *only* exception preserved is the explicit, intentional `AUTH_ENABLED=false` desktop-mode bypass, which is a deliberate operator choice (not an incidental loopback artifact) and is honored identically to every other admin route in the app.
+
+### 6.4 The regression test
+
+`tests/test_settings_desktop_mode.py::test_admin_routes_do_not_trust_middleware_state` reproduces exactly the leak scenario: it stamps `request.state.current_user = "antman"` and `request.state.internal_tool = False` onto a fake request — precisely what the loopback middleware path would do — sends **no cookie**, and asserts `GET /api/auth/users`, `GET /api/auth/integrations`, and `POST /api/auth/settings` all still return `403`. This pins the fix as a permanent regression guard: any future refactor that makes `_require_admin_user` (or its replacement) trust `request.state` instead of the cookie will fail this test immediately.
 
 ---
 
-## 9. Quick reference — env vars
+## 7. API tokens (bearer auth) — distinct from LLM provider keys
 
-| Var | Default | Effect | Source |
-|---|---|---|---|
-| `AUTH_ENABLED` | `true` | Master auth switch; `false` removes middleware | `app.py:153` |
-| `LOCALHOST_BYPASS` | `false` | Skip login for direct loopback only | `app.py:154` |
-| `SECURE_COOKIES` | `false` | `Secure` flag on session cookie | `routes/auth_routes.py:140` |
-| `APOLLO_ADMIN_USER` | `admin` | First-run admin username | `setup.py:85` |
-| `APOLLO_ADMIN_PASSWORD` | (generated) | First-run admin password; suppresses temp-password print | `setup.py:86` |
-| `APOLLO_SKIP_ADMIN_PROMPT` | unset | Skip interactive admin prompt | `setup.py:90` |
-| `APOLLO_INTERNAL_TOKEN` | (random) | Override per-process internal-tool token | `core/middleware.py:15` |
-| `PAPERCLIP_EVENTS_TOKEN` | unset | Shared secret for `/api/paperclip/events` ingest | `routes/paperclip_routes.py:53` |
+Apollo has its own bearer-token mechanism for external/programmatic integrations (n8n, Make, custom scripts), entirely separate from LLM provider API keys (OpenAI/Anthropic/etc. credentials, which live in `src/integrations.py` / `src/endpoint_resolver.py` / model-endpoint configs and are sent *outbound* as `Authorization: Bearer <provider key>` to upstream LLM APIs — out of scope for this document).
+
+### 7.1 Storage — `core/database.py`, `ApiToken` model
+
+```python
+# core/database.py:425-436
+class ApiToken(TimestampMixin, Base):
+    """API tokens for external integrations (n8n, Make, etc.)."""
+    __tablename__ = "api_tokens"
+
+    id = Column(String, primary_key=True, index=True)
+    owner = Column(String, nullable=True, index=True)
+    name = Column(String, nullable=False)
+    token_hash = Column(String, nullable=False)
+    token_prefix = Column(String, nullable=False)  # first 8 chars for display
+    scopes = Column(String, nullable=False, default="chat")
+    is_active = Column(Boolean, default=True)
+    last_used_at = Column(DateTime, nullable=True)
+```
+
+Unlike sessions (flat JSON), API tokens live in the SQL database, and only a bcrypt hash + display prefix are stored — the raw token is shown to the admin exactly once, at creation time.
+
+### 7.2 Issuance — admin-only
+
+```python
+# routes/api_token_routes.py:52-83
+@router.post("/tokens")
+def create_token(request: Request, name: str = Form("")):
+    require_admin(request)
+    name = name.strip()[:MAX_NAME_LEN]
+    if not name:
+        raise HTTPException(400, "Token name is required")
+    owner = get_current_user(request)
+
+    raw_token = "ody_" + secrets.token_urlsafe(32)
+    token_hash = bcrypt.hashpw(raw_token.encode(), bcrypt.gensalt()).decode()
+    token_id = str(uuid.uuid4())[:8]
+
+    with get_db_session() as db:
+        db.add(ApiToken(
+            id=token_id,
+            owner=owner,
+            name=name,
+            token_hash=token_hash,
+            token_prefix=raw_token[:8],
+            scopes=DEFAULT_SCOPES,
+            is_active=True,
+        ))
+    _invalidate_cache(request)
+
+    return {
+        "id": token_id,
+        "name": name,
+        "owner": owner,
+        "token": raw_token,
+        "token_prefix": raw_token[:8],
+        "scopes": DEFAULT_SCOPES.split(","),
+    }
+```
+
+Tokens are prefixed `ody_` — a leftover from the project's former name, "Odysseus" (renamed to Apollo per commit `374f575`); the prefix is load-bearing (it's how `AuthMiddleware` recognizes an Apollo API token vs. any other bearer scheme) and should be preserved verbatim in a recreation for compatibility with any client already issued a token.
+
+### 7.3 Verification — `AuthMiddleware`, bucketed-prefix cache
+
+```python
+# app.py:331-386 (abridged)
+auth_header = request.headers.get("authorization", "")
+if auth_header.startswith("Bearer ody_"):
+    raw_token = auth_header[7:]
+    if len(raw_token) < 12 or len(raw_token) > 100:
+        return JSONResponse(status_code=401, content={"error": "Invalid API token"})
+    prefix = raw_token[:8]
+    try:
+        if app.state._token_cache_dirty:
+            async with _token_cache_lock:
+                if app.state._token_cache_dirty:
+                    await _asyncio.to_thread(_refresh_token_cache)
+        candidates = list(_token_cache.get(prefix, ()))
+        matched_id = None
+        matched_owner = None
+        matched_scopes = []
+        for tid, thash, owner, scopes in candidates:
+            if _bcrypt.checkpw(raw_token.encode(), thash.encode()):
+                matched_id = tid
+                matched_owner = owner
+                matched_scopes = scopes or []
+                break
+        if matched_id:
+            request.state.current_user = "api"
+            request.state.internal_tool = False
+            request.state.auth_mode = "api_token"
+            request.state.api_token = True
+            request.state.api_token_id = matched_id
+            request.state.api_token_owner = matched_owner
+            request.state.api_token_scopes = matched_scopes
+            return await call_next(request)
+    except Exception:
+        logger.warning("API token auth error", exc_info=False)
+    # Invalid bearer token — reject immediately
+    return JSONResponse(status_code=401, content={"error": "Invalid API token"})
+```
+
+An in-memory cache keyed by the 8-char prefix avoids a full-table bcrypt scan per request — the 8-char prefix narrows candidates, and `bcrypt.checkpw` (constant-time-ish by construction) is only run against the small bucket of tokens sharing that prefix. `request.state.current_user` is always the literal string `"api"` for a token-authenticated request (not the token owner's username) — routes that need to know *who issued the token* read `request.state.api_token_owner` separately; `current_user = "api"` is one of the reserved usernames (§1.1) precisely so a real signed-up user could never collide with this sentinel.
+
+### 7.4 Scoped endpoint example
+
+```python
+# routes/webhook_routes.py:234-241
+@router.post("/v1/chat")
+async def sync_chat(request: Request, body: SyncChatRequest):
+    if not getattr(request.state, "api_token", False):
+        raise HTTPException(403, "This endpoint requires an API token")
+    scopes = set(getattr(request.state, "api_token_scopes", []) or [])
+    if "chat" not in scopes:
+        raise HTTPException(403, "API token is not scoped for chat")
+    token_owner = getattr(request.state, "api_token_owner", None)
+```
+
+This endpoint explicitly **requires** `request.state.api_token` — a cookie-authenticated browser session cannot call it, even as an admin — and additionally checks the token's `scopes` string (comma-separated, `DEFAULT_SCOPES` defaults to `"chat"`), so a token can be issued that's only good for a subset of the API. Management endpoints (`GET`/`POST /api/tokens`, `DELETE /api/tokens/{id}`) are themselves gated by the shared `core.middleware.require_admin`.
+
+Apollo also has an unrelated inbound-bearer surface, `routes/lmproxy_routes.py`, which maps a bearer token to the local-model OpenAI-compatible proxy used by Paperclip agents — guarded by its own shared token, not `AuthManager`/`ApiToken` at all; don't conflate the two when recreating this system.
 
 ---
 
-## 10. Residual risks (honest)
+## 8. First-run admin creation — `setup.py`
 
-- `AUTH_ENABLED=false` removes *all* HTTP auth and makes both WS callbacks
-  unconditionally allow — appropriate only for a single-user desktop on a
-  trusted host. `SECURITY.md` flags keeping it `true` for any network exposure.
-- The `internal-tool` sentinel is powerful by design; its safety rests on the
-  reserved-username guard plus `_is_trusted_loopback`. Both must stay correct.
-- Token scopes are coarse (`chat` vs `admin`) — there is no per-capability
-  subsetting of a token below its owner's privileges (acknowledged in
-  `THREAT_MODEL.md` "Known Gaps" #4).
-- `require_privilege` fails open on unknown keys; new privileges must be added
-  to `DEFAULT_PRIVILEGES` to be enforced server-side rather than only in the UI.
+`setup.py` (project root) creates the first admin account **before** the app ever serves a request, writing directly to `auth.json` with raw `bcrypt` + `json.dump` — it does not go through `AuthManager` at all, since at first-run time no `AuthManager` instance has anything to manage yet.
 
-## 11. 2026-07-19 identity refresh
+### 8.1 Interactive prompt
 
-The canonical request-identity contract now lives in `src/auth_helpers.py`.
-Use `effective_user(request)` for ownership, `require_user(request)` for a
-route dependency, and `owner_filter(...)` for ORM query scoping. This avoids
-the older pattern of reading middleware-specific request fields directly and
-keeps explicit single-user desktop mode consistent across routes.
+```python
+# setup.py:80-104
+def _prompt_admin_credentials():
+    """Interactively ask for admin username and password when running in a terminal."""
+    import getpass
+
+    print()
+    print("  Set up your admin account:")
+    print("  (Press Enter to accept defaults)")
+    print()
+
+    username = input("  Username [admin]: ").strip().lower()
+    if not username:
+        username = "admin"
+
+    while True:
+        password = getpass.getpass("  Password: ")
+        if not password:
+            print("  Password cannot be empty.")
+            continue
+        confirm = getpass.getpass("  Confirm password: ")
+        if password != confirm:
+            print("  Passwords don't match. Try again.")
+            continue
+        break
+
+    return username, password
+```
+
+### 8.2 Admin creation — env vars > interactive prompt > random password
+
+```python
+# setup.py:107-157 (abridged)
+def create_default_admin():
+    """Create an initial admin user if none exists."""
+    auth_path = os.path.join(DATA_DIR, "auth.json")
+    if os.path.exists(auth_path):
+        print("  [skip] auth.json already exists")
+        return "exists"
+
+    try:
+        import bcrypt
+        import json
+
+        # Priority: env vars > interactive prompt > random password
+        username = os.getenv("APOLLO_ADMIN_USER", "").strip().lower()
+        password = os.getenv("APOLLO_ADMIN_PASSWORD", "").strip()
+
+        if username and password:
+            pass  # Both provided via env — use them directly
+        elif sys.stdin.isatty() and not os.getenv("APOLLO_SKIP_ADMIN_PROMPT"):
+            username, password = _prompt_admin_credentials()
+        else:
+            # Non-interactive (Docker, CI) — fall back to generated password
+            username = username or "admin"
+            password = password or __import__("secrets").token_urlsafe(18)
+
+        username = username or "admin"
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        auth_data = {
+            "users": {
+                username: {
+                    "password_hash": hashed,
+                    "is_admin": True,
+                }
+            }
+        }
+        with open(auth_path, "w", encoding="utf-8") as f:
+            json.dump(auth_data, f, indent=2)
+
+        if sys.stdin.isatty() and not os.getenv("APOLLO_ADMIN_PASSWORD"):
+            print(f"  [ok] Admin account created ({username})")
+        else:
+            print(f"  [ok] Initial admin user created ({username})")
+            if not os.getenv("APOLLO_ADMIN_PASSWORD"):
+                print(f"        Temporary password: {password}")
+                print(f"        ** Change it after first login. Set APOLLO_ADMIN_PASSWORD to choose your own. **")
+        return "created"
+    except ImportError:
+        print("  [warn] bcrypt not installed — skipping admin user creation")
+        print("         Run: pip install bcrypt")
+        return "skipped"
+```
+
+Precedence, in order: (1) `APOLLO_ADMIN_USER` + `APOLLO_ADMIN_PASSWORD` env vars, used verbatim, no prompt; (2) an interactive TTY with no `APOLLO_SKIP_ADMIN_PROMPT` set — prompts via `getpass` (password never echoed, confirmed twice); (3) non-interactive with no env vars (Docker/CI) — username defaults to `admin`, password is a random `secrets.token_urlsafe(18)` printed once to stdout with an explicit instruction to change it. `DATA_DIR` resolves through `src/runtime_paths.py` — the same resolver behind `core/auth.py`'s `DEFAULT_AUTH_PATH` (§1.1), so `setup.py` and the running server always agree on `auth.json`'s location regardless of packaging (native Python venv, packaged `.app`, or a container). If `auth.json` already exists, `create_default_admin()` is a no-op (`return "exists"`) — it will never overwrite an existing admin account.
+
+### 8.3 The in-app equivalent — `POST /api/auth/setup`
+
+A parallel first-run path exists inside the running app itself, for deployments where `setup.py` isn't (or can't be) run ahead of time — e.g. a Docker image that starts serving before any operator interaction:
+
+```python
+# routes/auth_routes.py:112-124 (approximate — first-run setup endpoint)
+@router.post("/setup")
+async def setup(body: SetupRequest):
+    if auth_manager.is_configured:
+        raise HTTPException(400, "Already configured")
+    if len(body.password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    auth_manager.setup(body.username, body.password)
+    return {"ok": True}
+```
+
+This calls `AuthManager.setup()` (`core/auth.py` ~lines 188-193), which — unlike `setup.py`'s direct file write — goes through the normal `create_user(..., is_admin=True)` path and is gated purely by `auth_manager.is_configured` being `False` (i.e. zero users exist). It's the path `static/login.html` drives in its "first-run setup" UI mode, and it enforces a minimum 8-character password where the CLI `setup.py` prompt only enforces non-empty. **UNCERTAIN**: the exact `SetupRequest` field validation and whether `/api/auth/setup` also accepts an admin-privileges override were not independently re-verified against current `routes/auth_routes.py` line numbers beyond what's cited above — confirm against source before treating the line range as authoritative during implementation.
