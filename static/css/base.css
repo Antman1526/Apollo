@@ -17,13 +17,24 @@ body {
   overflow: hidden;
 }
 
+/* Self-hosted Inter font — the UI chrome face. Code, terminal, and
+   .hljs stay on the mono stack below; DEFAULT_FONT in theme.js picks
+   sans for fresh installs while saved font prefs are honored. */
+@font-face { font-family: 'Inter'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 500; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-Medium.woff2') format('woff2'); }
+@font-face { font-family: 'Inter'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/Inter-SemiBold.woff2') format('woff2'); }
+
+:root { --font-mono: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
 /* Self-hosted Fira Code font */
 @font-face { font-family: 'Fira Code'; font-weight: 300; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Light.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 400; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-Regular.woff2') format('woff2'); }
 @font-face { font-family: 'Fira Code'; font-weight: 600; font-style: normal; font-display: swap; src: url('/static/fonts/FiraCode-SemiBold.woff2') format('woff2'); }
 
-/* Code block baseline */
+/* Code block baseline — pinned to mono so the sans chrome face never
+   reaches code (these previously inherited mono from body). */
 pre, code, .hljs {
+  font-family: var(--font-mono, 'Fira Code', monospace);
   font-size: 0.95em;
   line-height: 1.5;
 }

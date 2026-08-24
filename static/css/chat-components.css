@@ -7,8 +7,9 @@
 
 /* Scrollbar styling */
 
-/* Code block styling */
+/* Code block styling — pinned to mono (chrome face is sans now) */
 pre, code, .hljs {
+  font-family: var(--font-mono, 'Fira Code', monospace);
   font-size: 0.95em;
   line-height: 1.5;
 }
