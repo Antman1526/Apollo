@@ -31,6 +31,10 @@ class LocalModel:
     size_bytes: int
     directory: str
     arch: str = field(default="")
+    # Absolute path to this model's multimodal projector, when one sits beside
+    # it. llama-server needs it via --mmproj or the model rejects images with
+    # "image input is not supported".
+    mmproj: str | None = field(default=None)
 
 
 def _quant(name: str) -> str:
@@ -41,6 +45,33 @@ def _quant(name: str) -> str:
 def _is_projector(name: str) -> bool:
     n = name.lower()
     return n.startswith("mmproj") or "mmproj" in n
+
+
+def _find_projector(root: str, files: list[str], model_stem: str) -> str | None:
+    """Pick the multimodal projector belonging to `model_stem`, if any.
+
+    A vision GGUF ships a sibling ``mmproj-*.gguf``. Most folders hold exactly
+    one model and one projector, but a folder with several of each has to pair
+    them by name — otherwise two vision models would share one projector and
+    at least one would answer images with garbage.
+    """
+    projectors = sorted(f for f in files
+                        if f.lower().endswith(".gguf")
+                        and not f.startswith("._")
+                        and _is_projector(f))
+    if not projectors:
+        return None
+
+    # Prefer a projector whose filename mentions this model.
+    stem = model_stem.lower()
+    for candidate in projectors:
+        base = candidate[:-5].lower()
+        if stem in base or base.replace("mmproj-", "").strip("-_") in stem:
+            return os.path.join(root, candidate)
+
+    # Otherwise the folder holds one model's projector under a generic name
+    # (mmproj-F16.gguf and friends). Sorted, so the choice is stable.
+    return os.path.join(root, projectors[0])
 
 
 def _kind_from_filename(name: str) -> str:
@@ -88,7 +119,11 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                     continue
                 if split and int(split.group(2)) != 1:
                     continue  # only register the first part of a split model
-                fp = os.path.join(root, fn)
+                # Resolve before keying: model libraries are full of
+                # symlinks (LM Studio keeps a whole tree of them, and users
+                # alias their models folder), and keying on the walked path
+                # listed the same file two or three times in the picker.
+                fp = os.path.realpath(os.path.join(root, fn))
                 try:
                     size = os.path.getsize(fp)
                 except OSError:
@@ -107,6 +142,7 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                     size_bytes=size,
                     directory=base,
                     arch=arch,
+                    mmproj=_find_projector(root, files, model_name),
                 )
     return list(out.values())
 

@@ -223,6 +223,13 @@ class LocalModelServer:
         ]
         if m.kind == "embedding":
             cmd.append("--embedding")
+        # A vision model needs its projector or llama-server loads fine and then
+        # rejects every image with "image input is not supported". Guard on the
+        # file still existing: a catalog entry can outlive the file, and a bad
+        # --mmproj path fails the whole launch rather than just losing vision.
+        mmproj = getattr(m, "mmproj", None)
+        if mmproj and os.path.isfile(mmproj):
+            cmd += ["--mmproj", mmproj]
         log_path = os.path.join(tempfile.gettempdir(), f"apollo-llama-{port}.log")
         logf = open(log_path, "w")
         logger.info("Starting llama-server: %s", " ".join(cmd))
