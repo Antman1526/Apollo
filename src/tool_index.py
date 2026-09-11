@@ -10,7 +10,7 @@ import logging
 import hashlib
 import re
 import time
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Optional, Set
 
 from src.observability import report_exception
 
@@ -468,6 +468,22 @@ class ToolIndex:
         if self._SCHEDULE_RE.search(ql):
             base.add("manage_tasks")
         return base
+
+
+def keyword_fallback_tools(query: str, always: Iterable[str]) -> Set[str]:
+    """Pure keyword-only tool selection used when the RAG index is unavailable.
+
+    Same word-boundary matching as ``ToolIndex.get_tools_for_query`` (so
+    "prefix" doesn't fire the "fix" hint), minus the vector retrieval.
+    """
+    base = set(always)
+    ql = (query or "").lower()
+    for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
+        if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
+            base.update(tools)
+    if ToolIndex._SCHEDULE_RE.search(ql):
+        base.add("manage_tasks")
+    return base
 
 
 # ── Singleton ──

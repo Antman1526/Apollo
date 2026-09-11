@@ -428,6 +428,7 @@ async def do_manage_settings(content: str, owner: Optional[str] = None) -> Dict:
             "ntfy topic": "reminder_ntfy_topic",
             "agent tool calls": "agent_max_tool_calls", "max tool calls": "agent_max_tool_calls",
             "agent timeout": "agent_stream_timeout_seconds", "stream timeout": "agent_stream_timeout_seconds",
+            "prompt tier": "agent_prompt_tier", "agent prompt tier": "agent_prompt_tier",
             "token budget": "agent_input_token_budget", "input budget": "agent_input_token_budget",
             "hard max": "agent_input_token_hard_max",
             "token budget cap": "agent_input_token_hard_max",

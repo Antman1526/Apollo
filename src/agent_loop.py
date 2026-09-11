@@ -406,8 +406,18 @@ def _section_text(name: str, default: str) -> str:
     return val if isinstance(val, str) and val.strip() else default
 
 
-def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool = False) -> str:
-    """Build the system prompt with only the specified tools included."""
+def _assemble_prompt(
+    tool_names: set,
+    disabled_tools: set = None,
+    compact: bool = False,
+    tease_other_tools: bool = True,
+) -> str:
+    """Build the system prompt with only the specified tools included.
+
+    ``tease_other_tools=False`` drops the "(Other tools available when
+    needed: ...)" line — small-context tiers don't spend tokens advertising
+    tools the model can't see the schema for.
+    """
     disabled = disabled_tools or set()
     included = tool_names - disabled
 
@@ -446,7 +456,7 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
     # Mention tools that exist but weren't included
     all_known = set(TOOL_SECTIONS.keys())
     not_shown = all_known - included - disabled
-    if not_shown:
+    if not_shown and tease_other_tools:
         sample = sorted(not_shown)[:5]
         hint = ", ".join(sample)
         if len(not_shown) > 5:
@@ -571,6 +581,7 @@ def _build_system_prompt(
     mcp_disabled_map: Optional[Dict[str, set]] = None,
     compact: bool = False,
     owner: Optional[str] = None,
+    budget=None,
 ) -> List[Dict]:
     """Build agent system prompt, inject MCP/document context, merge consecutive system msgs."""
     global _cached_base_prompt, _cached_base_prompt_key
@@ -586,7 +597,10 @@ def _build_system_prompt(
     except Exception as error:
         report_exception(logger, "agent_builtin_overrides_signature_failed", error, outcome="best_effort")
         _ov_sig = ""
-    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig)
+    # The prompt tier changes the always-available set and the tease line,
+    # so it must be part of the cache key too.
+    _tier_key = getattr(budget, "tier", None)
+    cache_key = (frozenset(disabled_tools or []), bool(mcp_mgr), needs_admin, _rt_key, compact, _ov_sig, _tier_key)
     if _cached_base_prompt and _cached_base_prompt_key == cache_key and not active_document:
         agent_prompt = _cached_base_prompt
         # Skill index is user-editable (name + description), so it must never
@@ -595,7 +609,7 @@ def _build_system_prompt(
         from src.agent_loop import _build_base_prompt as _bbp_recompute
         _, _skill_index_block = _bbp_recompute(
             disabled_tools, mcp_mgr, needs_admin, relevant_tools,
-            mcp_disabled_map=mcp_disabled_map, compact=compact,
+            mcp_disabled_map=mcp_disabled_map, compact=compact, budget=budget,
         )
     else:
         agent_prompt, _skill_index_block = _build_base_prompt(
@@ -605,6 +619,7 @@ def _build_system_prompt(
             relevant_tools,
             mcp_disabled_map=mcp_disabled_map,
             compact=compact,
+            budget=budget,
         )
         if not active_document:
             _cached_base_prompt = agent_prompt
@@ -985,6 +1000,32 @@ _ADMIN_TOOLS = {
     "send_to_session", "pipeline", "ask_teacher", "list_models",
 }
 
+def _prep_event_payload(prep_timings: Dict[str, float], **extra) -> Dict[str, object]:
+    """Payload for the ``agent_prep`` SSE event: timings rounded to ms,
+    non-numeric extras (e.g. ``prompt_tier``) passed through untouched."""
+    payload: Dict[str, object] = {}
+    for key, value in {**prep_timings, **extra}.items():
+        if isinstance(value, float):
+            payload[key] = round(value, 3)
+        else:
+            payload[key] = value
+    return payload
+
+
+def cap_skill_index(entries: list, max_entries: int) -> Optional[list]:
+    """Bound the Level-0 skill index for small-context tiers.
+
+    ``max_entries`` 0 → None (omit the index entirely); negative → unlimited
+    (the list is returned unchanged); N > 0 → the first N entries, in the
+    order given (caller sorts by category then name).
+    """
+    if max_entries == 0:
+        return None
+    if max_entries < 0:
+        return list(entries)
+    return list(entries)[:max_entries]
+
+
 def _build_base_prompt(
     disabled_tools,
     mcp_mgr,
@@ -992,11 +1033,14 @@ def _build_base_prompt(
     relevant_tools=None,
     mcp_disabled_map=None,
     compact: bool = False,
+    budget=None,
 ):
     """Build the agent prompt with only relevant tools included.
 
     If relevant_tools is provided (from RAG retrieval), only those tools
     are shown with full descriptions. Otherwise falls back to full prompt.
+    ``budget`` (a ``PromptBudget``) narrows the always-available set, the
+    skill index length and the "other tools" tease for small contexts.
     """
     from src.tool_index import ALWAYS_AVAILABLE
 
@@ -1004,12 +1048,18 @@ def _build_base_prompt(
     if not get_setting("image_gen_enabled", True):
         disabled.add("generate_image")
 
+    _always = set(budget.always_available) if budget is not None else set(ALWAYS_AVAILABLE)
+    _tease = budget.tease_other_tools if budget is not None else True
+    _skill_max = budget.skill_index_max if budget is not None else -1
+
     if relevant_tools is not None:
         # RAG mode: include always-available + retrieved + admin (if needed)
-        tool_names = set(ALWAYS_AVAILABLE) | set(relevant_tools)
+        tool_names = _always | set(relevant_tools)
         if needs_admin:
             tool_names |= _ADMIN_TOOLS
-        agent_prompt = _assemble_prompt(tool_names, disabled, compact=compact)
+        agent_prompt = _assemble_prompt(
+            tool_names, disabled, compact=compact, tease_other_tools=_tease
+        )
     else:
         # Fallback: full prompt (RAG unavailable)
         agent_prompt = AGENT_SYSTEM_PROMPT
@@ -1044,6 +1094,14 @@ def _build_base_prompt(
         _sm = SkillsManager(DATA_DIR)
         active_tools = list(set(TOOL_SECTIONS.keys()) - set(disabled or []))
         skill_idx = _sm.index_for(owner=None, active_toolsets=active_tools)
+        # Stable order (category, then name) so a tier cap keeps a
+        # deterministic head of the list across turns.
+        skill_idx = sorted(
+            skill_idx or [], key=lambda s: (str(s.get("category", "")), str(s.get("name", "")))
+        )
+        _capped = cap_skill_index(skill_idx, _skill_max)
+        _omitted = len(skill_idx) - len(_capped) if _capped is not None else 0
+        skill_idx = _capped or []
         if skill_idx:
             lines = ["## Available skills",
                      "Procedures the assistant should consult before doing domain work. "
@@ -1060,6 +1118,8 @@ def _build_base_prompt(
                 for s in by_cat[cat]:
                     badge = " *(draft)*" if s.get("status") == "draft" else ""
                     lines.append(f"- `{s['name']}` — {s['description']}{badge}")
+            if _omitted > 0:
+                lines.append(f"- ... ({_omitted} more; use manage_skills action=list)")
             skill_index_block = "\n\n" + "\n".join(lines)
     except Exception as _e:
         # Skill index is a soft enhancement — never fail prompt assembly on it.
@@ -1413,11 +1473,16 @@ async def stream_agent_loop(
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     _relevant_tools = relevant_tools
     _t1 = time.time()
+    # Context-tiered prompt budget: small local models (no native function
+    # calling) get fewer retrieved tools, a trimmed always-on set, no skill
+    # index / tease line. See src/prompt_budget.py.
+    from src.prompt_budget import budget_for_context
+    _budget = budget_for_context(context_length, override=get_setting("agent_prompt_tier", "auto"))
     if _relevant_tools:
         logger.info(f"[tool-rag] Using caller-provided relevant_tools ({len(_relevant_tools)} tools)")
     if not _relevant_tools:
         try:
-            from src.tool_index import get_tool_index, ALWAYS_AVAILABLE
+            from src.tool_index import get_tool_index
             tool_idx = get_tool_index()
             if tool_idx:
                 if mcp_mgr:
@@ -1434,32 +1499,32 @@ async def stream_agent_loop(
                 if _retrieval_query:
                     try:
                         _relevant_tools = await asyncio.wait_for(
-                            asyncio.to_thread(tool_idx.get_tools_for_query, _retrieval_query, 8),
+                            asyncio.to_thread(
+                                tool_idx.get_tools_for_query, _retrieval_query,
+                                _budget.tool_k, set(_budget.always_available),
+                            ),
                             timeout=_TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
-                        logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
+                        logger.info(f"[tool-rag] Retrieved tools for query: {sorted(_relevant_tools - _budget.always_available)}")
                     except asyncio.TimeoutError:
                         logger.warning(
                             "[tool-rag] Retrieval exceeded %.1fs; falling back to always-available tools",
                             _TOOL_SELECTION_TIMEOUT_SECONDS,
                         )
-                        _relevant_tools = set(ALWAYS_AVAILABLE)
+                        _relevant_tools = set(_budget.always_available)
         except Exception as e:
             logger.warning(f"[tool-rag] Retrieval failed, using keyword fallback: {e}")
             _relevant_tools = None
 
     # Fallback: if RAG unavailable, use keyword-based tool selection
-    # instead of sending ALL tools (which overwhelms the model).
+    # instead of sending ALL tools (which overwhelms the model). Word-boundary
+    # matching, same as ToolIndex.get_tools_for_query.
     if not _relevant_tools and _retrieval_query:
-        from src.tool_index import ALWAYS_AVAILABLE, ToolIndex
-        _relevant_tools = set(ALWAYS_AVAILABLE)
-        ql = _retrieval_query.lower()
-        for keywords, tools in ToolIndex._KEYWORD_HINTS.items():
-            if any(kw in ql for kw in keywords):
-                _relevant_tools.update(tools)
+        from src.tool_index import keyword_fallback_tools
+        _relevant_tools = keyword_fallback_tools(_retrieval_query, _budget.always_available)
         # Always include core document/memory tools
         _relevant_tools.update({"create_document", "manage_memory", "manage_notes"})
-        logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - ALWAYS_AVAILABLE)}")
+        logger.info(f"[tool-rag] Keyword fallback selected: {sorted(_relevant_tools - _budget.always_available)}")
 
     # If a document is open the model needs the editing tools available
     # regardless of which selection path (RAG, keyword, caller-provided) ran
@@ -1468,6 +1533,8 @@ async def stream_agent_loop(
         _relevant_tools.update({"edit_document", "update_document", "suggest_document"})
 
     prep_timings["tool_selection"] = time.time() - _t1
+    _tools_selected = len(_relevant_tools) if _relevant_tools else 0
+    logger.info(f"[prompt-budget] tier={_budget.tier} ctx={context_length} tools={_tools_selected}")
 
     _t2 = time.time()
     # Hosted-API match by URL, OR the model name looks like a recent model
@@ -1527,6 +1594,7 @@ async def stream_agent_loop(
         mcp_disabled_map=_mcp_disabled_map,
         compact=_is_api_model,
         owner=owner,
+        budget=_budget,
     )
     prep_timings["prompt_build"] = time.time() - _t2
 
@@ -1581,7 +1649,10 @@ async def stream_agent_loop(
     # Strip internal metadata keys before sending to the LLM API
     messages = [{k: v for k, v in msg.items() if k != "_protected"} for msg in messages]
 
-    yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
+    _prep_payload = _prep_event_payload(
+        prep_timings, prompt_tier=_budget.tier, tools_selected=_tools_selected,
+    )
+    yield f"data: {json.dumps({'type': 'agent_prep', 'data': _prep_payload})}\n\n"
 
     full_response = ""
     total_start = time.time()
