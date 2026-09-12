@@ -351,23 +351,28 @@ export async function runServer(code, panel, lang) {
 }
 
 /**
- * Run HTML code in its own popup window
+ * Run HTML code in the sandboxed live artifact pane beside the chat
+ * (static/js/artifacts.js). Replaces the old popup + document.write path,
+ * which executed model-generated markup with the app's own origin.
  */
-export function runHTML(code, panel) {
-  panel.innerHTML = '';
-
-  const win = window.open('', '_blank', 'width=800,height=600,menubar=no,toolbar=no,location=no,status=no');
-  if (!win) {
-    showOutput(panel, 'Popup blocked — please allow popups for this site.', true);
-    addCloseBtn(panel);
-    return;
-  }
-  win.document.open();
-  win.document.write(code);
-  win.document.close();
-
-  showOutput(panel, 'Opened in new window', false);
-  addCloseBtn(panel);
+export function runHTML(code, panel, lang) {
+  if (panel) panel.innerHTML = '';
+  return import('./artifacts.js')
+    .then((mod) => {
+      const openFromCode = mod.openFromCode || (mod.default && mod.default.openFromCode);
+      const rec = openFromCode ? openFromCode(code, lang || 'html') : null;
+      if (!rec) throw new Error('Nothing to preview');
+      // The pane is the output — hide the empty run panel under the block.
+      if (panel) panel.style.display = 'none';
+      return rec;
+    })
+    .catch((e) => {
+      if (panel) {
+        showOutput(panel, 'Could not open preview: ' + (e && e.message ? e.message : e), true);
+        addCloseBtn(panel);
+      }
+      return null;
+    });
 }
 
 /**
