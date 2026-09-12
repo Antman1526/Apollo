@@ -75,8 +75,11 @@
   color: var(--color-warning, #d19a66);
 }
 
-.browser-control-toggle {
+/* id-qualified: .browser-tool-btn in mobile-overrides.css (loaded later)
+   forces width:32px / font-size:18px on every toolbar button. */
+#browser-modal .browser-control-toggle {
   width: auto;
+  min-width: max-content;
   padding: 0 10px;
   font-size: 12px;
   font-weight: 600;
@@ -113,7 +116,7 @@
   #browser-modal .browser-toolbar {
     grid-template-columns: 30px 30px 30px minmax(0, 1fr) 46px auto 30px;
   }
-  .browser-control-toggle {
+  #browser-modal .browser-control-toggle {
     padding: 0 8px;
     font-size: 11px;
   }
