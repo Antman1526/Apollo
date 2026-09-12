@@ -2489,6 +2489,14 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
         if (addAITTSButton && accumulated && window.aiTTSManager?._provider !== 'disabled' && window.aiTTSManager?.available) {
           addAITTSButton(footerTarget, accumulated);
         }
+        // Live artifact pane: a finished foreground reply that contains an
+        // html / svg fence auto-opens its LAST artifact beside the chat
+        // (pref `artifacts_auto_open`, default on; never on history reload).
+        if (accumulated) {
+          import('./artifacts.js')
+            .then(m => (m.autoOpenFromMessage || m.default?.autoOpenFromMessage)?.(accumulated))
+            .catch(() => { /* non-fatal */ });
+        }
         // Inline "Review" button (adversarial reviewer). Always attach on a
         // completed answer; the question is resolved from the preceding user
         // bubble on click.
