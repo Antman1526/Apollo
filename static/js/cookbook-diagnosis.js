@@ -6,10 +6,6 @@
 import {
   _envState,
   _loadTasks,
-  _addTask,
-  _updateTask,
-  _renderRunningTab,
-  _showCookbookNotif,
   _removeTask,
   _launchServeTask,
   _buildEnvPrefix,
@@ -26,6 +22,9 @@ import {
   // Plain specifier (no ?v=) — must match every other cookbook.js importer so the
   // browser loads it once. See cookbook-hwfit.js.
 } from './cookbook.js';
+// Cyclic with cookbookRunning.js (it imports this module); all four are
+// hoisted `export function` declarations there, so they resolve at call time.
+import { _addTask, _updateTask, _renderRunningTab, _showCookbookNotif } from './cookbookRunning.js';
 import uiModule from './ui.js';
 import spinnerModule from './spinner.js';
 
