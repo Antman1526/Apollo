@@ -46,8 +46,18 @@ from routes.cookbook_helpers import (
     _safe_env_prefix, _local_tooling_path_export, _append_serve_preflight_exit_lines,
     _append_serve_exit_code_lines, _append_llama_cpp_linux_accel_build_lines, _cached_model_scan_script,
     _ollama_bind_from_cmd, _pip_install_fallback_chain, _venv_safe_local_pip_install_cmd,
-    ModelDownloadRequest, ServeRequest,
+    ModelDownloadRequest, ServeRequest, read_session_log_tail, redact_command,
 )
+
+
+def _tmux_pipe_pane_cmd(session_id: str) -> str:
+    """Shell snippet that tees a local tmux session's pane output to
+    `<TMUX_LOG_DIR>/<session>.log`, so a job that dies before the status
+    poller captures its pane still has readable output (fast-failing
+    downloads, dependency installs, preflight errors)."""
+    log_path = TMUX_LOG_DIR / f"{session_id}.log"
+    pipe = "cat >> " + shlex.quote(str(log_path))
+    return f"tmux pipe-pane -o -t {session_id} {shlex.quote(pipe)}"
 
 _HF_TOKEN_STATUS_SNIPPET = (
     'if [ -n "$HF_TOKEN" ]; then '
@@ -87,12 +97,14 @@ def setup_cookbook_routes() -> APIRouter:
                     task["payload"].pop("hf_token", None)
         return state
 
-    def _diagnose_serve_output(text: str) -> dict | None:
+    def _diagnose_serve_output(text: str, task_type: str = "serve") -> dict | None:
         """Server-side mirror of the Cookbook UI's common serve diagnoses.
 
         The browser uses cookbook-diagnosis.js for clickable fixes. This gives
         the agent/tool path the same structured signal so it can retry with an
-        adjusted command instead of guessing from raw tmux output.
+        adjusted command instead of guessing from raw tmux output. Runs for
+        download / dependency-install tasks too (`task_type`), which share the
+        gated-repo, missing-module and traceback patterns.
         """
         if not text:
             return None
@@ -202,6 +214,11 @@ def setup_cookbook_routes() -> APIRouter:
         if re.search(r"Traceback \(most recent call last\)", tail, re.I) and not re.search(
             r"Application startup complete|GET /v1/|Uvicorn running on", tail, re.I
         ):
+            if task_type != "serve":
+                return {
+                    "message": "Python traceback detected in the job output.",
+                    "suggestions": [{"label": "inspect the traceback below, fix the command or environment, then retry", "op": "manual"}],
+                }
             return {
                 "message": "Python traceback detected during serve startup.",
                 "suggestions": [{"label": "inspect traceback and retry with adjusted backend/settings", "op": "manual"}],
@@ -650,7 +667,9 @@ def setup_cookbook_routes() -> APIRouter:
                 lines.append(f"rm -f '{wrapper_script}'")
                 lines.append('exec "${SHELL:-/bin/bash}"')
                 write_private_text(wrapper_script, "\n".join(lines) + "\n", executable=True)
-            setup_cmd = None if IS_WINDOWS else f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))}"
+            setup_cmd = None if IS_WINDOWS else (
+                f"tmux new-session -d -s {session_id} {shlex.quote(str(wrapper_script))} && {_tmux_pipe_pane_cmd(session_id)}"
+            )
 
         logger.info(f"Model download: {req.repo_id} (include={req.include}, session={session_id}, remote={remote})")
         logger.info(f"Download setup_cmd: {setup_cmd}")
@@ -695,7 +714,7 @@ def setup_cookbook_routes() -> APIRouter:
         except Exception as error:
             report_exception(logger, "cookbook_download_task_record_failed", error, outcome="best_effort", context={"session_id": session_id})
 
-        return {"ok": True, "session_id": session_id, "remote": remote or "local"}
+        return {"ok": True, "session_id": session_id, "remote": remote or "local", "cmd": redact_command(hf_cmd)}
 
     @router.get("/api/model/cached")
     async def model_cached(request: Request, host: str | None = None, model_dir: str | None = None, ssh_port: str | None = None, platform: str | None = None):
@@ -1175,7 +1194,9 @@ def setup_cookbook_routes() -> APIRouter:
                     f"ssh {_pf}{remote} 'chmod 700 {remote_runner} && if [ -f {remote_token} ]; then chmod 600 {remote_token}; fi && tmux new-session -d -s {session_id} \"./{remote_runner}\"'"
                 )
             else:
-                setup_cmd = f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))}"
+                setup_cmd = (
+                    f"tmux new-session -d -s {session_id} {shlex.quote(str(runner_path))} && {_tmux_pipe_pane_cmd(session_id)}"
+                )
 
         if setup_cmd is None:
             # LOCAL Windows: launch the bash runner detached; no tmux setup_cmd.
@@ -2011,7 +2032,7 @@ def setup_cookbook_routes() -> APIRouter:
                 if _tport and _tport != "22":
                     ssh_base.extend(["-p", str(_tport)])
                 check_cmd = ssh_base + [remote, "tmux", "has-session", "-t", session_id]
-                capture_cmd = ssh_base + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
+                capture_cmd = ssh_base + [remote, "tmux", "capture-pane", "-t", session_id, "-p", "-S", "-400"]
             elif IS_WINDOWS:
                 # LOCAL Windows task: launched as a detached process (no tmux).
                 # Liveness comes from the <session>.pid file, output from the
@@ -2020,7 +2041,7 @@ def setup_cookbook_routes() -> APIRouter:
                 capture_cmd = None
             else:
                 check_cmd = ["tmux", "has-session", "-t", session_id]
-                capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-50"]
+                capture_cmd = ["tmux", "capture-pane", "-t", session_id, "-p", "-S", "-400"]
 
             local_win_task = (not remote) and IS_WINDOWS
 
@@ -2075,14 +2096,27 @@ def setup_cookbook_routes() -> APIRouter:
                                 progress_text = lines[-1]
                     except Exception as error:
                         report_exception(logger, "cookbook_remote_task_log_read_failed", error, outcome="best_effort", context={"session_id": session_id})
+                elif not remote:
+                    # Local tmux session is gone (fast failure, kill, or reboot):
+                    # the pane output went with it, but pipe-pane teed it to
+                    # <session>.log, so the card can still show why it died.
+                    full_snapshot = read_session_log_tail(session_id)
+                    if full_snapshot:
+                        lines = [l.strip() for l in full_snapshot.split('\n') if l.strip()]
+                        downloading_lines = [l for l in lines if l.startswith("Downloading")]
+                        if downloading_lines:
+                            progress_text = downloading_lines[-1]
+                        elif lines:
+                            progress_text = lines[-1]
 
             # Determine status. For the local-Windows detached model the log file
             # persists after the process exits, so a finished download still has a
             # snapshot to classify (DOWNLOAD_OK / exit marker) — evaluate it even
-            # when the PID is gone instead of blindly reporting "stopped".
+            # when the PID is gone instead of blindly reporting "stopped". The
+            # local tmux pipe-pane log gives dead POSIX sessions the same treatment.
             download_zero_files = False
             status = "unknown"
-            if is_alive or (local_win_task and full_snapshot):
+            if is_alive or full_snapshot:
                 lower = full_snapshot.lower()
                 exit_match = re.search(r"=== process exited with code\s+(-?\d+)", full_snapshot, re.I)
                 has_exit = exit_match is not None
@@ -2111,32 +2145,35 @@ def setup_cookbook_routes() -> APIRouter:
                 elif "application startup complete" in lower:
                     status = "ready"
                 elif not is_alive:
-                    # local-Windows: process gone, log has no success/ready marker.
+                    # Process/session gone, log has no success/ready marker.
                     status = "stopped"
                 else:
                     status = "running"
             else:
-                # Session is dead — check if it completed or crashed
-                if task_type == "download" and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or "")):
-                    status = "completed"
-                    if not progress_text:
-                        progress_text = "Download complete"
-                    if not full_snapshot:
-                        full_snapshot = "DOWNLOAD_OK"
-                else:
-                    status = "stopped"
+                status = "stopped"
+            if status == "stopped" and task_type == "download" and _download_cache_complete(_payload.get("repo_id") or model, remote, str(_tport or "")):
+                # Session is dead without a DOWNLOAD_OK marker — trust the cache
+                # shape: a materialized snapshot with no .incomplete blobs means
+                # HuggingFace finished before the pane/log caught the marker.
+                status = "completed"
+                if not progress_text:
+                    progress_text = "Download complete"
+                if not full_snapshot:
+                    full_snapshot = "DOWNLOAD_OK"
 
             # Parse structured phase info — single source of truth for the UI
             phase_info = _parse_serve_phase(full_snapshot, task_type) if (task_type == "serve" and status == "running" and full_snapshot) else {}
             if phase_info.get("status") == "ready":
                 status = "ready"
             serve_phase = phase_info.get("phase", "")
-            diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
+            # Diagnose every task type: downloads and dependency installs hit the
+            # same gated-repo / missing-module / traceback patterns as serves.
+            diagnosis = _diagnose_serve_output(full_snapshot, task_type=task_type) if full_snapshot else None
             if diagnosis and status in {"running", "unknown", "stopped"}:
                 status = "error"
             if download_zero_files:
                 diagnosis = {"message": "No matching files were downloaded. The model repo or filename/quant pattern may be wrong (for example a ':Q4_K_M' tag that does not exist in the repo). Check the repo and the include/quant pattern."}
-            output_tail = "\n".join(full_snapshot.splitlines()[-12:]) if full_snapshot else ""
+            output_tail = "\n".join(full_snapshot.splitlines()[-80:]) if full_snapshot else ""
 
             results.append({
                 "session_id": session_id,

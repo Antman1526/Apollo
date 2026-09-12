@@ -481,6 +481,32 @@ export function _diagnose(text) {
   return null;
 }
 
+// Mask token-shaped values before output leaves the card (copy buttons, crash
+// report, troubleshooting bundle). Shared with cookbookRunning.js.
+export function _redactCrashReportText(text) {
+  if (!text) return '';
+  return String(text)
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
+    .replace(/\b(hf_[A-Za-z0-9]{16,})\b/g, '[redacted-hf-token]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, '[redacted-api-key]')
+    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{16,})\b/g, '[redacted-slack-token]')
+    .replace(/\b(AIza[0-9A-Za-z_-]{20,})\b/g, '[redacted-google-key]')
+    .replace(/\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|BRAVE_API_KEY|TAVILY_API_KEY|SERPER_API_KEY|GOOGLE_API_KEY|API_KEY|TOKEN|PASSWORD)\s*=\s*)(['"]?)[^\s'"\\]+/gi, '$1$2[redacted]')
+    .replace(/\b(--(?:api-key|token|hf-token|password)\s+)([^\s]+)/gi, '$1[redacted]');
+}
+
+// Launch command for a task: serve stores it client-side in payload._cmd,
+// downloads get the redacted `cmd` from the /api/model/download response.
+function _taskLaunchCmd(task) {
+  return _redactCrashReportText(task?.payload?._cmd || task?.cmd || '');
+}
+
+function _lastOutputLines(text, count = 40) {
+  const clean = _redactCrashReportText(text || '').trimEnd();
+  if (!clean) return '';
+  return clean.split('\n').slice(-count).join('\n');
+}
+
 function _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText) {
   const lines = ['## Apollo Cookbook troubleshooting'];
   if (task) {
@@ -496,10 +522,97 @@ function _diagnosisCopyBundle(task, diagnosis, sourceText, suggestionText) {
   }
   lines.push('', '### Diagnosis', diagnosis?.message || '(none)');
   if (suggestionText) lines.push('', '### Suggested action', suggestionText.replace(/^Suggested action:\s*/i, ''));
-  const cmd = task?.payload?._cmd || '';
+  const cmd = _taskLaunchCmd(task);
   if (cmd) lines.push('', '### Launch command', '```bash', cmd, '```');
-  if (sourceText) lines.push('', '### Captured output', '```text', String(sourceText).trim(), '```');
+  if (sourceText) lines.push('', '### Captured output', '```text', _redactCrashReportText(String(sourceText)).trim(), '```');
   return lines.join('\n');
+}
+
+const _COPY_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const _CHECK_ICON = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+// Small "Copy X" button that flashes a check for 1.2s — same pattern as the
+// bundle copy button in the diagnosis header.
+function _diagCopyButton(label, getText) {
+  const btn = document.createElement('button');
+  btn.className = 'cookbook-btn cookbook-diag-detail-copy';
+  btn.type = 'button';
+  btn.title = label;
+  btn.innerHTML = `${_COPY_ICON}<span>${label}</span>`;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _copyText(getText());
+    btn.classList.add('copied');
+    btn.innerHTML = `${_CHECK_ICON}<span>Copied</span>`;
+    setTimeout(() => {
+      if (!btn.isConnected) return;
+      btn.classList.remove('copied');
+      btn.innerHTML = `${_COPY_ICON}<span>${label}</span>`;
+    }, 1200);
+  });
+  return btn;
+}
+
+// Collapsible "Details" block: the launch command + the last 40 output lines,
+// each with its own copy button, so a failed download / install / preflight /
+// serve shows exactly what ran and what it printed without opening a terminal.
+function _diagnosisDetails(panel, task, sourceText) {
+  const cmd = _taskLaunchCmd(task);
+  const tail = _lastOutputLines(sourceText, 40);
+  if (!cmd && !tail) return null;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'cookbook-diag-details';
+
+  const toggle = document.createElement('button');
+  toggle.className = 'cookbook-diag-details-toggle';
+  toggle.type = 'button';
+  toggle.setAttribute('aria-expanded', panel._diagDetailsOpen ? 'true' : 'false');
+  toggle.innerHTML = `<span class="cookbook-diag-chevron">${panel._diagDetailsOpen ? '▾' : '▸'}</span><span>Details</span>`;
+  wrap.appendChild(toggle);
+
+  const body = document.createElement('div');
+  body.className = 'cookbook-diag-details-body';
+  body.classList.toggle('hidden', !panel._diagDetailsOpen);
+
+  if (cmd) {
+    const row = document.createElement('div');
+    row.className = 'cookbook-diag-detail-row';
+    const label = document.createElement('span');
+    label.className = 'cookbook-diag-detail-label';
+    label.textContent = 'Command';
+    row.appendChild(label);
+    row.appendChild(_diagCopyButton('Copy command', () => cmd));
+    body.appendChild(row);
+    const pre = document.createElement('pre');
+    pre.className = 'cookbook-diag-cmd';
+    pre.textContent = cmd;
+    body.appendChild(pre);
+  }
+  if (tail) {
+    const row = document.createElement('div');
+    row.className = 'cookbook-diag-detail-row';
+    const label = document.createElement('span');
+    label.className = 'cookbook-diag-detail-label';
+    label.textContent = 'Last output';
+    row.appendChild(label);
+    row.appendChild(_diagCopyButton('Copy output', () => tail));
+    body.appendChild(row);
+    const pre = document.createElement('pre');
+    pre.className = 'cookbook-diag-tail';
+    pre.textContent = tail;
+    body.appendChild(pre);
+  }
+  wrap.appendChild(body);
+
+  toggle.addEventListener('click', (e) => {
+    e.stopPropagation();
+    panel._diagDetailsOpen = !panel._diagDetailsOpen;
+    body.classList.toggle('hidden', !panel._diagDetailsOpen);
+    toggle.setAttribute('aria-expanded', panel._diagDetailsOpen ? 'true' : 'false');
+    toggle.querySelector('.cookbook-diag-chevron').textContent = panel._diagDetailsOpen ? '▾' : '▸';
+  });
+  return wrap;
 }
 
 export function _showDiagnosis(panel, diagnosis, sourceText) {
@@ -618,25 +731,24 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
     }
   };
 
-  if (fixes.length) {
+  if (fixes.length && fixes.length <= 3) {
     const row = document.createElement('div');
     row.className = 'cookbook-diag-fixes';
-
-    if (fixes.length <= 3) {
-      for (const fix of fixes) {
-        const btn = document.createElement('button');
-        btn.className = 'cookbook-btn cookbook-diag-btn';
-        btn.type = 'button';
-        btn.textContent = fix.label;
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          runFix(fix, btn);
-        });
-        row.appendChild(btn);
-      }
-      body.appendChild(row);
-      return;
+    for (const fix of fixes) {
+      const btn = document.createElement('button');
+      btn.className = 'cookbook-btn cookbook-diag-btn';
+      btn.type = 'button';
+      btn.textContent = fix.label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        runFix(fix, btn);
+      });
+      row.appendChild(btn);
     }
+    body.appendChild(row);
+  } else if (fixes.length) {
+    const row = document.createElement('div');
+    row.className = 'cookbook-diag-fixes';
 
     const wrap = document.createElement('div');
     wrap.className = 'cookbook-diag-actions';
@@ -674,6 +786,9 @@ export function _showDiagnosis(panel, diagnosis, sourceText) {
     row.appendChild(wrap);
     body.appendChild(row);
   }
+
+  const details = _diagnosisDetails(panel, task, sourceText);
+  if (details) body.appendChild(details);
 }
 
 export function _clearDiagnosis(panel) {
