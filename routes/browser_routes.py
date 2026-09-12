@@ -68,6 +68,7 @@ class _LiveViewer:
         self._session = session
         self._forwarder = _FrameForwarder(websocket.send_text)
         self._url_cb = None
+        self._action_cb = None
 
     def _on_frame(self, data_b64: str, metadata: dict) -> None:
         # Runs on Playwright's event loop. Non-blocking: build the JSON and hand
@@ -89,16 +90,31 @@ class _LiveViewer:
             self._safe_send(json.dumps({"type": "url", "url": url, "title": ""}))
         )
 
+    def _on_action(self, event: dict) -> None:
+        # Agent co-pilot narration (ghost cursor + captions). Goes through the
+        # un-throttled path: the frame forwarder drops under backpressure and
+        # a dropped "click" would leave the overlay lying.
+        asyncio.ensure_future(
+            self._safe_send(json.dumps({"type": "agent_action", **event}))
+        )
+
     async def _safe_send(self, message: str) -> None:
         try:
             await self._ws.send_text(message)
         except Exception as error:
             report_exception(logger, "browser_live_url_send_failed", error, outcome="best_effort")
 
+    async def send_control(self) -> None:
+        mode = "user" if self._session.user_control else "agent"
+        await self._safe_send(json.dumps({"type": "control", "mode": mode}))
+
     async def start(self) -> None:
         self._url_cb = self._on_url
         self._session.add_url_listener(self._url_cb)
+        self._action_cb = self._on_action
+        self._session.add_action_listener(self._action_cb)
         await self._session.start_screencast(self._on_frame)
+        await self.send_control()
 
     async def stop(self) -> None:
         try:
@@ -108,6 +124,9 @@ class _LiveViewer:
         if self._url_cb is not None:
             self._session.remove_url_listener(self._url_cb)
             self._url_cb = None
+        if self._action_cb is not None:
+            self._session.remove_action_listener(self._action_cb)
+            self._action_cb = None
 
 
 class NavigateRequest(BaseModel):
@@ -176,7 +195,7 @@ def setup_browser_routes(
     async def navigate(body: NavigateRequest, request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.navigate(body.url)
+            return await embedded_browser.session.navigate(body.url, _from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -192,7 +211,7 @@ def setup_browser_routes(
     async def html(request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.get_page_html()
+            return await embedded_browser.session.get_page_html(_from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -200,7 +219,7 @@ def setup_browser_routes(
     async def text(request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.get_visible_text()
+            return await embedded_browser.session.get_visible_text(_from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -208,7 +227,7 @@ def setup_browser_routes(
     async def execute(body: ScriptRequest, request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.execute_script(body.script)
+            return await embedded_browser.session.execute_script(body.script, _from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -216,7 +235,7 @@ def setup_browser_routes(
     async def screenshot(body: ScreenshotRequest, request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.screenshot(full_page=body.full_page)
+            return await embedded_browser.session.screenshot(full_page=body.full_page, _from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -224,7 +243,7 @@ def setup_browser_routes(
     async def wait_for_selector(body: SelectorRequest, request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.wait_for_selector(body.selector, body.timeout_ms)
+            return await embedded_browser.session.wait_for_selector(body.selector, body.timeout_ms, _from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -232,7 +251,7 @@ def setup_browser_routes(
     async def click(body: SelectorRequest, request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.click(body.selector)
+            return await embedded_browser.session.click(body.selector, _from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -240,7 +259,7 @@ def setup_browser_routes(
     async def type_text(body: TypeRequest, request: Request):
         _require_browser_privilege(request)
         try:
-            return await embedded_browser.session.type(body.selector, body.text)
+            return await embedded_browser.session.type(body.selector, body.text, _from_user=True)
         except Exception as exc:
             raise _handle_browser_error(exc)
 
@@ -404,16 +423,22 @@ async def _dispatch_ws_message(websocket, msg: dict) -> None:
     elif kind == "key":
         await session.input_key(msg.get("kind"), msg.get("key"))
     elif kind == "navigate":
-        result = await session.navigate(msg.get("url", ""))
+        result = await session.navigate(msg.get("url", ""), _from_user=True)
         await _ws_send(websocket, {"type": "url", "url": result.get("url"), "title": result.get("title")})
     elif kind == "back":
-        result = await session.go_back()
+        result = await session.go_back(_from_user=True)
         await _ws_send(websocket, {"type": "url", "url": result.get("url"), "title": result.get("title")})
     elif kind == "forward":
-        result = await session.go_forward()
+        result = await session.go_forward(_from_user=True)
         await _ws_send(websocket, {"type": "url", "url": result.get("url"), "title": result.get("title")})
     elif kind == "reload":
-        result = await session.reload_page()
+        result = await session.reload_page(_from_user=True)
         await _ws_send(websocket, {"type": "url", "url": result.get("url"), "title": result.get("title")})
+    elif kind == "control":
+        # Take over / hand back. Echo the resulting mode so the panel's UI
+        # state is always server-driven.
+        session.set_user_control(msg.get("mode") == "user")
+        mode = "user" if session.user_control else "agent"
+        await _ws_send(websocket, {"type": "control", "mode": mode})
     else:
         await _ws_send(websocket, {"type": "error", "message": f"unknown message type: {kind}"})

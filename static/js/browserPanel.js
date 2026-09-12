@@ -1,6 +1,8 @@
 // Apollo Browser panel — live canvas screencast of the agent's server-side
 // Chromium over a WebSocket, with full mouse/keyboard input forwarding.
 
+import { captionFor, deviceToClient } from './browserCopilot.js';
+
 const BLOCKED_SCHEMES = new Set([
   'about:', 'apollo:', 'chrome:', 'chrome-extension:', 'data:', 'devtools:',
   'electron:', 'file:', 'javascript:', 'node:', 'vscode:',
@@ -27,6 +29,19 @@ let frameBusy = false; // true while frameImg is decoding
 let pendingFrame = null; // most-recent frame data dropped while busy
 let lastMoveSent = 0; // timestamp gate for mousemove throttle
 const MOVE_THROTTLE_MS = 33; // ~30/s
+
+// ── Co-pilot overlay state (ghost cursor / caption / take-over) ──
+const CURSOR_HIDE_MS = 3000;
+const CAPTION_HIDE_MS = 4000;
+let controlMode = 'agent'; // 'agent' | 'user' — server-driven via {type:"control"}
+let ghostCursor = null;
+let ghostRipple = null;
+let cursorTimer = null;
+let captionTimer = null;
+const GHOST_CURSOR_SVG =
+  '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">' +
+  '<path d="M5 3l14 8.5-6.2 1.6 3.6 6.4-2.6 1.5-3.6-6.4L5 19z" fill="var(--red)" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/>' +
+  '</svg>';
 
 const LOCALHOST_OUTPUT_SELECTOR = [
   '.code-runner-output',
@@ -183,9 +198,146 @@ function handleWsMessage(msg) {
     const url = msg.url || '';
     if (url) setAddress(url, { record: false });
     setStatus(msg.title || url || 'Loaded');
+  } else if (kind === 'agent_action') {
+    handleAgentAction(msg);
+  } else if (kind === 'control') {
+    applyControlMode(msg.mode);
   } else if (kind === 'error') {
     // Non-fatal stream error; show it without tearing down.
     setStatus('Browser stream', msg.message || 'error');
+  }
+}
+
+// ── Co-pilot overlay: ghost cursor + captions + take-over ─────────────
+// The canvas is repainted whole every frame, so the cursor lives in the DOM
+// on top of it (inside .browser-viewport, which browser-copilot.css makes
+// position:relative).
+
+function reducedMotion() {
+  try {
+    return !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  } catch (_) {
+    return false;
+  }
+}
+
+function ensureOverlay() {
+  if (ghostCursor && ghostCursor.isConnected) return true;
+  const viewport = document.querySelector('#browser-modal .browser-viewport');
+  if (!viewport) return false;
+  ghostRipple = document.createElement('div');
+  ghostRipple.className = 'browser-ghost-ripple';
+  ghostRipple.setAttribute('aria-hidden', 'true');
+  ghostCursor = document.createElement('div');
+  ghostCursor.className = 'browser-ghost-cursor';
+  ghostCursor.setAttribute('aria-hidden', 'true');
+  ghostCursor.innerHTML = GHOST_CURSOR_SVG;
+  viewport.appendChild(ghostRipple);
+  viewport.appendChild(ghostCursor);
+  return true;
+}
+
+function hideGhostCursor() {
+  if (cursorTimer) window.clearTimeout(cursorTimer);
+  cursorTimer = null;
+  ghostCursor?.classList.remove('is-visible');
+}
+
+function moveGhostCursor(x, y, { ripple = false } = {}) {
+  if (!ensureOverlay()) return;
+  const canvas = el('browser-canvas');
+  const viewport = ghostCursor.parentElement;
+  if (!canvas || !viewport) return;
+  const point = deviceToClient(
+    x, y, canvas.getBoundingClientRect(),
+    deviceW || canvas.width, deviceH || canvas.height,
+  );
+  if (!point) return;
+  const vrect = viewport.getBoundingClientRect();
+  const left = point.x - vrect.left;
+  const top = point.y - vrect.top;
+  const wasHidden = !ghostCursor.classList.contains('is-visible');
+  if (wasHidden) {
+    // First placement: jump into position rather than sliding in from the
+    // parked off-screen spot.
+    ghostCursor.style.transition = 'none';
+    ghostCursor.style.transform = `translate(${left}px, ${top}px)`;
+    void ghostCursor.offsetWidth;
+    ghostCursor.style.transition = '';
+  } else {
+    ghostCursor.style.transform = `translate(${left}px, ${top}px)`;
+  }
+  ghostCursor.classList.add('is-visible');
+  if (ripple && ghostRipple && !reducedMotion()) {
+    ghostRipple.style.left = `${left}px`;
+    ghostRipple.style.top = `${top}px`;
+    ghostRipple.classList.remove('is-rippling');
+    void ghostRipple.offsetWidth; // restart the animation
+    ghostRipple.classList.add('is-rippling');
+  }
+  if (cursorTimer) window.clearTimeout(cursorTimer);
+  cursorTimer = window.setTimeout(hideGhostCursor, CURSOR_HIDE_MS);
+}
+
+function showCaption(text, isError) {
+  const caption = el('browser-agent-caption');
+  if (!caption) return;
+  if (captionTimer) window.clearTimeout(captionTimer);
+  captionTimer = null;
+  if (!text) {
+    caption.classList.remove('is-visible');
+    return;
+  }
+  caption.textContent = text;
+  caption.classList.toggle('is-error', !!isError);
+  caption.classList.add('is-visible');
+  captionTimer = window.setTimeout(() => {
+    caption.classList.remove('is-visible');
+    captionTimer = null;
+  }, CAPTION_HIDE_MS);
+}
+
+function handleAgentAction(ev) {
+  const phase = ev.phase || 'start';
+  // While the user holds the browser only failures are worth narrating.
+  if (controlMode === 'user' && phase !== 'error') return;
+  const text = captionFor(ev);
+  if (text) showCaption(text, phase === 'error');
+  if (phase === 'error') return;
+  if (typeof ev.x === 'number' && typeof ev.y === 'number') {
+    const ripple = phase === 'start' && (ev.action === 'click' || ev.action === 'type');
+    moveGhostCursor(ev.x, ev.y, { ripple });
+  }
+}
+
+function applyControlMode(mode) {
+  controlMode = mode === 'user' ? 'user' : 'agent';
+  const userMode = controlMode === 'user';
+  const btn = el('browser-control-toggle');
+  if (btn) {
+    btn.textContent = userMode ? 'Hand back' : 'Take over';
+    btn.setAttribute('aria-pressed', userMode ? 'true' : 'false');
+    btn.title = userMode
+      ? 'Hand the browser back to the agent'
+      : 'Take over the browser (pause the agent)';
+  }
+  document.querySelector('#browser-modal .browser-status-row')
+    ?.classList.toggle('is-user-control', userMode);
+  if (userMode) {
+    hideGhostCursor();
+    showCaption('');
+    setStatus('You are in control — the agent is paused');
+  } else {
+    setStatus('Agent can drive the browser');
+  }
+}
+
+function toggleControl() {
+  const next = controlMode === 'user' ? 'agent' : 'user';
+  // The server echoes {type:"control"} which flips the UI; nothing changes
+  // locally until it does.
+  if (!wsSend({ type: 'control', mode: next })) {
+    setStatus('Stream disconnected — press reload to reconnect');
   }
 }
 
@@ -435,6 +587,7 @@ function open(url) {
   if (!modal) return;
   modal.classList.remove('hidden');
   bindCanvasInput();
+  ensureOverlay();
   connectWs();
   startEventPolling();
   if (url) navigate(url);
@@ -547,6 +700,7 @@ function init() {
   el('browser-back')?.addEventListener('click', goBack);
   el('browser-forward')?.addEventListener('click', goForward);
   el('browser-reload')?.addEventListener('click', reload);
+  el('browser-control-toggle')?.addEventListener('click', toggleControl);
   el('browser-open-external')?.addEventListener('click', () => {
     const url = el('browser-address')?.value;
     if (url) window.open(url, '_blank', 'noopener,noreferrer');

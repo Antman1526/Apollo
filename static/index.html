@@ -1504,11 +1504,13 @@
         <button type="button" class="browser-tool-btn" id="browser-reload" title="Reload" aria-label="Reload">↻</button>
         <input id="browser-address" class="browser-address" type="text" placeholder="localhost:3000 or https://docs.example.com" autocomplete="off" spellcheck="false" aria-label="Browser address" />
         <button type="button" class="browser-go" id="browser-go">Go</button>
+        <button type="button" class="browser-tool-btn browser-control-toggle" id="browser-control-toggle" aria-pressed="false" title="Take over the browser (pause the agent)">Take over</button>
         <button type="button" class="browser-tool-btn" id="browser-open-external" title="Open current page in a new browser tab" aria-label="Open externally">↗</button>
       </div>
       <div class="browser-status-row">
         <span id="browser-status">Ready</span>
         <span id="browser-security" class="browser-security"></span>
+        <span id="browser-agent-caption" class="browser-agent-caption" aria-live="polite"></span>
       </div>
       <div class="browser-body">
         <div class="browser-viewport">
