@@ -187,14 +187,14 @@
    layout-chat.css). A card under the tagline grows the block downward into
    the composer, so anchor the block from the top and drop the composer to
    the bottom while the card is present. */
-#chat-container.welcome-active:has(#welcome-setup:not(:empty):not([hidden])) #welcome-screen {
+#chat-container.welcome-active:has(#welcome-setup:not([hidden]) .home-card) #welcome-screen {
   top: 6%;
   transform: translate(-50%, 0);
   /* welcome-enter fills forwards with translate(-50%,-50%); the card is
      fetched after that animation has run, so dropping it here is safe. */
   animation: none;
 }
-.chat-container.welcome-active:has(#welcome-setup:not(:empty):not([hidden])) .chat-input-bar {
+.chat-container.welcome-active:has(#welcome-setup:not([hidden]) .home-card) .chat-input-bar {
   margin-bottom: 4vh;
 }
 #welcome-setup { pointer-events: auto; }
