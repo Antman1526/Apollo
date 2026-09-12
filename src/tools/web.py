@@ -111,6 +111,9 @@ async def do_browser(content: str, owner: Optional[str] = None) -> Dict:
             }
     except embedded_browser.BrowserSecurityError as exc:
         return {"error": f"browser: {exc}", "exit_code": 1}
+    except embedded_browser.BrowserTakenOver as exc:
+        # Not an error to retry: the user pressed "Take over" in the panel.
+        return {"response": str(exc), "browser": {"ok": False, "taken_over": True}, "exit_code": 1}
     except embedded_browser.BrowserUnavailable as exc:
         return {"error": f"browser unavailable: {exc}", "exit_code": 1}
     except Exception as error:
