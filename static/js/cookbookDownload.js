@@ -24,6 +24,7 @@ let _persistEnvState;
 let modelLogo;
 let esc;
 let _addTask;
+let _recordLaunchFailure;
 let _renderRunningTab;
 let _loadTasks;
 let _saveTasks;
@@ -556,19 +557,27 @@ export async function _runModelDownload(panel, model, backend, hostOverride) {
     });
     if (!res.ok) {
       // Errors carry actionable text (e.g. "tmux is required …"); keep them up
-      // long enough to read, matching the serve path's duration (issue #1355).
+      // long enough to read, matching the serve path's duration (issue #1355),
+      // and persist them on a crashed card so the text + Details survive.
+      const errText = await res.text().catch(() => '');
       uiModule.showToast('Download failed: HTTP ' + res.status, 9000);
+      _recordLaunchFailure('', shortName, 'download', payload, `HTTP ${res.status}: ${errText.slice(0, 2000)}`);
       return;
     }
     const data = await res.json();
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''), 9000);
+      _recordLaunchFailure(data.session_id, shortName, 'download', payload, data.error || 'unknown error');
       return;
     }
+    // The server composes the hf command (token redacted); keep it on the task
+    // so the diagnosis Details block and crash report can show what ran.
+    if (data.cmd) payload._cmd = data.cmd;
     _addTask(data.session_id, shortName, 'download', payload);
     uiModule.showToast(`Downloading ${shortName}...`);
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message, 9000);
+    _recordLaunchFailure('', shortName, 'download', payload, `Launch request failed: ${e.message}`);
   }
 }
 
@@ -591,6 +600,7 @@ export function initDownload(shared) {
   modelLogo = shared.modelLogo;
   esc = shared.esc;
   _addTask = shared._addTask;
+  _recordLaunchFailure = shared._recordLaunchFailure;
   _renderRunningTab = shared._renderRunningTab;
   _loadTasks = shared._loadTasks;
   _saveTasks = shared._saveTasks;

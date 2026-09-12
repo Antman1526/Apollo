@@ -275,7 +275,8 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`).
   macOS / Linux / Windows.
 - **Cookbook** background model downloads/serving also needs `tmux` (POSIX) or Git-for-Windows
   `bash.exe`. Local GPU *serving* of vLLM/SGLang is CUDA/ROCm-only (Linux/WSL2); macOS uses
-  llama.cpp/Ollama over Metal.
+  llama.cpp/Ollama over Metal. Local tmux jobs also tee their output to `<tmpdir>/apollo-tmux/<session>.log`,
+  so a failed download / install / serve card can still show the command and its last output lines.
 - **Voice** local engines are optional extras: `faster-whisper` (STT), plus your chosen TTS
   (Kokoro / Piper / an OpenAI-compatible `/audio/speech` endpoint / Voicebox). The app runs
   without them; voice just stays disabled until configured.

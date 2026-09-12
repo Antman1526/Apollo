@@ -700,3 +700,75 @@ def _ssh_ps(host, script_path, port=None):
 
 # Windows session dir — stored in user's temp on the remote
 WIN_SESSION_DIR = "$env:TEMP\\\\apollo-sessions"
+
+
+# ── Failure feedback helpers ──
+
+# Session log ids: the ids we mint plus dots (some callers pass file stems).
+_LOG_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+_ANSI_OSC_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)")
+_REDACT_PATTERNS = (
+    (re.compile(r"(--(?:token|api-key|hf-token|password)(?:\s+|=))(?:'[^']*'|\"[^\"]*\"|[^\s]+)", re.I), r"\1[redacted]"),
+    (re.compile(r"\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|TOKEN|PASSWORD)\s*=\s*)(['\"]?)[^\s'\"\\]+", re.I), r"\1\2[redacted]"),
+    (re.compile(r"\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}", re.I), r"\1[redacted]"),
+    # Real HF tokens are hf_ + 34 chars; the length floor keeps `hf_transfer` intact.
+    (re.compile(r"\bhf_[A-Za-z0-9]{16,}\b"), "[redacted-hf-token]"),
+)
+
+
+def redact_command(cmd: str) -> str:
+    """Return a launch command with token-shaped values masked.
+
+    Covers `--token X`, `HF_TOKEN=...`, bare `hf_...` tokens, `--api-key X`
+    and `Bearer X`. The result is safe to store in cookbook state and to show
+    in the failure card / crash report."""
+    text = str(cmd or "")
+    for pattern, replacement in _REDACT_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
+
+
+def _clean_pane_log(text: str) -> str:
+    """Strip ANSI escapes and collapse `\\r` progress rewrites in a pipe-pane log."""
+    text = _ANSI_OSC_RE.sub("", text)
+    text = _ANSI_CSI_RE.sub("", text)
+    out = []
+    for line in text.split("\n"):
+        if "\r" in line:
+            line = line.rstrip("\r").rsplit("\r", 1)[-1]
+        out.append(line)
+    return "\n".join(out)
+
+
+def read_session_log_tail(session_id: str, max_lines: int = 400, *, log_dir=None) -> str:
+    """Return the last `max_lines` of `<log_dir>/<session_id>.log`, or "".
+
+    The path is confined to the tmux log directory: ids must match
+    `^[A-Za-z0-9_.-]+$` and the resolved file must live inside `log_dir`.
+    Only the last ~256 KB of a large file is read."""
+    from pathlib import Path
+
+    if not session_id or not _LOG_SESSION_ID_RE.match(session_id) or session_id in {".", ".."}:
+        return ""
+    if log_dir is None:
+        from routes.shell_routes import TMUX_LOG_DIR
+        log_dir = TMUX_LOG_DIR
+    base = Path(log_dir).resolve()
+    path = (base / f"{session_id}.log").resolve()
+    if path.parent != base:
+        return ""
+    try:
+        if not path.is_file():
+            return ""
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - 256 * 1024))
+            raw = fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    lines = _clean_pane_log(raw).splitlines()
+    if max_lines and max_lines > 0:
+        lines = lines[-max_lines:]
+    return "\n".join(lines).strip()

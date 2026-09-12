@@ -17,7 +17,7 @@ import {
   _tmuxCmd, _renderRunningTab, _clearCookbookNotif,
   _launchServeTask, _serveAutoFix, _serveAutoRetry, _serveAutoRetryReplace, _serveAutoRetryRemove,
   _startBackgroundMonitor, _syncFromServer,
-  _retryDownload, _nextAvailablePort, _processQueue,
+  _retryDownload, _nextAvailablePort, _processQueue, _recordLaunchFailure,
 } from './cookbookRunning.js';
 
 import {
@@ -1934,6 +1934,7 @@ initRunning({
 initDownload({
   ...shared,
   _addTask,
+  _recordLaunchFailure,
   _renderRunningTab,
   _loadTasks,
   _saveTasks,

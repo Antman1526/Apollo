@@ -5,7 +5,7 @@
 // ============================================
 
 import uiModule from './ui.js';
-import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { _diagnose, _showDiagnosis, _clearDiagnosis, _redactCrashReportText } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
@@ -133,16 +133,39 @@ function _terminalServeDiagnosis(task, outputText) {
   };
 }
 
-function _redactCrashReportText(text) {
-  if (!text) return '';
-  return String(text)
-    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
-    .replace(/\b(hf_[A-Za-z0-9]{16,})\b/g, '[redacted-hf-token]')
-    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, '[redacted-api-key]')
-    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{16,})\b/g, '[redacted-slack-token]')
-    .replace(/\b(AIza[0-9A-Za-z_-]{20,})\b/g, '[redacted-google-key]')
-    .replace(/\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|BRAVE_API_KEY|TAVILY_API_KEY|SERPER_API_KEY|GOOGLE_API_KEY|API_KEY|TOKEN|PASSWORD)\s*=\s*)(['"]?)[^\s'"\\]+/gi, '$1$2[redacted]')
-    .replace(/\b(--(?:api-key|token|hf-token|password)\s+)([^\s]+)/gi, '$1[redacted]');
+// Downloads / dependency installs that ended in a failure state: reuse the
+// pattern library, else a generic card so the Details block (command + last
+// output lines + copy buttons) still shows what actually happened.
+function _terminalDownloadDiagnosis(task, outputText) {
+  const out = String(outputText || task?.output || '');
+  if (!task || task.type !== 'download' || !['error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
+  return _diagnose(out) || {
+    message: task._launchFailed
+      ? 'Download could not be started.'
+      : (task.payload?._dep ? 'Dependency install stopped before it finished.' : 'Download stopped before it finished.'),
+    suggestion: 'Suggested action: open Details to check the command and the last output lines, fix the cause, then retry.',
+    fixes: [],
+  };
+}
+
+function _terminalTaskDiagnosis(task, outputText) {
+  return _terminalServeDiagnosis(task, outputText) || _terminalDownloadDiagnosis(task, outputText);
+}
+
+// Persist a launch that never produced a session (HTTP / tmux / ssh failure) as
+// a crashed card instead of a toast that vanishes: the error text becomes the
+// card output so the diagnosis card + Details block + crash report all work.
+export function _recordLaunchFailure(sessionId, name, type, payload, errorText) {
+  const id = sessionId || `launch-failed-${Date.now().toString(36)}`;
+  const task = _addTask(id, name, type, payload);
+  _updateTask(id, {
+    status: 'crashed',
+    output: _redactCrashReportText(String(errorText || 'unknown error')).trim(),
+    _launchFailed: true,
+  });
+  _renderRunningTab();
+  _showCookbookNotif(true);
+  return task;
 }
 
 function _lastLines(text, count = 160) {
@@ -472,6 +495,7 @@ async function _startQueuedDownload(task) {
         t.id = data.session_id;
         t.status = 'running';
         t._startLaunched = true;
+        if (data.cmd) t.payload = { ...(t.payload || {}), _cmd: data.cmd };
         return true;
       }
       if (t.sessionId === data.session_id) return false;
@@ -1075,17 +1099,26 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(_payload),
     });
+    const _failRetry = (errText) => {
+      if (!replaceSessionId) return;
+      const prev = _loadTasks().find(t => t.sessionId === replaceSessionId)?.output || '';
+      _updateTask(replaceSessionId, { status: 'crashed', _retrying: false, output: `${prev}\n[apollo] Retry failed: ${errText}`.trim().slice(-5000) });
+      _renderRunningTab();
+    };
     if (!res.ok) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
-      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+      _failRetry(`HTTP ${res.status}`);
       return;
     }
     const data = await res.json();
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''));
-      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+      _failRetry(data.error || 'unknown error');
       return;
     }
+    // The server composes the hf command; keep its redacted form for the
+    // failure card / crash report (serve stores its own _cmd client-side).
+    if (data.cmd) _payload._cmd = data.cmd;
     if (replaceSessionId) {
       const tasks = _loadTasks();
       const task = tasks.find(t => t.sessionId === replaceSessionId);
@@ -1097,6 +1130,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
         task.ts = Date.now();
         task.payload = _payload;
         task._retrying = false;
+        task._launchFailed = false;
         _saveTasks(tasks);
         _soloExpandTaskId = data.session_id;
         _renderRunningTab();
@@ -1111,6 +1145,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message);
     if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+    else _recordLaunchFailure('', name, 'download', payload, `Launch request failed: ${e.message}`);
   }
 }
 
@@ -1472,6 +1507,10 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       const err = data.error || data.detail || res.statusText || 'unknown';
       console.error('[cookbook] /api/model/serve failed', { status: res.status, body: data });
       uiModule.showToast('Failed to start: ' + String(err).slice(0, 200), 9000);
+      // Keep the failure on a card (crashed + diagnosis + Details) so the
+      // server's error text and the exact command survive the toast.
+      const failedPayload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _getPort(_host) || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
+      _recordLaunchFailure(data.session_id, shortName, 'serve', failedPayload, `HTTP ${res.status}: ${typeof err === 'string' ? err : JSON.stringify(err)}`);
       return;
     }
 
@@ -1484,6 +1523,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     uiModule.showToast(`Serving ${shortName}...`);
   } catch (e) {
     uiModule.showToast('Failed: ' + e.message);
+    _recordLaunchFailure('', shortName, 'serve', { repo_id: repo, remote_host: _host || undefined, _cmd: cmd, _fields: fields || undefined }, `Launch request failed: ${e.message}`);
   }
 }
 
@@ -1771,7 +1811,7 @@ export function _renderRunningTab() {
       }
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
-      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      const terminalDiag = _terminalTaskDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
       if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
     if (!task) {
@@ -1808,7 +1848,7 @@ export function _renderRunningTab() {
     const _waveEl = el.querySelector('.cookbook-task-wave');
     if (_waveEl && task.status === 'running') _registerWaveEl(_waveEl);
 
-    const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
+    const terminalDiag = _terminalTaskDiagnosis(task, task.output || '');
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
@@ -3016,6 +3056,9 @@ async function _pollBackgroundStatus() {
       for (const task of localTasks) {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
+        // A launch that never created a session has nothing live to reconcile;
+        // leave its crashed card (server error text) alone.
+        if (task._launchFailed) continue;
         const updates = {};
         const nextStatus = live.status === 'completed'
           ? 'done'
