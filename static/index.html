@@ -1052,7 +1052,7 @@
         </svg>
         <span class="incognito-label">Nobody</span>
       </button>
-      <div id="welcome-setup" style="display:none"></div>
+      <div id="welcome-setup" class="home-brief" aria-live="polite"></div>
     </div>
     <script nonce="{{CSP_NONCE}}">
     (function(){
@@ -2212,6 +2212,11 @@
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3v2m0 14v2m-7-9H3m18 0h-2m-1.5-6.5L16 7m-8-1.5L6.5 7m11 11l-1.5-1.5M8 18l-1.5 1.5"/><circle cx="12" cy="12" r="4"/></svg></span>
                 <span class="vis-label">Welcome Message <span class="vis-hint">Logo &amp; tips on empty chat</span></span>
                 <input type="checkbox" checked data-ui-key="welcome-text"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/></svg></span>
+                <span class="vis-label">Home Brief <span class="vis-hint">Setup checklist &amp; today's agenda on empty chat</span></span>
+                <input type="checkbox" checked data-ui-key="welcome-brief"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
