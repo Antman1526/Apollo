@@ -6,6 +6,10 @@
 import {
   _envState,
   _loadTasks,
+  _addTask,
+  _updateTask,
+  _renderRunningTab,
+  _showCookbookNotif,
   _removeTask,
   _launchServeTask,
   _buildEnvPrefix,
@@ -818,4 +822,50 @@ export async function _runQuickCmd(panel, cmd) {
   } catch (e) {
     if (diag) diag.textContent = `Error: ${e.message}`;
   }
+}
+
+// ── Terminal-state diagnosis + launch-failure cards (moved from cookbookRunning.js) ──
+// Downloads / dependency installs that ended in a failure state: reuse the
+// pattern library, else a generic card so the Details block (command + last
+// output lines + copy buttons) still shows what actually happened.
+export function _terminalDownloadDiagnosis(task, outputText) {
+  const out = String(outputText || task?.output || '');
+  if (!task || task.type !== 'download' || !['error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
+  return _diagnose(out) || {
+    message: task._launchFailed
+      ? 'Download could not be started.'
+      : (task.payload?._dep ? 'Dependency install stopped before it finished.' : 'Download stopped before it finished.'),
+    suggestion: 'Suggested action: open Details to check the command and the last output lines, fix the cause, then retry.',
+    fixes: [],
+  };
+}
+
+// `serveDiagnosis` is cookbookRunning's _terminalServeDiagnosis, passed in
+// because it depends on serve-edit / GGUF-download actions that live there.
+export function _terminalTaskDiagnosis(task, outputText, serveDiagnosis) {
+  return (serveDiagnosis ? serveDiagnosis(task, outputText) : null) || _terminalDownloadDiagnosis(task, outputText);
+}
+
+// Persist a launch that never produced a session (HTTP / tmux / ssh failure) as
+// a crashed card instead of a toast that vanishes: the error text becomes the
+// card output so the diagnosis card + Details block + crash report all work.
+export function _recordLaunchFailure(sessionId, name, type, payload, errorText) {
+  const id = sessionId || `launch-failed-${Date.now().toString(36)}`;
+  const task = _addTask(id, name, type, payload);
+  _updateTask(id, {
+    status: 'crashed',
+    output: _redactCrashReportText(String(errorText || 'unknown error')).trim(),
+    _launchFailed: true,
+  });
+  _renderRunningTab();
+  _showCookbookNotif(true);
+  return task;
+}
+
+// A retry that failed to launch: keep the old card, mark it crashed again and
+// append the new error so the Details block shows both attempts.
+export function _recordRetryFailure(sessionId, errText) {
+  const prev = _loadTasks().find(t => t.sessionId === sessionId)?.output || '';
+  _updateTask(sessionId, { status: 'crashed', _retrying: false, output: `${prev}\n[apollo] Retry failed: ${errText}`.trim().slice(-5000) });
+  _renderRunningTab();
 }

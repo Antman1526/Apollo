@@ -5,7 +5,8 @@
 // ============================================
 
 import uiModule from './ui.js';
-import { _diagnose, _showDiagnosis, _clearDiagnosis, _redactCrashReportText } from './cookbook-diagnosis.js';
+import { _diagnose, _showDiagnosis, _clearDiagnosis, _redactCrashReportText, _terminalTaskDiagnosis, _recordLaunchFailure, _recordRetryFailure } from './cookbook-diagnosis.js';
+export { _recordLaunchFailure };
 import { registerMenuDismiss } from './escMenuStack.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
@@ -131,41 +132,6 @@ function _terminalServeDiagnosis(task, outputText) {
       : 'Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.',
     fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
   };
-}
-
-// Downloads / dependency installs that ended in a failure state: reuse the
-// pattern library, else a generic card so the Details block (command + last
-// output lines + copy buttons) still shows what actually happened.
-function _terminalDownloadDiagnosis(task, outputText) {
-  const out = String(outputText || task?.output || '');
-  if (!task || task.type !== 'download' || !['error', 'crashed', 'failed'].includes(task.status) || !out.trim()) return null;
-  return _diagnose(out) || {
-    message: task._launchFailed
-      ? 'Download could not be started.'
-      : (task.payload?._dep ? 'Dependency install stopped before it finished.' : 'Download stopped before it finished.'),
-    suggestion: 'Suggested action: open Details to check the command and the last output lines, fix the cause, then retry.',
-    fixes: [],
-  };
-}
-
-function _terminalTaskDiagnosis(task, outputText) {
-  return _terminalServeDiagnosis(task, outputText) || _terminalDownloadDiagnosis(task, outputText);
-}
-
-// Persist a launch that never produced a session (HTTP / tmux / ssh failure) as
-// a crashed card instead of a toast that vanishes: the error text becomes the
-// card output so the diagnosis card + Details block + crash report all work.
-export function _recordLaunchFailure(sessionId, name, type, payload, errorText) {
-  const id = sessionId || `launch-failed-${Date.now().toString(36)}`;
-  const task = _addTask(id, name, type, payload);
-  _updateTask(id, {
-    status: 'crashed',
-    output: _redactCrashReportText(String(errorText || 'unknown error')).trim(),
-    _launchFailed: true,
-  });
-  _renderRunningTab();
-  _showCookbookNotif(true);
-  return task;
 }
 
 function _lastLines(text, count = 160) {
@@ -670,7 +636,7 @@ export function _addTask(sessionId, name, type, payload) {
   return task;
 }
 
-function _updateTask(sessionId, updates) {
+export function _updateTask(sessionId, updates) {
   const tasks = _loadTasks();
   const task = tasks.find(t => t.sessionId === sessionId);
   if (task) {
@@ -837,7 +803,7 @@ function _registerWaveEl(el) { _waveEls.add(el); _startWaveSync(); }
 
 // ── Notifications ──
 
-function _showCookbookNotif(isError = false) {
+export function _showCookbookNotif(isError = false) {
   const dot = document.getElementById('cookbook-notif-dot');
   if (dot) {
     dot.style.display = '';
@@ -1099,12 +1065,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(_payload),
     });
-    const _failRetry = (errText) => {
-      if (!replaceSessionId) return;
-      const prev = _loadTasks().find(t => t.sessionId === replaceSessionId)?.output || '';
-      _updateTask(replaceSessionId, { status: 'crashed', _retrying: false, output: `${prev}\n[apollo] Retry failed: ${errText}`.trim().slice(-5000) });
-      _renderRunningTab();
-    };
+    const _failRetry = (errText) => { if (replaceSessionId) _recordRetryFailure(replaceSessionId, errText); };
     if (!res.ok) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
       _failRetry(`HTTP ${res.status}`);
@@ -1116,8 +1077,6 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       _failRetry(data.error || 'unknown error');
       return;
     }
-    // The server composes the hf command; keep its redacted form for the
-    // failure card / crash report (serve stores its own _cmd client-side).
     if (data.cmd) _payload._cmd = data.cmd;
     if (replaceSessionId) {
       const tasks = _loadTasks();
@@ -1507,8 +1466,6 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       const err = data.error || data.detail || res.statusText || 'unknown';
       console.error('[cookbook] /api/model/serve failed', { status: res.status, body: data });
       uiModule.showToast('Failed to start: ' + String(err).slice(0, 200), 9000);
-      // Keep the failure on a card (crashed + diagnosis + Details) so the
-      // server's error text and the exact command survive the toast.
       const failedPayload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _getPort(_host) || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
       _recordLaunchFailure(data.session_id, shortName, 'serve', failedPayload, `HTTP ${res.status}: ${typeof err === 'string' ? err : JSON.stringify(err)}`);
       return;
@@ -1811,7 +1768,7 @@ export function _renderRunningTab() {
       }
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
-      const terminalDiag = _terminalTaskDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      const terminalDiag = _terminalTaskDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '', _terminalServeDiagnosis);
       if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
     if (!task) {
@@ -1848,7 +1805,7 @@ export function _renderRunningTab() {
     const _waveEl = el.querySelector('.cookbook-task-wave');
     if (_waveEl && task.status === 'running') _registerWaveEl(_waveEl);
 
-    const terminalDiag = _terminalTaskDiagnosis(task, task.output || '');
+    const terminalDiag = _terminalTaskDiagnosis(task, task.output || '', _terminalServeDiagnosis);
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
@@ -3056,8 +3013,6 @@ async function _pollBackgroundStatus() {
       for (const task of localTasks) {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
-        // A launch that never created a session has nothing live to reconcile;
-        // leave its crashed card (server error text) alone.
         if (task._launchFailed) continue;
         const updates = {};
         const nextStatus = live.status === 'completed'

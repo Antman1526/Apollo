@@ -587,3 +587,24 @@ if (_hasDom) {
 }
 
 export default artifactsModule;
+
+// ▣ Preview button on html / svg code blocks (emitted by markdown.js).
+// Lives here rather than in chatRenderer.js so the renderer stays free of an
+// artifact dependency. If the block was edited in place (✎) the <code> text
+// is the source of truth — the edit handler only re-syncs run/copy buttons.
+if (_hasDom) {
+  document.addEventListener('click', function(e) {
+    const btn = e.target && e.target.closest && e.target.closest('.preview-artifact');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const lang = (btn.getAttribute('data-lang') || 'html').toLowerCase();
+    let code = btn.getAttribute('data-code') || '';
+    const codeEl = btn.closest('pre')?.querySelector('code');
+    if (codeEl) {
+      const live = codeEl.textContent || '';
+      if (live.trim() && live.trim() !== code.trim()) code = live;
+    }
+    if (code.trim()) openFromCode(code, lang, { autoOpened: false });
+  });
+}

@@ -778,31 +778,6 @@ document.addEventListener('click', function(e) {
   }
 }, true);
 
-// ▣ Preview button on html / svg code blocks (emitted by markdown.js) —
-// opens the block in the sandboxed live artifact pane. The module is
-// imported lazily so chatRenderer stays free of a static dependency on it.
-document.addEventListener('click', function(e) {
-  const btn = e.target && e.target.closest && e.target.closest('.preview-artifact');
-  if (!btn) return;
-  e.preventDefault();
-  e.stopPropagation();
-  const lang = (btn.getAttribute('data-lang') || 'html').toLowerCase();
-  let code = btn.getAttribute('data-code') || '';
-  // If the block was edited in place (✎), the <code> text is the source of
-  // truth — the edit handler only re-syncs data-code on copy/run buttons.
-  const pre = btn.closest('pre');
-  const codeEl = pre && pre.querySelector('code');
-  if (codeEl) {
-    const live = codeEl.textContent || '';
-    if (live.trim() && live.trim() !== code.trim()) code = live;
-  }
-  if (!code.trim()) return;
-  import('./artifacts.js').then(mod => {
-    const open = mod.openFromCode || (mod.default && mod.default.openFromCode);
-    if (open) open(code, lang, { autoOpened: false });
-  }).catch(() => {});
-});
-
 // Jump-to-entity anchors — the agent emits links like
 //   [New Chat](#session-89effa28)
 //   [Notes](#document-abc123)

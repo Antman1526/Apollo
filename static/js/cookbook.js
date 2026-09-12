@@ -1933,8 +1933,7 @@ initRunning({
 // Init download module (adds SSE, panel rendering, download commands)
 initDownload({
   ...shared,
-  _addTask,
-  _recordLaunchFailure,
+  _addTask, _recordLaunchFailure,
   _renderRunningTab,
   _loadTasks,
   _saveTasks,

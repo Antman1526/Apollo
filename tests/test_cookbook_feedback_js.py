@@ -1,3 +1,4 @@
+import re
 """String-scrape guards for the Cookbook failure-feedback UI wiring."""
 
 from pathlib import Path
@@ -32,14 +33,19 @@ def test_download_launch_stores_cmd_and_persists_failures():
 
 def test_running_module_persists_serve_launch_failures():
     source = _read("static/js/cookbookRunning.js")
+    # The recorder and the download diagnosis live in cookbook-diagnosis.js
+    # (cookbookRunning.js is under the module-size ratchet); the running
+    # module re-exports the recorder so cookbook.js keeps importing it from here.
+    diag = _read("static/js/cookbook-diagnosis.js")
 
-    assert "export function _recordLaunchFailure(" in source
-    assert "status: 'crashed'" in source
-    assert "_launchFailed: true" in source
+    assert "export function _recordLaunchFailure(" in diag
+    assert "status: 'crashed'" in diag
+    assert "_launchFailed: true" in diag
+    assert "export { _recordLaunchFailure };" in source
     assert "if (task._launchFailed) continue;" in source
     assert "_recordLaunchFailure(data.session_id, shortName, 'serve'" in source
-    assert "function _terminalDownloadDiagnosis(" in source
-    assert "_redactCrashReportText } from './cookbook-diagnosis.js'" in source
+    assert "export function _terminalDownloadDiagnosis(" in diag
+    assert re.search(r"import \{[^}]*_redactCrashReportText[^}]*\} from './cookbook-diagnosis.js'", source)
     assert "_recordLaunchFailure" in _read("static/js/cookbook.js")
 
 

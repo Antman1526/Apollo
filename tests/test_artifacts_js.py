@@ -44,9 +44,12 @@ def test_markdown_emits_preview_button_for_artifact_fences():
 
 
 def test_chat_wiring_points_at_artifacts_module():
-    renderer = _read("chatRenderer.js")
-    assert ".preview-artifact" in renderer
-    assert "import('./artifacts.js')" in renderer
+    # The ▣ click delegation lives in artifacts.js itself (chatRenderer.js is
+    # under the module-size ratchet and must not grow).
+    artifacts = _read("artifacts.js")
+    assert ".preview-artifact" in artifacts
+    assert "openFromCode(code, lang, { autoOpened: false })" in artifacts
+    assert ".preview-artifact" not in _read("chatRenderer.js")
     chat = _read("chat.js")
     assert "autoOpenFromMessage" in chat
     index = (_STATIC / "index.html").read_text(encoding="utf-8")
