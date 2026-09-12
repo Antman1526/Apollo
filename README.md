@@ -253,6 +253,8 @@ A full, hover-to-play tour lives on the landing page (`docs/index.html`).
 <details>
 <summary>Screenshots / clips</summary>
 
+### Embedded Browser
+![Embedded Browser](docs/browser.jpg)
 ### Chat & Agents
 ![Chat & Agents](docs/chat.gif)
 ### Deep Research
