@@ -14,7 +14,9 @@ import importlib.util
 import logging
 import os
 import re
+import time
 from collections import deque
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -54,6 +56,16 @@ HOST_PORT_RE = re.compile(
 
 class BrowserUnavailable(RuntimeError):
     pass
+
+
+TAKEN_OVER_MESSAGE = "the user has taken control of the browser; ask them to hand it back"
+ACTION_DETAIL_MAX_CHARS = 200
+TYPE_PREVIEW_CHARS = 40
+LOCATE_TIMEOUT_MS = 2_000
+
+
+class BrowserTakenOver(BrowserUnavailable):
+    """Raised for programmatic (agent) ops while the user holds the browser."""
 
 
 class BrowserSecurityError(ValueError):
@@ -224,6 +236,11 @@ class EmbeddedBrowserSession:
         self._on_frame = None       # caller's frame callback (data_b64, metadata)
         self._url_listeners: list = []  # framenavigated callbacks (main frame)
         self._listener_page = None  # page the url listeners are attached to
+        # Co-pilot overlay: agent-action listeners (ghost cursor / captions)
+        # and the take-over gate. Neither touches the page, so no re-arming
+        # on page recreation is needed.
+        self._action_listeners: list = []
+        self.user_control: bool = False
 
     def _record(self, kind: str, message: str, url: str = "") -> None:
         self._event_seq += 1
@@ -306,6 +323,70 @@ class EmbeddedBrowserSession:
             self._url_listeners.remove(cb)
         except ValueError:
             pass
+
+    # ── Co-pilot: agent-action events + take-over gate ────────────────────
+
+    def add_action_listener(self, cb) -> None:
+        """Register cb(event) fired when the AGENT drives the page (never for
+        live-view input). event = {action, phase, detail, x, y, ts}."""
+        if cb not in self._action_listeners:
+            self._action_listeners.append(cb)
+
+    def remove_action_listener(self, cb) -> None:
+        try:
+            self._action_listeners.remove(cb)
+        except ValueError:
+            pass
+
+    def set_user_control(self, flag: bool) -> None:
+        """Take-over gate: while True, programmatic ops raise BrowserTakenOver
+        (live-view input keeps working)."""
+        self.user_control = bool(flag)
+        self._record("control", "user" if self.user_control else "agent")
+
+    def _check_control(self, from_user: bool) -> None:
+        if self.user_control and not from_user:
+            raise BrowserTakenOver(TAKEN_OVER_MESSAGE)
+
+    def _emit_action(self, action: str, *, phase: str, detail: str = "", x=None, y=None) -> None:
+        event = {"action": action, "phase": phase, "detail": detail, "x": x, "y": y, "ts": time.time()}
+        if phase != "done":
+            page = self._page
+            url = page.url if page is not None and not page.is_closed() else ""
+            self._record("agent", f"{action} {phase} {detail}".rstrip(), url)
+        for cb in list(self._action_listeners):
+            try:
+                cb(event)
+            except Exception as error:
+                report_exception(logger, "embedded_browser_action_listener_failed", error, outcome="best_effort")
+
+    @asynccontextmanager
+    async def _action(self, action: str, *, from_user: bool = False, detail: str = "", x=None, y=None):
+        """Emit start/done (or error, then re-raise) around one programmatic op.
+        User-initiated calls (panel toolbar) are silent: the overlay narrates
+        the agent only."""
+        if from_user:
+            yield
+            return
+        self._emit_action(action, phase="start", detail=detail, x=x, y=y)
+        try:
+            yield
+        except Exception as error:
+            message = str(error)[:ACTION_DETAIL_MAX_CHARS] or type(error).__name__
+            self._emit_action(action, phase="error", detail=message)
+            raise
+        self._emit_action(action, phase="done", detail=detail)
+
+    async def _locator_center(self, page, selector: str):
+        """Best-effort element center in page CSS px (== screencast device px).
+        Returns (None, None) when the element can't be located quickly."""
+        try:
+            box = await page.locator(selector).first.bounding_box(timeout=LOCATE_TIMEOUT_MS)
+        except Exception:
+            return None, None
+        if not box:
+            return None, None
+        return round(box["x"] + box["width"] / 2), round(box["y"] + box["height"] / 2)
 
     async def _rearm_screencast(self, page) -> None:
         """Restart the screencast on a freshly-created page. Tolerant of races
@@ -437,22 +518,25 @@ class EmbeddedBrowserSession:
         current = page.url
         return {"ok": True, "url": current, "title": await page.title()}
 
-    async def go_back(self) -> dict[str, Any]:
-        async with self._lock:
+    async def go_back(self, *, _from_user: bool = False) -> dict[str, Any]:
+        self._check_control(_from_user)
+        async with self._lock, self._action("go_back", from_user=_from_user):
             page = await self._ensure_page()
             await page.go_back(wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
             self._record("navigation", "go_back", page.url)
             return await self._nav_result(page)
 
-    async def go_forward(self) -> dict[str, Any]:
-        async with self._lock:
+    async def go_forward(self, *, _from_user: bool = False) -> dict[str, Any]:
+        self._check_control(_from_user)
+        async with self._lock, self._action("go_forward", from_user=_from_user):
             page = await self._ensure_page()
             await page.go_forward(wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
             self._record("navigation", "go_forward", page.url)
             return await self._nav_result(page)
 
-    async def reload_page(self) -> dict[str, Any]:
-        async with self._lock:
+    async def reload_page(self, *, _from_user: bool = False) -> dict[str, Any]:
+        self._check_control(_from_user)
+        async with self._lock, self._action("reload_page", from_user=_from_user):
             page = await self._ensure_page()
             await page.reload(wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
             self._record("navigation", "reload", page.url)
@@ -468,9 +552,10 @@ class EmbeddedBrowserSession:
             self._playwright = None
             self._page = None
 
-    async def navigate(self, raw_url: str) -> dict[str, Any]:
+    async def navigate(self, raw_url: str, *, _from_user: bool = False) -> dict[str, Any]:
         url = normalize_url(raw_url)
-        async with self._lock:
+        self._check_control(_from_user)
+        async with self._lock, self._action("navigate", from_user=_from_user, detail=url):
             page = await self._ensure_page()
             try:
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=DEFAULT_TIMEOUT_MS)
@@ -512,27 +597,31 @@ class EmbeddedBrowserSession:
             page = await self._ensure_page()
             return {"url": page.url, "title": await page.title()}
 
-    async def get_page_html(self) -> dict[str, Any]:
-        async with self._lock:
+    async def get_page_html(self, *, _from_user: bool = False) -> dict[str, Any]:
+        self._check_control(_from_user)
+        async with self._lock, self._action("get_page_html", from_user=_from_user):
             page = await self._ensure_page()
             return {"url": page.url, "html": await page.content()}
 
-    async def get_visible_text(self) -> dict[str, Any]:
-        async with self._lock:
+    async def get_visible_text(self, *, _from_user: bool = False) -> dict[str, Any]:
+        self._check_control(_from_user)
+        async with self._lock, self._action("get_visible_text", from_user=_from_user):
             page = await self._ensure_page()
             text = await page.locator("body").inner_text(timeout=DEFAULT_TIMEOUT_MS)
             return {"url": page.url, "text": text}
 
-    async def execute_script(self, script: str) -> dict[str, Any]:
+    async def execute_script(self, script: str, *, _from_user: bool = False) -> dict[str, Any]:
         if not (script or "").strip():
             raise ValueError("script is required")
-        async with self._lock:
+        self._check_control(_from_user)
+        async with self._lock, self._action("execute_script", from_user=_from_user):
             page = await self._ensure_page()
             result = await page.evaluate(script)
             return {"url": page.url, "result": _truncate_value(result)}
 
-    async def screenshot(self, *, full_page: bool = False) -> dict[str, Any]:
-        async with self._lock:
+    async def screenshot(self, *, full_page: bool = False, _from_user: bool = False) -> dict[str, Any]:
+        self._check_control(_from_user)
+        async with self._lock, self._action("screenshot", from_user=_from_user):
             page = await self._ensure_page()
             data = await page.screenshot(full_page=full_page, type="png")
             return {
@@ -541,29 +630,41 @@ class EmbeddedBrowserSession:
                 "base64": base64.b64encode(data).decode("ascii"),
             }
 
-    async def wait_for_selector(self, selector: str, timeout_ms: int = DEFAULT_TIMEOUT_MS) -> dict[str, Any]:
+    async def wait_for_selector(
+        self, selector: str, timeout_ms: int = DEFAULT_TIMEOUT_MS, *, _from_user: bool = False
+    ) -> dict[str, Any]:
         if not (selector or "").strip():
             raise ValueError("selector is required")
-        async with self._lock:
+        self._check_control(_from_user)
+        async with self._lock, self._action("wait_for_selector", from_user=_from_user, detail=selector):
             page = await self._ensure_page()
             await page.wait_for_selector(selector, timeout=max(1000, min(int(timeout_ms), 60_000)))
             return {"ok": True, "url": page.url, "selector": selector}
 
-    async def click(self, selector: str) -> dict[str, Any]:
+    async def click(self, selector: str, *, _from_user: bool = False) -> dict[str, Any]:
         if not (selector or "").strip():
             raise ValueError("selector is required")
+        self._check_control(_from_user)
         async with self._lock:
             page = await self._ensure_page()
-            await page.click(selector, timeout=DEFAULT_TIMEOUT_MS)
-            return {"ok": True, "url": page.url, "selector": selector}
+            x, y = (None, None) if _from_user else await self._locator_center(page, selector)
+            async with self._action("click", from_user=_from_user, detail=selector, x=x, y=y):
+                await page.click(selector, timeout=DEFAULT_TIMEOUT_MS)
+                return {"ok": True, "url": page.url, "selector": selector}
 
-    async def type(self, selector: str, text: str) -> dict[str, Any]:
+    async def type(self, selector: str, text: str, *, _from_user: bool = False) -> dict[str, Any]:
         if not (selector or "").strip():
             raise ValueError("selector is required")
+        self._check_control(_from_user)
+        text = text or ""
+        preview = text if len(text) <= TYPE_PREVIEW_CHARS else text[: TYPE_PREVIEW_CHARS - 1] + "…"
+        detail = f'"{preview}" into {selector}'
         async with self._lock:
             page = await self._ensure_page()
-            await page.fill(selector, text or "", timeout=DEFAULT_TIMEOUT_MS)
-            return {"ok": True, "url": page.url, "selector": selector}
+            x, y = (None, None) if _from_user else await self._locator_center(page, selector)
+            async with self._action("type", from_user=_from_user, detail=detail, x=x, y=y):
+                await page.fill(selector, text, timeout=DEFAULT_TIMEOUT_MS)
+                return {"ok": True, "url": page.url, "selector": selector}
 
     def events(self) -> list[dict[str, Any]]:
         return [event.to_dict() for event in list(self._events)]

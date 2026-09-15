@@ -1,0 +1,123 @@
+/* Apollo — browser-copilot styles. Loaded from index.html after the split core files and before mobile-overrides.css. */
+
+/* Overlay anchor: the ghost cursor is positioned inside the viewport (as DOM,
+   not on the canvas, which is repainted every frame). */
+.browser-viewport {
+  position: relative;
+}
+
+.browser-ghost-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+  z-index: 3;
+  opacity: 0;
+  transform: translate(-9999px, -9999px);
+  transition: transform 350ms cubic-bezier(0.22, 1, 0.36, 1), opacity 250ms ease;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--red) 70%, transparent))
+          drop-shadow(0 1px 2px rgba(0, 0, 0, 0.45));
+}
+
+.browser-ghost-cursor.is-visible {
+  opacity: 1;
+}
+
+.browser-ghost-cursor svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.browser-ghost-ripple {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  border-radius: 50%;
+  border: 2px solid var(--red);
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0;
+  transform: scale(0.3);
+}
+
+.browser-ghost-ripple.is-rippling {
+  animation: browser-ghost-ripple 500ms ease-out forwards;
+}
+
+@keyframes browser-ghost-ripple {
+  0%   { opacity: 0.9; transform: scale(0.3); }
+  100% { opacity: 0;   transform: scale(1.6); }
+}
+
+.browser-agent-caption {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--red) 80%, var(--fg));
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 300ms ease;
+}
+
+.browser-agent-caption.is-visible {
+  opacity: 1;
+}
+
+.browser-agent-caption.is-error {
+  color: var(--color-warning, #d19a66);
+}
+
+/* id-qualified: .browser-tool-btn in mobile-overrides.css (loaded later)
+   forces width:32px / font-size:18px on every toolbar button. */
+#browser-modal .browser-control-toggle {
+  width: auto;
+  min-width: max-content;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.browser-control-toggle[aria-pressed="true"] {
+  border-color: var(--accent, var(--color-accent, #00aaff));
+  box-shadow: 0 0 0 1px var(--accent, var(--color-accent, #00aaff)) inset;
+}
+
+.browser-status-row.is-user-control #browser-status {
+  color: var(--accent, var(--color-accent, #00aaff));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-ghost-cursor,
+  .browser-agent-caption {
+    transition: none;
+  }
+  .browser-ghost-ripple.is-rippling {
+    animation: none;
+  }
+}
+
+/* The toolbar is a fixed-column grid in mobile-overrides.css (which loads
+   after this file). The take-over toggle adds a seventh cell, so the grid
+   template is re-declared here with an id-qualified selector to win the
+   cascade regardless of order. */
+#browser-modal .browser-toolbar {
+  grid-template-columns: 32px 32px 32px minmax(160px, 1fr) auto auto 32px;
+}
+@media (max-width: 820px) {
+  #browser-modal .browser-toolbar {
+    grid-template-columns: 30px 30px 30px minmax(0, 1fr) 46px auto 30px;
+  }
+  #browser-modal .browser-control-toggle {
+    padding: 0 8px;
+    font-size: 11px;
+  }
+}

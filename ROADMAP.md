@@ -28,11 +28,16 @@ the codebase, you are probably right to stay away.
 - Cookbook error feedback and logging. Failed downloads, dependency installs,
   preflights, and serve jobs should show the actual command/output/error in the
   UI, with copyable logs and clear next steps instead of just "crashed".
+  *2026-09-11: first pass shipped — per-session log tee, command + output tail
+  + copy buttons on failed cards. Remote-over-SSH jobs still lack the tee.*
 - Agent prompt/context bloat. Agent mode is too heavy for smaller local models:
   tool schemas, skills, memory, documents, and instructions can eat the context
   before the user request really starts. We need slimmer prompts, better tool
   selection, smaller default tool sets, and clearer guidance for models with
   4k/8k/16k context windows.
+  *2026-09-11: first pass shipped — context-tiered tool budget (`agent_prompt_tier`),
+  capped skill index, smaller always-on tool set under 16k. Memory recall `k` is
+  not tier-aware yet.*
 - Skill/tool prompt-injection audit. User-editable skills, notes, documents,
   fetched pages, and memories should be treated as untrusted data. Keep testing
   whether models follow malicious instructions from those surfaces.

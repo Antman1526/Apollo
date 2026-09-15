@@ -1,0 +1,100 @@
+/* Apollo — cookbook-feedback styles. Loaded from index.html after the split core files and before mobile-overrides.css. */
+
+/* Failure feedback: collapsible "Details" block inside the diagnosis card —
+   the launch command and the last output lines, each with a copy button. */
+.cookbook-diag-details {
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.cookbook-diag-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cookbook-diag-details-toggle:hover {
+  background: transparent;
+  color: var(--fg);
+  opacity: 0.85;
+}
+.cookbook-diag-details-body {
+  margin-top: 6px;
+}
+.cookbook-diag-detail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0 3px;
+}
+.cookbook-diag-detail-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.8;
+}
+.cookbook-diag-detail-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  min-height: 22px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.cookbook-diag-detail-copy:hover {
+  border-color: var(--fg);
+}
+.cookbook-diag-detail-copy.copied {
+  color: var(--green, #50fa7b);
+  border-color: var(--green, #50fa7b);
+}
+.cookbook-diag-detail-copy svg {
+  display: block;
+  flex: none;
+}
+.cookbook-diag-cmd,
+.cookbook-diag-tail {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 220px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.cookbook-diag-cmd {
+  border-left: 3px solid var(--red);
+  max-height: 120px;
+}
+/* Narrow screens: stack the label above its copy button so nothing clips. */
+@media (max-width: 480px) {
+  .cookbook-diag-detail-row {
+    flex-wrap: wrap;
+  }
+  .cookbook-diag-cmd,
+  .cookbook-diag-tail {
+    font-size: 10.5px;
+    max-height: 160px;
+  }
+}

@@ -239,6 +239,10 @@
   <link rel="stylesheet" href="/static/css/notes.css?v=split-20260708">
   <link rel="stylesheet" href="/static/css/calendar.css?v=split-20260708">
   <link rel="stylesheet" href="/static/css/theme-extras.css?v=split-20260708">
+  <link rel="stylesheet" href="/static/css/browser-copilot.css?v=wow-20260911">
+  <link rel="stylesheet" href="/static/css/home.css?v=wow-20260911">
+  <link rel="stylesheet" href="/static/css/artifacts.css?v=wow-20260911">
+  <link rel="stylesheet" href="/static/css/cookbook-feedback.css?v=wow-20260911">
   <link rel="stylesheet" href="/static/css/mobile-overrides.css?v=split-20260708">
   <link rel="modulepreload" href="/static/app.js">
   <link rel="modulepreload" href="/static/js/chat.js">
@@ -1048,7 +1052,7 @@
         </svg>
         <span class="incognito-label">Nobody</span>
       </button>
-      <div id="welcome-setup" style="display:none"></div>
+      <div id="welcome-setup" class="home-brief" aria-live="polite"></div>
     </div>
     <script nonce="{{CSP_NONCE}}">
     (function(){
@@ -1500,11 +1504,13 @@
         <button type="button" class="browser-tool-btn" id="browser-reload" title="Reload" aria-label="Reload">↻</button>
         <input id="browser-address" class="browser-address" type="text" placeholder="localhost:3000 or https://docs.example.com" autocomplete="off" spellcheck="false" aria-label="Browser address" />
         <button type="button" class="browser-go" id="browser-go">Go</button>
+        <button type="button" class="browser-tool-btn browser-control-toggle" id="browser-control-toggle" aria-pressed="false" title="Take over the browser (pause the agent)">Take over</button>
         <button type="button" class="browser-tool-btn" id="browser-open-external" title="Open current page in a new browser tab" aria-label="Open externally">↗</button>
       </div>
       <div class="browser-status-row">
         <span id="browser-status">Ready</span>
         <span id="browser-security" class="browser-security"></span>
+        <span id="browser-agent-caption" class="browser-agent-caption" aria-live="polite"></span>
       </div>
       <div class="browser-body">
         <div class="browser-viewport">
@@ -2210,6 +2216,11 @@
                 <input type="checkbox" checked data-ui-key="welcome-text"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18"/><path d="M8 2v4M16 2v4"/></svg></span>
+                <span class="vis-label">Home Brief <span class="vis-hint">Setup checklist &amp; today's agenda on empty chat</span></span>
+                <input type="checkbox" checked data-ui-key="welcome-brief"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>
                 <span class="vis-label">Incognito Mode <span class="vis-hint">No memory, no history saved</span></span>
                 <input type="checkbox" checked data-ui-key="incognito-btn"><span class="vis-switch"></span>
@@ -2223,6 +2234,11 @@
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2a7 7 0 0 0-7 7c0 3 2 5.5 4.5 7.5.7.6 1.2 1.3 1.5 2h2c.3-.7.8-1.4 1.5-2C17 14.5 19 12 19 9a7 7 0 0 0-7-7z"/><line x1="10" y1="22" x2="14" y2="22"/></svg></span>
                 <span class="vis-label">Thinking Process <span class="vis-hint">Show &lt;think&gt; collapsible bars</span></span>
                 <input type="checkbox" checked data-ui-key="show-thinking"><span class="vis-switch"></span>
+              </label>
+              <label class="vis-row">
+                <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg></span>
+                <span class="vis-label">Auto-open Artifacts <span class="vis-hint">Preview HTML / SVG replies in the side pane</span></span>
+                <input type="checkbox" checked data-ui-key="artifacts_auto_open"><span class="vis-switch"></span>
               </label>
               <label class="vis-row">
                 <span class="vis-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/><path d="M4 4l16 16"/></svg></span>
@@ -2728,6 +2744,9 @@
 <script type="module" src="/static/js/settings.js"></script>
 <script type="module" src="/static/js/admin.js"></script>
 <script type="module" src="/static/js/assistant.js"></script>
+<script type="module" src="/static/js/artifacts.js"></script>
+<script type="module" src="/static/js/homeBrief.js"></script>
+<script type="module" src="/static/js/browserCopilot.js"></script>
 <script type="module" src="/static/app.js"></script>  <!-- app.js must be LAST -->
 <script type="module" src="/static/js/init.js"></script>
 <script type="module" src="/static/js/a11y.js"></script>

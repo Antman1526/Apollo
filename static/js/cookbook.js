@@ -17,7 +17,7 @@ import {
   _tmuxCmd, _renderRunningTab, _clearCookbookNotif,
   _launchServeTask, _serveAutoFix, _serveAutoRetry, _serveAutoRetryReplace, _serveAutoRetryRemove,
   _startBackgroundMonitor, _syncFromServer,
-  _retryDownload, _nextAvailablePort, _processQueue,
+  _retryDownload, _nextAvailablePort, _processQueue, _recordLaunchFailure,
 } from './cookbookRunning.js';
 
 import {
@@ -1933,7 +1933,7 @@ initRunning({
 // Init download module (adds SSE, panel rendering, download commands)
 initDownload({
   ...shared,
-  _addTask,
+  _addTask, _recordLaunchFailure,
   _renderRunningTab,
   _loadTasks,
   _saveTasks,

@@ -208,6 +208,141 @@ def test_url_listener_handler_installed_once_per_page():
     assert seen == ["http://a/"]
 
 
+# ── agent-action listeners + take-over gate (co-pilot overlay) ────────────
+
+
+class _ActionPage(_FakePage):
+    """Page stub for click/type: exposes locator().first.bounding_box() and
+    records page.click/fill calls. `fail` makes click raise."""
+
+    def __init__(self, box=None, fail=None):
+        super().__init__()
+        self.url = "http://example.com/"
+        self.box = box
+        self.fail = fail
+        self.calls = []
+
+    def locator(self, selector):
+        page = self
+
+        class _First:
+            async def bounding_box(self, **kw):
+                return page.box
+
+        class _Locator:
+            first = _First()
+
+        return _Locator()
+
+    async def click(self, selector, **kw):
+        if self.fail is not None:
+            raise self.fail
+        self.calls.append(("click", selector))
+
+    async def fill(self, selector, text, **kw):
+        self.calls.append(("fill", selector, text))
+
+
+async def test_action_listener_fan_out_and_removal():
+    page = _ActionPage(box={"x": 10, "y": 20, "width": 100, "height": 40})
+    session = _session_with_page(page)
+    seen = []
+
+    def cb(event):
+        seen.append(event)
+
+    session.add_action_listener(cb)
+    session.add_action_listener(cb)  # idempotent
+    await session.click("button.login")
+
+    assert [(e["action"], e["phase"]) for e in seen] == [("click", "start"), ("click", "done")]
+    start = seen[0]
+    assert (start["x"], start["y"]) == (60, 40)  # element centre in page px
+    assert start["detail"] == "button.login"
+    assert isinstance(start["ts"], float)
+    assert page.calls == [("click", "button.login")]
+    # Recorded into the console/event deque as well.
+    assert any(e["kind"] == "agent" and "click start" in e["message"] for e in session.events())
+
+    session.remove_action_listener(cb)
+    session.remove_action_listener(cb)  # removing twice is harmless
+    await session.click("a.next")
+    assert len(seen) == 2
+
+
+async def test_action_listener_exception_does_not_break_the_op():
+    page = _ActionPage(box=None)  # no bounding box → coords None
+    session = _session_with_page(page)
+    seen = []
+
+    def boom(event):
+        raise RuntimeError("listener exploded")
+
+    session.add_action_listener(boom)
+    session.add_action_listener(seen.append)
+    out = await session.click("#go")
+
+    assert out["ok"] is True
+    assert page.calls == [("click", "#go")]
+    assert [e["phase"] for e in seen] == ["start", "done"]
+    assert seen[0]["x"] is None and seen[0]["y"] is None
+
+
+async def test_type_emits_elided_preview_and_error_phase_reraises():
+    page = _ActionPage(box={"x": 0, "y": 0, "width": 10, "height": 10})
+    session = _session_with_page(page)
+    seen = []
+    session.add_action_listener(seen.append)
+
+    long_text = "x" * 60
+    await session.type("#q", long_text)
+    assert seen[0]["action"] == "type"
+    assert seen[0]["detail"] == f'"{"x" * 39}…" into #q'
+    assert (seen[0]["x"], seen[0]["y"]) == (5, 5)
+    assert page.calls == [("fill", "#q", long_text)]
+
+    failing = _ActionPage(box=None, fail=RuntimeError("no such element " + "z" * 300))
+    session = _session_with_page(failing)
+    errors = []
+    session.add_action_listener(errors.append)
+    with pytest.raises(RuntimeError):
+        await session.click("#missing")
+    assert [e["phase"] for e in errors] == ["start", "error"]
+    assert errors[1]["detail"].startswith("no such element")
+    assert len(errors[1]["detail"]) == 200
+
+
+async def test_user_control_blocks_agent_ops_but_not_live_input():
+    page = _ActionPage(box={"x": 0, "y": 0, "width": 2, "height": 2})
+    session = _session_with_page(page)
+    seen = []
+    session.add_action_listener(seen.append)
+
+    session.set_user_control(True)
+    assert session.user_control is True
+    with pytest.raises(embedded_browser.BrowserTakenOver) as raised:
+        await session.click("button")
+    assert "taken control" in str(raised.value)
+    assert isinstance(raised.value, embedded_browser.BrowserUnavailable)
+    assert page.calls == []
+    assert seen == []  # nothing narrated for a refused op
+
+    # Live-view input from the panel keeps flowing.
+    await session.input_mouse("move", 1, 2)
+    assert page.mouse.calls == [("move", 1, 2)]
+
+    # Panel POST/WS handlers bypass the gate and are NOT narrated.
+    out = await session.click("button", _from_user=True)
+    assert out["ok"] is True and page.calls == [("click", "button")]
+    assert seen == []
+
+    session.set_user_control(False)
+    await session.click("button")
+    assert [e["phase"] for e in seen] == ["start", "done"]
+    kinds = [e["kind"] for e in session.events()]
+    assert kinds.count("control") == 2
+
+
 # ── frame forwarder backpressure ──────────────────────────────────────────
 
 
@@ -247,7 +382,7 @@ def _ws_app(ws_validate=None, ws_authorize=None):
 def stub_live_session(monkeypatch):
     """Stub embedded_browser.session so the WS route streams one fake frame and
     records input without launching real Chromium."""
-    captured = {"mouse": [], "frames_started": False}
+    captured = {"mouse": [], "frames_started": False, "action_listeners": [], "control": []}
 
     async def get_current_url():
         return {"url": "http://stub/", "title": "Stub"}
@@ -262,6 +397,15 @@ def stub_live_session(monkeypatch):
 
     async def input_mouse(kind, x, y, **kw):
         captured["mouse"].append((kind, x, y, kw))
+        # A "click" from the panel doubles as the trigger for a synthetic agent
+        # action, so tests can fire the listener from inside the server loop.
+        if kind == "agent-probe":
+            for cb in list(captured["action_listeners"]):
+                cb({"action": "click", "phase": "start", "detail": "#probe", "x": x, "y": y, "ts": 1.0})
+
+    def set_user_control(flag):
+        fake.user_control = bool(flag)
+        captured["control"].append(fake.user_control)
 
     fake = SimpleNamespace(
         get_current_url=get_current_url,
@@ -270,6 +414,10 @@ def stub_live_session(monkeypatch):
         input_mouse=input_mouse,
         add_url_listener=lambda cb: None,
         remove_url_listener=lambda cb: None,
+        add_action_listener=captured["action_listeners"].append,
+        remove_action_listener=captured["action_listeners"].remove,
+        set_user_control=set_user_control,
+        user_control=False,
     )
     monkeypatch.setattr(embedded_browser, "session", fake)
     # Reset the module-level single-viewer handle between tests.
@@ -298,13 +446,22 @@ def test_ws_rejects_without_privilege(stub_live_session):
                 pass
 
 
+def _receive_type(ws, wanted: str, limit: int = 6):
+    """The connect handshake sends a frame AND a control message; their order
+    depends on task scheduling, so read until the wanted type shows up."""
+    for _ in range(limit):
+        msg = ws.receive_json()
+        if msg.get("type") == wanted:
+            return msg
+    raise AssertionError(f"no {wanted!r} message within {limit} messages")
+
+
 def test_ws_streams_frame_and_receives_input(stub_live_session):
     # auth disabled (both validators default permissive)
     app = _ws_app()
     with TestClient(app) as c:
         with c.websocket_connect("/api/browser/ws") as ws:
-            frame = ws.receive_json()
-            assert frame["type"] == "frame"
+            frame = _receive_type(ws, "frame")
             assert frame["data"] == "ZmFrZQ=="
             assert frame["w"] == 800 and frame["h"] == 600
 
@@ -319,6 +476,35 @@ def test_ws_streams_frame_and_receives_input(stub_live_session):
     assert stub_live_session["mouse"], "mouse message never reached the stub"
     kind, x, y, kw = stub_live_session["mouse"][0]
     assert (kind, x, y) == ("click", 12, 34)
+
+
+def test_ws_sends_control_mode_on_connect_and_round_trips_takeover(stub_live_session):
+    app = _ws_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/api/browser/ws") as ws:
+            hello = _receive_type(ws, "control")
+            assert hello == {"type": "control", "mode": "agent"}
+
+            ws.send_text(json.dumps({"type": "control", "mode": "user"}))
+            assert _receive_type(ws, "control") == {"type": "control", "mode": "user"}
+            ws.send_text(json.dumps({"type": "control", "mode": "agent"}))
+            assert _receive_type(ws, "control") == {"type": "control", "mode": "agent"}
+    assert stub_live_session["control"] == [True, False]
+    # The viewer unregistered its action listener on disconnect.
+    assert stub_live_session["action_listeners"] == []
+
+
+def test_ws_forwards_agent_action_to_viewer(stub_live_session):
+    app = _ws_app()
+    with TestClient(app) as c:
+        with c.websocket_connect("/api/browser/ws") as ws:
+            _receive_type(ws, "control")  # handshake done → listener registered
+            assert len(stub_live_session["action_listeners"]) == 1
+            ws.send_text(json.dumps({"type": "mouse", "kind": "agent-probe", "x": 40, "y": 50}))
+            msg = _receive_type(ws, "agent_action")
+            assert msg["action"] == "click" and msg["phase"] == "start"
+            assert (msg["x"], msg["y"]) == (40, 50)
+            assert msg["detail"] == "#probe"
 
 
 def test_ws_reports_browser_unavailable(monkeypatch):

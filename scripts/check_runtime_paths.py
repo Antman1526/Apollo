@@ -13,7 +13,7 @@ EXEMPT_RELATIVE_PATHS = {
     Path("src/data_migration.py"),
 }
 EXCLUDED_TOP_LEVEL = {
-    "tests", "venv", ".venv", ".git", "node_modules", ".worktrees", "build", "dist"
+    "tests", "venv", ".venv", ".git", "node_modules", ".worktrees", ".claude", "build", "dist"
 }
 
 
