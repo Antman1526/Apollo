@@ -96,6 +96,16 @@ def _note_to_dict(note: Note) -> Dict[str, Any]:
     }
 
 
+def query_active_notes(db, owner: Optional[str]):
+    """Non-archived notes, owner-scoped exactly like GET /api/notes' default
+    (archived=None) listing. Shared with the Today briefing so both read the
+    same rows the same way — `owner is None` (no auth / anonymous) returns
+    every owner's notes, matching the original single-user behavior."""
+    q = db.query(Note).filter(Note.archived == False)  # noqa: E712
+    if owner is not None:
+        q = q.filter(Note.owner == owner)
+    return q
+
 
 # ---------------------------------------------------------------------------
 # Reminder dispatch — module-level so background tasks (built-in actions)
@@ -482,13 +492,12 @@ def setup_note_routes(task_scheduler=None):
         user = _owner(request)
         db = SessionLocal()
         try:
-            q = db.query(Note)
-            if user is not None:
-                q = q.filter(Note.owner == user)
-            if archived is not None:
-                q = q.filter(Note.archived == archived)
+            if archived:
+                q = db.query(Note).filter(Note.archived == True)  # noqa: E712
+                if user is not None:
+                    q = q.filter(Note.owner == user)
             else:
-                q = q.filter(Note.archived == False)
+                q = query_active_notes(db, user)
             if label:
                 q = q.filter(Note.label == label)
             # Archived view: most recently archived first. Active view: pin + manual order.

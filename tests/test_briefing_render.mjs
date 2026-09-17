@@ -64,7 +64,7 @@ test('renderBriefingHTML shows count pills for non-zero sources', () => {
   });
   assert.ok(html.includes('briefing-pill'));
   assert.ok(html.includes('1 Mail'));
-  assert.ok(html.includes('1 Today'));
+  assert.ok(html.includes('1 Events'));
   assert.ok(!html.includes('0 Notes'));
   assert.ok(!html.includes('0 Tasks'));
 });
@@ -90,6 +90,12 @@ test('renderBriefingHTML renders the header with a formatted date', () => {
   const html = renderBriefingHTML(BASE);
   assert.ok(html.includes('Today ·'));
   assert.ok(html.includes('September'));
+});
+
+test('renderBriefingHTML emits an accessible toggle button and a hidden, controlled body', () => {
+  const html = renderBriefingHTML(BASE);
+  assert.match(html, /<button[^>]*class="briefing-header"[^>]*aria-expanded="false"[^>]*aria-controls="briefing-body"[^>]*>/);
+  assert.match(html, /<div[^>]*class="briefing-body"[^>]*id="briefing-body"[^>]* hidden[^>]*>/);
 });
 
 test('formatBriefingTime formats a timed ISO datetime', () => {

@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from services.briefing import compose_briefing
 
 NOW = datetime(2026, 9, 16, 9, 0, tzinfo=timezone.utc)
@@ -36,6 +36,18 @@ def test_compose_briefing_selects_today_and_unread():
 def test_compose_briefing_handles_empty_and_bad_dates():
     b = compose_briefing(now=NOW, emails=[{"uid": "x", "date": "not-a-date", "flag_read": False}], events=[{"uid": "e", "dtstart": None}], notes=None, tasks=None)
     assert b["emails"] == [] and b["events"] == [] and b["notes"] == [] and b["tasks"] == []
+
+
+def test_compose_briefing_uses_the_caller_timezone_for_today():
+    # "now" is early UTC morning, but it's still last-night in UTC-7 — the
+    # date and the same-day event selection must follow the caller's tz,
+    # not the server's UTC clock.
+    now = datetime(2026, 9, 17, 1, 0, tzinfo=timezone.utc)
+    tz = timezone(timedelta(hours=-7))
+    events = [{"uid": "e1", "summary": "Late call", "dtstart": "2026-09-16T23:00:00-07:00", "dtend": "2026-09-17T00:00:00-07:00", "all_day": False}]
+    b = compose_briefing(now=now, emails=[], events=events, notes=[], tasks=[], tz=tz)
+    assert b["date"] == "2026-09-16"
+    assert [e["uid"] for e in b["events"]] == ["e1"]
 
 
 def test_email_cap_and_order():
