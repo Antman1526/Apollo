@@ -675,6 +675,14 @@ build_and_include_router(app, "Compare", setup_compare_routes, session_manager, 
 from routes.council_routes import setup_council_routes
 build_and_include_router(app, "Council", setup_council_routes, session_manager, logger=logger)
 
+# Today briefing (welcome-screen card: unread email, today's events, pinned/
+# due notes, tasks due today). No manager objects exist for email/calendar/
+# notes/tasks in this codebase — the route module fetches each source
+# itself, owner-scoped exactly like that source's own route, so it takes no
+# constructor args (same as Calendar above).
+from routes.briefing_routes import setup_briefing_routes
+build_and_include_router(app, "Briefing", setup_briefing_routes, logger=logger)
+
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
 build_and_include_router(app, "Preferences", setup_prefs_routes, logger=logger)

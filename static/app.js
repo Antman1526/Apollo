@@ -12,6 +12,7 @@ import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
 import { initCouncil } from './js/council.js';
+import { initBriefing } from './js/briefing.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
 import markdownModule from './js/markdown.js';
@@ -3600,6 +3601,7 @@ function startApolloApp() {
     showToast: uiModule.showToast, styledPrompt: uiModule.styledPrompt,
     hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
   });
+  initBriefing({ showToast: uiModule.showToast });
 
   // Search buttons — icon rail + sidebar
   const railSearchBtn = el('rail-search-btn');

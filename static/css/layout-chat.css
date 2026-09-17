@@ -269,6 +269,147 @@
     @media (max-height: 380px) {
       #welcome-recent, #welcome-prompts { pointer-events: none; }
     }
+    /* Today briefing card (briefing.js) — unread email, today's events,
+       pinned/due notes, tasks due today. Collapsed by default; :empty
+       collapses the box entirely when incognito/no-fetch-yet leaves it
+       without markup, so it never shows a stray empty panel. */
+    .welcome-briefing {
+      pointer-events: auto;
+      max-width: 640px;
+      width: 100%;
+      margin: var(--space-3) auto 0;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-1);
+      overflow: hidden;
+    }
+    .welcome-briefing:empty { display: none; }
+    @media (max-height: 600px) {
+      .welcome-briefing { display: none; }
+    }
+    .briefing-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      cursor: pointer;
+      user-select: none;
+    }
+    .briefing-header:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
+    .briefing-chevron {
+      flex-shrink: 0;
+      color: var(--color-muted);
+      transition: transform var(--dur) var(--ease-out);
+    }
+    .welcome-briefing--open .briefing-chevron { transform: rotate(90deg); }
+    .briefing-title {
+      font-size: 0.82rem;
+      font-weight: 600;
+      color: var(--fg);
+    }
+    .briefing-pills {
+      margin-left: auto;
+      display: flex;
+      gap: var(--space-1);
+    }
+    .briefing-pill {
+      background: var(--surface-3);
+      border-radius: var(--radius-pill);
+      padding: 1px 8px;
+      font-size: 0.68rem;
+      color: var(--color-muted);
+      white-space: nowrap;
+    }
+    .briefing-body {
+      max-height: 0;
+      padding: 0 var(--space-3);
+      overflow: hidden;
+      transition: max-height var(--dur) var(--ease-out), padding var(--dur) var(--ease-out);
+    }
+    .welcome-briefing--open .briefing-body {
+      max-height: 400px;
+      padding: 0 var(--space-3) var(--space-3);
+      overflow-y: auto;
+    }
+    .briefing-section { margin-top: var(--space-2); }
+    .briefing-section-label {
+      display: block;
+      font-size: 0.65rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+    }
+    .briefing-list {
+      list-style: none;
+      margin: var(--space-1) 0 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .briefing-row {
+      display: flex;
+      gap: var(--space-2);
+      align-items: baseline;
+      font-size: 0.78rem;
+      text-align: left;
+    }
+    .briefing-row-time {
+      flex-shrink: 0;
+      min-width: 52px;
+      color: var(--color-muted);
+      font-variant-numeric: tabular-nums;
+    }
+    .briefing-row-primary { color: var(--fg); font-weight: 500; }
+    .briefing-row-secondary {
+      color: var(--color-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .briefing-subitems {
+      list-style: none;
+      margin: 2px 0 0 52px;
+      padding: 0;
+      font-size: 0.72rem;
+      color: var(--color-muted);
+    }
+    .briefing-empty {
+      padding: var(--space-2) 0;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--color-muted);
+    }
+    .briefing-summary {
+      margin: 0 0 var(--space-2);
+      font-size: 0.8rem;
+      line-height: 1.4;
+      color: var(--fg);
+    }
+    .briefing-warnings {
+      margin-top: var(--space-2);
+      font-size: 0.66rem;
+      color: var(--color-warning);
+    }
+    .briefing-readaloud-btn {
+      margin-top: var(--space-3);
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-pill);
+      padding: 4px 12px;
+      font: inherit;
+      font-size: 0.72rem;
+      color: var(--fg);
+      cursor: pointer;
+      transition: border-color var(--dur) var(--ease-out);
+    }
+    .briefing-readaloud-btn:hover { border-color: var(--accent, var(--red)); }
+    .briefing-readaloud-btn:disabled { opacity: 0.5; cursor: default; }
     /* Incognito toggle — on welcome screen */
     .incognito-btn {
       pointer-events: auto;
