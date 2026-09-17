@@ -407,7 +407,8 @@
     #tools-section {
       margin-top: 1px;
     }
-    #tools-section .list-item {
+    #tools-section .list-item,
+    #know-section .list-item {
       padding: 8px 8px;
     }
     .sidebar.right-side .sidebar-header {
