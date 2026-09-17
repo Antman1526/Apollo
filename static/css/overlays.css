@@ -225,6 +225,65 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       font-size: 13px;
     }
 
+    /* ---------- Ctrl+K command palette ---------- */
+    .palette-group {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--color-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: var(--space-2) var(--space-3) var(--space-1);
+    }
+    .palette-row {
+      display: flex;
+      align-items: baseline;
+      gap: var(--space-3);
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: background var(--dur-fast) var(--ease-out),
+                  box-shadow var(--dur-fast) var(--ease-out);
+    }
+    .palette-row.active {
+      background: var(--surface-2);
+      /* App themes leave --accent unset; --red is the codebase-wide fallback. */
+      box-shadow: inset 3px 0 0 var(--accent, var(--red));
+    }
+    .palette-row-label {
+      flex: 1;
+      min-width: 0;
+      font-size: 13px;
+      color: var(--fg);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .palette-row-hint {
+      flex-shrink: 0;
+      font-size: 10px;
+      color: var(--color-muted);
+      white-space: nowrap;
+    }
+    .palette-hint {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      flex-wrap: wrap;
+      border-top: 1px solid var(--border);
+      padding: var(--space-2) var(--space-3);
+      font-size: 10px;
+      color: var(--color-muted);
+    }
+    .palette-hint kbd {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 1px var(--space-1);
+      font-family: inherit;
+      font-size: 10px;
+      color: var(--fg);
+    }
+
     /* ---------- Theme popup (uses .modal > .modal-content frame) ---------- */
     #theme-modal { z-index: 260; }
     #theme-popup .theme-popup-sub { color: color-mix(in srgb, var(--fg) 50%, transparent); font-size: 11px; margin-bottom: 10px; }

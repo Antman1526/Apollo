@@ -43,7 +43,7 @@ import * as researchPanelModule from './js/research/panel.js';
 import browserPanelModule from './js/browserPanel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import { initKeyboardShortcuts, runShortcutAction } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
 import { initSystemPulse } from './js/systemPulse.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
@@ -3582,7 +3582,11 @@ function startApolloApp() {
   }  
   // Initialize search chat module
   if (searchChatModule) {
-    searchChatModule.init(API_BASE);
+    searchChatModule.init(API_BASE, {
+      getSessions: sessionModule.getSessions, selectSession: sessionModule.selectSession,
+      createDirectChat: sessionModule.createDirectChat, runAction: runShortcutAction,
+      getCachedItems: modelsModule.getCachedItems, isChatCapable: modelsModule.isChatCapable,
+    });
   }
 
   // Search buttons — icon rail + sidebar

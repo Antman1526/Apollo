@@ -31,6 +31,216 @@ export function _matchesCombo(e, combo, isMac = IS_MAC) {
   return e.key.toLowerCase() === key;
 }
 
+// Module refs captured by initKeyboardShortcuts so the key handler and the
+// command palette can share one dispatch (runShortcutAction).
+let _mods = null;
+
+// ── "Toggle Window" — close whatever tool window is open, or reopen the
+// last one. Maps each window's modal element to the button/title that
+// opens it (mirrors modalManager's _AUTO_WIRE, plus email's section title).
+const _WINDOW_TRIGGERS = {
+  'settings-modal':         'user-bar-settings',
+  'theme-modal':            'tool-theme-btn',
+  'tasks-modal':            'tool-tasks-btn',
+  'notes-panel':            'tool-notes-btn',
+  'memory-modal':           'tool-memory-btn',
+  'doclib-modal':           'tool-library-btn',
+  'gallery-modal':          'tool-gallery-btn',
+  'research-overlay':       'tool-research-btn',
+  'cookbook-modal':         'tool-cookbook-btn',
+  'compare-model-overlay':  'tool-compare-btn',
+  'calendar-modal':         'tool-calendar-btn',
+  'email-lib-modal':        'email-section-title',
+};
+let _lastWindow = 'settings-modal';
+
+// Open-tool actions — click the sidebar tool button so each tool's own
+// open/toggle logic runs. Unbound (empty) combos never match.
+const _toolBtns = {
+  open_calendar: 'tool-calendar-btn',
+  open_compare:  'tool-compare-btn',
+  open_cookbook: 'tool-cookbook-btn',
+  open_research: 'tool-research-btn',
+  open_gallery:  'tool-gallery-btn',
+  open_library:  'tool-library-btn',
+  open_memory:   'tool-memory-btn',
+  open_notes:    'tool-notes-btn',
+  open_tasks:    'tool-tasks-btn',
+  open_theme:    'tool-theme-btn',
+  open_browser:  'tool-browser-btn',
+};
+
+const _windowVisible = (id) => {
+  const m = document.getElementById(id);
+  if (!m || m.classList.contains('hidden')) return false;
+  const cs = getComputedStyle(m);
+  if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+  return m.offsetWidth > 0 || m.offsetHeight > 0 || m.getClientRects().length > 0;
+};
+
+function _toggleActiveWindow() {
+  const { el, settingsModule } = _mods;
+  // Close the first open window (remembering it), else reopen the last one.
+  let openId = null;
+  for (const id in _WINDOW_TRIGGERS) {
+    if (_windowVisible(id)) { openId = id; break; }
+  }
+  if (openId) {
+    _lastWindow = openId;
+    const m = document.getElementById(openId);
+    const closeBtn = m && m.querySelector('.close-btn, .modal-close, [data-close]');
+    if (closeBtn) closeBtn.click();
+    else if (openId === 'settings-modal' && settingsModule) settingsModule.close();
+    else { const t = el(_WINDOW_TRIGGERS[openId]); if (t) t.click(); }
+  } else if (_lastWindow === 'settings-modal') {
+    if (settingsModule) settingsModule.open();
+  } else {
+    const t = el(_WINDOW_TRIGGERS[_lastWindow]);
+    if (t) t.click();
+    else if (settingsModule) settingsModule.open();
+  }
+}
+
+/**
+ * Run a keybind action by id — the single dispatch shared by the keydown
+ * handler and the Ctrl+K command palette. No-ops until keyboard shortcuts
+ * have been initialized.
+ * @param {string} actionId - e.g. 'new_session', 'settings', 'open_notes'
+ */
+export function runShortcutAction(actionId) {
+  if (!_mods) return;
+  const {
+    el, Storage, sessionModule, uiModule, chatModule,
+    settingsModule, searchChatModule,
+    _closeCompareIfActive, _deactivateIncognito, API_BASE
+  } = _mods;
+
+  if (_toolBtns[actionId]) {
+    const b = el(_toolBtns[actionId]);
+    if (b) b.click();
+    return;
+  }
+
+  switch (actionId) {
+    case 'search': {
+      if (searchChatModule) {
+        searchChatModule.isOpen() ? searchChatModule.closeSearch() : searchChatModule.openSearch();
+      }
+      return;
+    }
+    case 'toggle_sidebar': {
+      var sb = document.getElementById('sidebar');
+      var ir = document.getElementById('icon-rail');
+      if (sb && !sb.classList.contains('hidden')) {
+        sb.classList.add('hidden');
+      } else {
+        if (ir) ir.classList.remove('rail-hidden');
+        if (sb) sb.classList.remove('hidden');
+      }
+      if (typeof syncRailSide === 'function') syncRailSide();
+      return;
+    }
+    case 'tts': {
+      var mgr = window.aiTTSManager;
+      if (!mgr || !mgr.available) return;
+      if (mgr.isPlaying || mgr._processing) { mgr.stop(); return; }
+      var allAI = document.querySelectorAll('#chat-history .msg-ai');
+      for (var i = allAI.length - 1; i >= 0; i--) {
+        var ttsBtn = allAI[i].querySelector('.ai-tts-button');
+        if (ttsBtn) { ttsBtn.click(); return; }
+      }
+      return;
+    }
+    case 'fav_session': {
+      const sid = sessionModule && sessionModule.getCurrentSessionId();
+      if (!sid) return;
+      const s = sessionModule.getSessions().find(x => x.id === sid);
+      if (!s) return;
+      const newVal = !s.is_important;
+      const fd = new FormData();
+      fd.append('important', newVal);
+      fetch(`${API_BASE}/api/session/${sid}/important`, { method: 'POST', body: fd });
+      s.is_important = newVal;
+      sessionModule.renderSessionList();
+      uiModule.showToast(newVal ? 'Session favorited' : 'Session unfavorited');
+      return;
+    }
+    case 'delete_session': {
+      const sid = sessionModule && sessionModule.getCurrentSessionId();
+      if (!sid) return;
+      const s = sessionModule.getSessions().find(x => x.id === sid);
+      if (!s) return;
+      if (s.is_important) { uiModule.showToast('Unstar before deleting'); return; }
+      uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true }).then(ok => {
+        if (!ok) return;
+        const allSessions = sessionModule.getSessions();
+        const idx = allSessions.findIndex(x => x.id === sid);
+        const nextSession = allSessions.filter(x => !x.archived && x.id !== sid)[Math.max(0, idx)] ||
+                            allSessions.find(x => !x.archived && x.id !== sid);
+        fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' }).then(async () => {
+          await sessionModule.loadSessions();
+          if (nextSession) {
+            await sessionModule.selectSession(nextSession.id);
+          } else {
+            sessionModule.setCurrentSessionId(null);
+            el('chat-history').innerHTML = '';
+            el('current-meta').textContent = 'Apollo Chat';
+            Storage.remove('lastSessionId');
+            if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
+          }
+        });
+      });
+      return;
+    }
+    case 'new_session': {
+      if (_closeCompareIfActive()) return;
+      _deactivateIncognito();
+      const sid = sessionModule && sessionModule.getCurrentSessionId();
+      const sessions = sessionModule ? sessionModule.getSessions() : [];
+      const cur = sessions.find(s => s.id === sid);
+      const name = new Date().toLocaleTimeString();
+      const fd = new FormData();
+      fd.append('name', name);
+      fd.append('endpoint_url', cur ? cur.endpoint_url || '' : '');
+      fd.append('model', cur ? cur.model || '' : '');
+      if (cur && cur.endpoint_id) fd.append('endpoint_id', cur.endpoint_id);
+      fd.append('skip_validation', 'true');
+      fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' })
+        .then(r => r.ok ? r.json() : null)
+        .then(async data => {
+          if (data) {
+            await sessionModule.loadSessions();
+            await sessionModule.selectSession(data.id);
+          }
+        });
+      return;
+    }
+    case 'cancel': {
+      if (chatModule) chatModule.abortCurrentRequest();
+      return;
+    }
+    case 'incognito': {
+      // Drive the visible button so the real toggle logic runs (visual
+      // state, welcome-screen guard, checkbox sync) — flipping the hidden
+      // checkbox alone did nothing.
+      const btn = el('incognito-btn');
+      if (btn) btn.click();
+      return;
+    }
+    case 'settings': {
+      _toggleActiveWindow();
+      return;
+    }
+    case 'focus_input': {
+      const inp = el('message');
+      if (inp) inp.focus();
+      return;
+    }
+    default:
+      return;
+  }
+}
+
 /**
  * Initialize keyboard shortcuts.
  * @param {Object} modules - References to app modules and helpers
@@ -47,11 +257,7 @@ export function _matchesCombo(e, combo, isMac = IS_MAC) {
  * @param {string} modules.API_BASE
  */
 export function initKeyboardShortcuts(modules) {
-  const {
-    el, Storage, sessionModule, uiModule, chatModule,
-    adminModule, settingsModule, searchChatModule,
-    _closeCompareIfActive, _deactivateIncognito, API_BASE
-  } = modules;
+  _mods = modules;
 
   window._apolloKeybinds = { ..._defaultKeybinds };
 
@@ -92,200 +298,39 @@ export function initKeyboardShortcuts(modules) {
     }
   }, true);
 
-  // ── "Toggle Window" — close whatever tool window is open, or reopen the
-  // last one. Maps each window's modal element to the button/title that
-  // opens it (mirrors modalManager's _AUTO_WIRE, plus email's section title).
-  const _WINDOW_TRIGGERS = {
-    'settings-modal':         'user-bar-settings',
-    'theme-modal':            'tool-theme-btn',
-    'tasks-modal':            'tool-tasks-btn',
-    'notes-panel':            'tool-notes-btn',
-    'memory-modal':           'tool-memory-btn',
-    'doclib-modal':           'tool-library-btn',
-    'gallery-modal':          'tool-gallery-btn',
-    'research-overlay':       'tool-research-btn',
-    'cookbook-modal':         'tool-cookbook-btn',
-    'compare-model-overlay':  'tool-compare-btn',
-    'calendar-modal':         'tool-calendar-btn',
-    'email-lib-modal':        'email-section-title',
-  };
-  let _lastWindow = 'settings-modal';
-
-  const _windowVisible = (id) => {
-    const m = document.getElementById(id);
-    if (!m || m.classList.contains('hidden')) return false;
-    const cs = getComputedStyle(m);
-    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
-    return m.offsetWidth > 0 || m.offsetHeight > 0 || m.getClientRects().length > 0;
-  };
-
-  const _toggleActiveWindow = () => {
-    // Close the first open window (remembering it), else reopen the last one.
-    let openId = null;
-    for (const id in _WINDOW_TRIGGERS) {
-      if (_windowVisible(id)) { openId = id; break; }
-    }
-    if (openId) {
-      _lastWindow = openId;
-      const m = document.getElementById(openId);
-      const closeBtn = m && m.querySelector('.close-btn, .modal-close, [data-close]');
-      if (closeBtn) closeBtn.click();
-      else if (openId === 'settings-modal' && settingsModule) settingsModule.close();
-      else { const t = el(_WINDOW_TRIGGERS[openId]); if (t) t.click(); }
-    } else if (_lastWindow === 'settings-modal') {
-      if (settingsModule) settingsModule.open();
-    } else {
-      const t = el(_WINDOW_TRIGGERS[_lastWindow]);
-      if (t) t.click();
-      else if (settingsModule) settingsModule.open();
-    }
-  };
-
   document.addEventListener('keydown', (e) => {
     const kb = window._apolloKeybinds;
 
-    if (_matchesCombo(e, kb.search)) {
-      e.preventDefault();
-      if (searchChatModule) {
-        searchChatModule.isOpen() ? searchChatModule.closeSearch() : searchChatModule.openSearch();
+    for (const action of ['search', 'toggle_sidebar', 'tts', 'fav_session',
+                          'delete_session', 'new_session']) {
+      if (_matchesCombo(e, kb[action])) {
+        e.preventDefault();
+        runShortcutAction(action);
+        return;
       }
-      return;
     }
-    if (_matchesCombo(e, kb.toggle_sidebar)) {
-      e.preventDefault();
-      var sb = document.getElementById('sidebar');
-      var ir = document.getElementById('icon-rail');
-      if (sb && !sb.classList.contains('hidden')) {
-        sb.classList.add('hidden');
-      } else {
-        if (ir) ir.classList.remove('rail-hidden');
-        if (sb) sb.classList.remove('hidden');
-      }
-      if (typeof syncRailSide === 'function') syncRailSide();
-      return;
-    }
-    if (_matchesCombo(e, kb.tts)) {
-      e.preventDefault();
-      var mgr = window.aiTTSManager;
-      if (!mgr || !mgr.available) return;
-      if (mgr.isPlaying || mgr._processing) { mgr.stop(); return; }
-      var allAI = document.querySelectorAll('#chat-history .msg-ai');
-      for (var i = allAI.length - 1; i >= 0; i--) {
-        var ttsBtn = allAI[i].querySelector('.ai-tts-button');
-        if (ttsBtn) { ttsBtn.click(); return; }
-      }
-      return;
-    }
-    if (_matchesCombo(e, kb.fav_session)) {
-      e.preventDefault();
-      const sid = sessionModule && sessionModule.getCurrentSessionId();
-      if (!sid) return;
-      const s = sessionModule.getSessions().find(x => x.id === sid);
-      if (!s) return;
-      const newVal = !s.is_important;
-      const fd = new FormData();
-      fd.append('important', newVal);
-      fetch(`${API_BASE}/api/session/${sid}/important`, { method: 'POST', body: fd });
-      s.is_important = newVal;
-      sessionModule.renderSessionList();
-      uiModule.showToast(newVal ? 'Session favorited' : 'Session unfavorited');
-      return;
-    }
-    if (_matchesCombo(e, kb.delete_session)) {
-      e.preventDefault();
-      const sid = sessionModule && sessionModule.getCurrentSessionId();
-      if (!sid) return;
-      const s = sessionModule.getSessions().find(x => x.id === sid);
-      if (!s) return;
-      if (s.is_important) { uiModule.showToast('Unstar before deleting'); return; }
-      uiModule.styledConfirm('Delete this session?', { confirmText: 'Delete', danger: true }).then(ok => {
-        if (!ok) return;
-        const allSessions = sessionModule.getSessions();
-        const idx = allSessions.findIndex(x => x.id === sid);
-        const nextSession = allSessions.filter(x => !x.archived && x.id !== sid)[Math.max(0, idx)] ||
-                            allSessions.find(x => !x.archived && x.id !== sid);
-        fetch(`${API_BASE}/api/session/${sid}`, { method: 'DELETE' }).then(async () => {
-          await sessionModule.loadSessions();
-          if (nextSession) {
-            await sessionModule.selectSession(nextSession.id);
-          } else {
-            sessionModule.setCurrentSessionId(null);
-            el('chat-history').innerHTML = '';
-            el('current-meta').textContent = 'Apollo Chat';
-            Storage.remove('lastSessionId');
-            if (chatModule && chatModule.showWelcomeScreen) chatModule.showWelcomeScreen();
-          }
-        });
-      });
-      return;
-    }
-    if (_matchesCombo(e, kb.new_session)) {
-      e.preventDefault();
-      if (_closeCompareIfActive()) return;
-      _deactivateIncognito();
-      const sid = sessionModule && sessionModule.getCurrentSessionId();
-      const sessions = sessionModule ? sessionModule.getSessions() : [];
-      const cur = sessions.find(s => s.id === sid);
-      const name = new Date().toLocaleTimeString();
-      const fd = new FormData();
-      fd.append('name', name);
-      fd.append('endpoint_url', cur ? cur.endpoint_url || '' : '');
-      fd.append('model', cur ? cur.model || '' : '');
-      if (cur && cur.endpoint_id) fd.append('endpoint_id', cur.endpoint_id);
-      fd.append('skip_validation', 'true');
-      fetch(`${API_BASE}/api/session`, { method: 'POST', body: fd, credentials: 'same-origin' })
-        .then(r => r.ok ? r.json() : null)
-        .then(async data => {
-          if (data) {
-            await sessionModule.loadSessions();
-            await sessionModule.selectSession(data.id);
-          }
-        });
-      return;
-    }
+    // `cancel` intentionally does not preventDefault and falls through so a
+    // bare Escape still reaches the handlers below it.
     if (_matchesCombo(e, kb.cancel)) {
-      if (chatModule) chatModule.abortCurrentRequest();
+      runShortcutAction('cancel');
     }
-    if (_matchesCombo(e, kb.incognito)) {
-      e.preventDefault();
-      // Drive the visible button so the real toggle logic runs (visual
-      // state, welcome-screen guard, checkbox sync) — flipping the hidden
-      // checkbox alone did nothing.
-      const btn = el('incognito-btn');
-      if (btn) btn.click();
-      return;
+    for (const action of ['incognito', 'settings']) {
+      if (_matchesCombo(e, kb[action])) {
+        e.preventDefault();
+        runShortcutAction(action);
+        return;
+      }
     }
-    if (_matchesCombo(e, kb.settings)) {
-      e.preventDefault();
-      _toggleActiveWindow();
-      return;
-    }
-    // Open-tool shortcuts — click the sidebar tool button so each tool's
-    // own open/toggle logic runs. Unbound (empty) combos never match.
-    const _toolBtns = {
-      open_calendar: 'tool-calendar-btn',
-      open_compare:  'tool-compare-btn',
-      open_cookbook: 'tool-cookbook-btn',
-      open_research: 'tool-research-btn',
-      open_gallery:  'tool-gallery-btn',
-      open_library:  'tool-library-btn',
-      open_memory:   'tool-memory-btn',
-      open_notes:    'tool-notes-btn',
-      open_tasks:    'tool-tasks-btn',
-      open_theme:    'tool-theme-btn',
-    };
     for (const action in _toolBtns) {
       if (_matchesCombo(e, kb[action])) {
         e.preventDefault();
-        const b = el(_toolBtns[action]);
-        if (b) b.click();
+        runShortcutAction(action);
         return;
       }
     }
     if (_matchesCombo(e, kb.focus_input)) {
       e.preventDefault();
-      const inp = el('message');
-      if (inp) inp.focus();
+      runShortcutAction('focus_input');
       return;
     }
   });
