@@ -182,31 +182,44 @@ function placeholderNode(question, count) {
 }
 
 /** Ask the Council `question`, rendering the exchange into #chat-history. */
-export async function askCouncil(question) {
-  const q = (question || '').trim();
-  if (!q) return;
-
+/**
+ * Synchronous admission check. Returns the member list when the Council can
+ * sit now, or null (after a toast) when it is busy or lacks models. Exported
+ * so callers can decide whether to clear a draft before starting.
+ */
+export function convene() {
   const showToast = deps.showToast || (() => {});
   if (inFlight) {
     showToast('The Council is already in session');
-    return;
+    return null;
   }
-
   const getCachedItems = deps.getCachedItems || (() => []);
   const isChatCapable = deps.isChatCapable || (() => true);
   const getCurrentModel = deps.getCurrentModel || (() => null);
   const getCurrentEndpointUrl = deps.getCurrentEndpointUrl || (() => null);
-  const mdToHtml = deps.mdToHtml;
-
   const current = { model: getCurrentModel(), url: getCurrentEndpointUrl() };
   const members = pickCouncilMembers(getCachedItems(), current, isChatCapable);
   if (members.length < MIN_MEMBERS) {
     showToast('The Council needs at least two chat models');
-    return;
+    return null;
   }
+  return members;
+}
+
+export async function askCouncil(question) {
+  const q = (question || '').trim();
+  if (!q) return false;
+
+  const members = convene();
+  if (!members) return false;
+  const mdToHtml = deps.mdToHtml;
+  const showToast = deps.showToast || (() => {});
 
   inFlight = true;
   const controller = new AbortController();
+  // The block goes straight into the transcript (no user bubble), so dismiss
+  // the welcome overlay ourselves the way chatRenderer.addMessage would.
+  if (typeof deps.hideWelcomeScreen === 'function') deps.hideWelcomeScreen();
   const box = document.getElementById('chat-history');
   const placeholder = placeholderNode(q, members.length);
   const cancelBtn = placeholder.querySelector('.council-cancel-btn');
@@ -263,9 +276,13 @@ export function initCouncil(initDeps) {
     const input = document.getElementById('message');
     const draft = input && input.value ? input.value.trim() : '';
     if (draft) {
-      input.value = '';
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      askCouncil(draft);
+      // Only clear the composer once the Council actually accepted the ask,
+      // so a refused request (busy / too few models) keeps the draft.
+      if (convene()) {
+        input.value = '';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        askCouncil(draft);
+      }
       return;
     }
     const styledPrompt = deps.styledPrompt;

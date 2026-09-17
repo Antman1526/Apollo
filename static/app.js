@@ -3598,6 +3598,7 @@ function startApolloApp() {
     getCurrentModel: sessionModule.getCurrentModel, getCurrentEndpointUrl: sessionModule.getCurrentEndpointUrl,
     mdToHtml: markdownModule.mdToHtml,
     showToast: uiModule.showToast, styledPrompt: uiModule.styledPrompt,
+    hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
   });
 
   // Search buttons — icon rail + sidebar
