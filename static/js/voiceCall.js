@@ -127,6 +127,22 @@ let _active = null; // { machine, mic, stream, recorder, chunks, prevAutoPlay }
 // Default VAD tuning, matching the pure createVadGate() defaults.
 export const VAD_DEFAULTS = { threshold: 0.02, silenceMs: 1200 };
 
+// Pure helper: raw mic RMS → 0..1 ring intensity for the overlay orb's
+// --vc-level CSS var. Threshold-anchored log mapping, not a flat linear scale:
+// anything at or below the VAD's own speech threshold reads as silence (0),
+// `ceiling` (a loud-but-normal speaking level) reads as fully lit (1), and the
+// range between grows logarithmically so quiet speech is still visibly above
+// zero instead of needing to get loud before the ring reacts. Pure/testable —
+// no browser globals.
+export function levelToRing(rms, threshold = VAD_DEFAULTS.threshold, ceiling = 0.3) {
+  if (!(rms > threshold)) return 0;
+  // Keep the top of the range above the threshold even when a user tunes the
+  // VAD threshold past the default ceiling, so the ring still has a slope.
+  const top = Math.max(ceiling, threshold * 4);
+  const ratio = Math.log(rms / threshold) / Math.log(top / threshold);
+  return Math.max(0, Math.min(1, ratio));
+}
+
 // Pure resolver: given a toggle-state object, return the effective VAD config,
 // falling back to defaults for missing / non-finite / non-positive values. No
 // browser globals — unit-testable in Node.
@@ -154,9 +170,43 @@ function _readVadConfig() {
 }
 
 function _overlay() { return document.getElementById('voice-call-overlay'); }
+
+// True when the platform/user has asked for reduced motion. Guards the level
+// painter below in addition to the CSS `@media (prefers-reduced-motion)` rule
+// in voice.css that forces --vc-level to 0 on .vc-orb — belt and suspenders,
+// since this also skips the (harmless but pointless) style write.
+function _reducedMotion() {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+// Builds the live mic-level painter for one call. There is no rAF loop: the
+// VAD's onLevel tap (per animation frame, but owned by vad.js, not here)
+// calls this directly with the raw rms. A light EMA smooths frame-to-frame
+// jitter without depending on the CSS transition for it, levelToRing() maps
+// the smoothed value through the VAD's own threshold, and the last painted
+// string is memoized so an unchanged level skips the DOM write.
+function _makeLevelPainter(threshold) {
+  let ema = 0;
+  let lastPainted = null;
+  return function paint(rms, { reset = false } = {}) {
+    const ov = _overlay();
+    if (!ov || _reducedMotion()) return;
+    ema = reset ? 0 : 0.7 * ema + 0.3 * rms;
+    const value = levelToRing(ema, threshold).toFixed(3);
+    if (value === lastPainted) return;
+    lastPainted = value;
+    ov.style.setProperty('--vc-level', value);
+  };
+}
+
 function _setState(state) {
   const ov = _overlay();
-  if (ov) ov.dataset.state = state;
+  if (ov) {
+    ov.dataset.state = state;
+    // The overlay's label/transcript/controls are only meaningful while a
+    // call is up; expose them to assistive tech then, not while idle+hidden.
+    ov.setAttribute('aria-hidden', state === 'idle' ? 'true' : 'false');
+  }
   const label = document.getElementById('vc-state-label');
   if (label) {
     label.textContent = {
@@ -164,6 +214,7 @@ function _setState(state) {
       thinking: 'Thinking…', speaking: 'Speaking…', idle: '',
     }[state] || '';
   }
+  if (state === 'idle' && ov) ov.style.removeProperty('--vc-level');
 }
 function _setTranscript(text) {
   const t = document.getElementById('vc-transcript');
@@ -201,7 +252,9 @@ export async function startCall() {
   // skipped.
   try { await window.aiTTSManager?.checkAvailability?.(); } catch {}
 
-  const gate = createVadGate(_readVadConfig());
+  const vadConfig = _readVadConfig();
+  const gate = createVadGate(vadConfig);
+  const paintLevel = _makeLevelPainter(vadConfig.threshold);
   const prevAutoPlay = window.aiTTSManager ? window.aiTTSManager.autoPlay : false;
   if (window.aiTTSManager) window.aiTTSManager.autoPlay = false; // we drive TTS explicitly
 
@@ -266,9 +319,10 @@ export async function startCall() {
     stream,
     gate,
     onEvent: (ev) => machine.dispatch(ev === 'speechstart' ? 'speechStart' : 'speechEnd'),
+    onLevel: paintLevel,
   });
 
-  _active = { machine, mic, stream, recorder: null, prevAutoPlay };
+  _active = { machine, mic, stream, recorder: null, prevAutoPlay, paintLevel };
 
   window.addEventListener('apollo:assistant-complete', _onAssistantComplete);
   _wireOverlayButtons();
@@ -285,7 +339,12 @@ function _wireOverlayButtons() {
   if (mute) mute.onclick = () => {
     if (!_active) return;
     const muted = mute.classList.toggle('vc-active');
-    if (muted) _active.mic.pause(); else _active.mic.resume();
+    if (muted) {
+      _active.mic.pause();
+      _active.paintLevel(0, { reset: true }); // collapse the ring instead of freezing it mid-level
+    } else {
+      _active.mic.resume();
+    }
     mute.textContent = muted ? 'Unmute' : 'Mute';
   };
   if (end) end.onclick = () => { if (_active) _active.machine.dispatch('end'); };

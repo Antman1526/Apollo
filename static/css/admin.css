@@ -4,7 +4,7 @@
 .admin-card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   margin-bottom: 10px;
 }
@@ -63,7 +63,7 @@
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--fg) 50%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: background 0.08s;
 }
@@ -92,7 +92,7 @@
   flex-direction: column;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   margin-bottom: 6px;
   transition: border-color 0.15s;
 }
@@ -140,7 +140,7 @@
   max-height: 150px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 4px 6px;
   background: var(--bg);
   scrollbar-width: thin;
@@ -230,7 +230,7 @@
   max-height: 200px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 4px 6px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
 }
@@ -330,7 +330,7 @@
   100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
 }
 .admin-user-row.adm-ep-just-added {
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   animation: adm-ep-just-added-glow 2.2s ease-out;
 }
 .admin-user-row.admin-ep-disabled .admin-btn-sm,
@@ -357,7 +357,7 @@
   user-select: none;
   opacity: 0.8;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 9px;
   margin-bottom: 6px;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
@@ -396,7 +396,7 @@
   user-select: none;
   opacity: 0.72;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 4px 8px;
   font-size: 11px;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
@@ -437,7 +437,7 @@
   width: 100%;
   display: flex; align-items: center; gap: 8px;
   background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: 5px 8px; font-family: inherit; font-size: 12px;
   cursor: pointer; text-align: left;
 }
@@ -470,14 +470,14 @@
   position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 100;
   max-height: 280px; overflow-y: auto;
   background: var(--panel);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
   padding: 4px;
 }
 .adm-provider-menu.hidden { display: none; }
 .adm-provider-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 5px 8px; border-radius: 4px;
+  padding: 5px 8px; border-radius: var(--radius-sm);
   font-size: 12px; cursor: pointer;
 }
 .adm-provider-item:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); }
@@ -537,7 +537,7 @@
   font-family: inherit;
   background: color-mix(in srgb, var(--fg) 4%, transparent);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   outline: none;
 }
@@ -554,7 +554,7 @@
 .admin-badge {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--red) 20%, transparent);
   color: var(--red);
   font-weight: 600;
@@ -570,7 +570,7 @@
   border: 1px solid color-mix(in srgb, var(--color-error) 27%, transparent);
   color: var(--color-error);
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 11px;
   font-family: inherit;
@@ -584,7 +584,7 @@
 .admin-btn-add {
   padding: 4px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--red);
   color: #fff;
   cursor: pointer;
@@ -603,7 +603,7 @@
 .admin-btn-sm {
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--panel);
   color: var(--fg);
   cursor: pointer;
@@ -643,7 +643,7 @@
   box-sizing: border-box;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-family: inherit;
   font-size: 12px;
@@ -669,7 +669,7 @@
   padding: 5px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: 12px;
 }
@@ -692,7 +692,7 @@
   gap: 6px;
   padding: 6px 8px;
   background: var(--bg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   margin-bottom: 4px;
   font-size: 12px;
 }
@@ -733,7 +733,7 @@
 /* RAG upload zone */
 .admin-rag-upload-zone {
   border: 2px dashed var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 14px;
   text-align: center;
   cursor: pointer;
@@ -761,7 +761,7 @@
   padding: 5px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: 12px;
 }
@@ -769,7 +769,7 @@
 .admin-rag-dir-row button {
   padding: 5px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--red);
   color: #fff;
   cursor: pointer;
@@ -794,7 +794,7 @@
   align-items: center;
   padding: 6px 8px;
   background: var(--bg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   margin-bottom: 4px;
   font-size: 12px;
 }
@@ -824,14 +824,14 @@
   padding: 8px;
   background: color-mix(in srgb, var(--red) 8%, var(--bg));
   border: 1px solid color-mix(in srgb, var(--red) 25%, var(--border));
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 
 /* Selects in admin cards */
 .admin-card select {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: 12px;
 }
@@ -888,7 +888,7 @@
   padding: 6px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: 12px;
   font-family: inherit;
@@ -903,7 +903,7 @@
   padding: 6px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-size: 12px;
   font-family: inherit;
@@ -918,7 +918,7 @@
 }
 .doclib-chip {
   padding: 2px 10px;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   font-size: 10px;
   border: 1px solid var(--border);
   background: transparent;
@@ -1132,7 +1132,7 @@
     min-width: var(--fab-size);
     padding: 0 20px 0 18px;
     border: none;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background: var(--accent-primary, var(--red));
     color: #fff;
     font-family: inherit;
@@ -1205,8 +1205,6 @@
   to   { transform: scale(1); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #email-lib-modal .email-lib-fab,
-  #email-lib-modal .email-lib-fab .email-lib-fab-label { transition-duration: 1ms; }
   #email-lib-modal .email-lib-fab.fab-revealed { animation: none; }
 }
 /* When the modal-content has explicit height (fullscreen or user-resized),
@@ -1667,7 +1665,7 @@ body.left-dock-active {
   background: var(--accent, #2563eb);
   color: #fff;
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   pointer-events: none;
   z-index: 1000;
@@ -1895,7 +1893,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 .doclib-card {
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   transition: all 0.15s, opacity 0.3s, max-height 0.3s ease;
   position: relative;
@@ -1956,7 +1954,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 .doclib-card-ver {
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--accent, var(--red)) 15%, transparent);
   color: var(--accent, var(--red));
   font-size: 9px;
@@ -1973,7 +1971,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 }
 .doclib-card-lang {
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
   font-size: 9px;
@@ -2070,7 +2068,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   box-sizing: border-box;
   font-size: 10px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   border: 1px solid var(--border);
   color: var(--fg-muted);
@@ -2200,7 +2198,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   gap: 4px;
   font-size: 10px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-muted);
   border: 1px solid var(--border);
   background: none;
@@ -2281,7 +2279,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   gap: 4px;
   font-size: 10px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: none;
   cursor: pointer;
   font-family: inherit;
@@ -2395,7 +2393,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   opacity: 0.55;
   margin-bottom: 3px;
   padding: 1px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: var(--fg-muted, var(--fg));
 }
@@ -2408,7 +2406,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   margin: 4px 0;
   padding: 6px 8px;
   background: color-mix(in srgb, var(--bg) 60%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
 .doclib-chat-bubble-body code {
@@ -2444,7 +2442,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   min-height: 0;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -2516,7 +2514,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   color: var(--color-warning, #f0ad4e);
   background: color-mix(in srgb, var(--color-warning, #f0ad4e) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-warning, #f0ad4e) 35%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 9px;
   margin: 0 0 8px;
   flex-shrink: 0;
@@ -2699,7 +2697,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   padding: 4px;
   background: var(--panel, var(--bg));
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 6px 20px rgba(0,0,0,0.22);
   display: flex;
   flex-direction: column;
@@ -2822,7 +2820,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
 /* ── Audit-all progress panel ── */
 .skills-audit-panel {
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 8px 10px;
   margin: 6px 0;
   background: color-mix(in srgb, var(--fg) 3%, transparent);
@@ -2849,7 +2847,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   line-height: 1.45;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   white-space: pre-wrap;
   word-break: break-word;
@@ -2917,7 +2915,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   line-height: 1.5;
   padding: 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--fg);
 }
@@ -2945,7 +2943,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   padding: 6px 16px;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg-muted);
   font-size: 11px;
   cursor: pointer;
@@ -2981,7 +2979,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   color: var(--fg-muted);
   font-size: 11px;
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
@@ -3017,7 +3015,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   gap: 8px;
   padding: 4px 8px;
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--red) 5%, transparent);
   font-size: 10px;
   margin-bottom: 8px;
@@ -3050,7 +3048,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   width: 13px;
   height: 13px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   cursor: pointer;
   flex-shrink: 0;
@@ -3162,7 +3160,7 @@ body:not(.email-doc-split-active) #email-lib-modal.email-lib-fullscreen:not(.mod
   cursor: pointer;
   padding: 4px;
   line-height: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: background .15s, opacity .15s;
   display: inline-flex;
   align-items: center;

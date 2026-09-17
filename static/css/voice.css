@@ -1,0 +1,125 @@
+/* ── Voice call mode overlay ──
+   Colors, spacing and the bars' animation duration are theme tokens, not
+   hardcoded hex/ms. The orb's --vc-level custom property (0..1) is set by
+   voiceCall.js's onLevel callback — an EMA-smoothed mic RMS run through
+   levelToRing(), memoized so an unchanged value skips the DOM write; there is
+   no separate rAF loop. --vc-level only means anything during the user's
+   turn: it is forced to 0 below for the thinking/transcribing/speaking states
+   and again under prefers-reduced-motion. Reduced-motion users also get the
+   first keyframe of every infinite animation as a frozen resting state
+   (handled by the global guard in base.css), so each keyframe below starts at
+   a state that looks correct standing still. */
+.voice-call-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: none; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--space-4);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+.voice-call-overlay[data-state]:not([data-state="idle"]) { display: flex; }
+
+.vc-status { display: flex; align-items: center; gap: 8px; color: var(--color-muted); font-size: 13px; }
+.vc-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-success); }
+
+.vc-orb {
+  position: relative;
+  width: 160px; height: 160px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-3);
+  border: 2px solid var(--border);
+  box-shadow:
+    0 0 0 calc(4px + 22px * var(--vc-level, 0)) color-mix(in srgb, var(--accent, var(--red)) 22%, transparent),
+    var(--shadow-3);
+  transition: box-shadow var(--dur-fast) linear, border-color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+.vc-orb-inner {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: var(--accent, var(--red));
+  transition: background var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+/* The level ring only represents the user's own mic — meaningless once it's
+   not their turn to talk, so it's pinned to 0 for those states regardless of
+   whatever --vc-level the (still-running) painter last wrote on the overlay.
+   A rule directly on .vc-orb beats the inherited value from the ancestor. */
+.voice-call-overlay[data-state="speaking"] .vc-orb,
+.voice-call-overlay[data-state="thinking"] .vc-orb,
+.voice-call-overlay[data-state="transcribing"] .vc-orb {
+  --vc-level: 0;
+}
+
+/* ── Per-state orb styling ── */
+.voice-call-overlay[data-state="listening"] .vc-orb { animation: vc-breathe 2.4s ease-in-out infinite; }
+.voice-call-overlay[data-state="listening"] .vc-orb-inner { background: var(--accent, var(--red)); }
+
+.voice-call-overlay[data-state="capturing"] .vc-orb { transform: scale(1.06); border-color: var(--color-warning); }
+.voice-call-overlay[data-state="capturing"] .vc-orb-inner { background: var(--color-warning); }
+
+.voice-call-overlay[data-state="transcribing"] .vc-orb-inner { background: var(--color-muted); }
+
+.voice-call-overlay[data-state="thinking"] .vc-orb-inner { background: var(--hl-keyword); animation: vc-think 1.2s ease-in-out infinite; }
+
+.voice-call-overlay[data-state="speaking"] .vc-orb-inner { background: var(--color-success); }
+.voice-call-overlay[data-state="speaking"] .vc-bars { opacity: 1; }
+
+@keyframes vc-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@keyframes vc-think { 0%, 100% { opacity: .7; } 50% { opacity: 1; } }
+
+/* ── Speaking bars: 5 bars centered over the orb, hidden except while speaking ── */
+.vc-bars {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease-out);
+  pointer-events: none;
+}
+.vc-bars i {
+  width: 6px; height: 12px;
+  background: var(--bg);
+  border-radius: var(--radius-pill);
+  /* var(--dur-slow) is 400ms, so this lands on the same 900ms cadence as
+     before while staying token-derived instead of a bare literal. */
+  animation: vc-bar calc(var(--dur-slow) * 2.25) ease-in-out infinite;
+}
+.vc-bars i:nth-child(1) { animation-delay: 0s; }
+.vc-bars i:nth-child(2) { animation-delay: .12s; }
+.vc-bars i:nth-child(3) { animation-delay: .24s; }
+.vc-bars i:nth-child(4) { animation-delay: .36s; }
+.vc-bars i:nth-child(5) { animation-delay: .48s; }
+
+@keyframes vc-bar { 0%, 100% { height: 12px; } 50% { height: 36px; } }
+
+.vc-caption { text-align: center; }
+.vc-state-label {
+  margin: 0; font-size: 13px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--color-muted);
+}
+.vc-transcript {
+  margin: var(--space-2) auto 0; max-width: 640px;
+  font-size: 1.05rem; color: var(--fg); min-height: 2.6em;
+}
+
+.vc-controls { display: flex; gap: var(--space-2); }
+.vc-btn {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-3);
+  color: var(--fg);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.vc-btn:hover { border-color: var(--accent, var(--red)); }
+.vc-btn.vc-active { border-color: var(--accent, var(--red)); color: var(--accent, var(--red)); }
+.vc-btn-danger { border-color: var(--color-error); color: var(--color-error); }
+
+@media (max-width: 520px) {
+  .vc-orb { width: 128px; height: 128px; }
+  .vc-orb-inner { width: 56px; height: 56px; }
+}
+
+/* Belt-and-suspenders with voiceCall.js's own reducedMotion() check: even if
+   something paints --vc-level on the overlay anyway, the ring itself stays off. */
+@media (prefers-reduced-motion: reduce) {
+  .vc-orb { --vc-level: 0 !important; }
+}

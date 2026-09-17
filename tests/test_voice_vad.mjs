@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createVadGate } from '../static/js/vad.js';
+import { createVadGate, createMicVad } from '../static/js/vad.js';
 import { resolveVadConfig, VAD_DEFAULTS } from '../static/js/voiceCall.js';
 
 test('stays silent below threshold', () => {
@@ -41,6 +41,92 @@ test('reset() returns to not-speaking', () => {
   g.reset();
   assert.equal(g.isSpeaking, false);
   assert.equal(g.push(0.0, 10), null);
+});
+
+// ── createMicVad: the ONE onLevel tap in this module (createVadGate itself has
+// no onLevel option — see push() above) ──
+//
+// createMicVad touches Web Audio globals, so these tests stand up a minimal
+// fake AudioContext/analyser and a controllable requestAnimationFrame that
+// captures the tick callback instead of auto-scheduling it (auto-invoking
+// would recurse forever, since tick() re-arms itself via rAF at its end).
+// Each test fires exactly one frame by calling env.tick().
+function makeFakeAudioEnv(initialRms) {
+  let currentRms = initialRms;
+  let capturedTick = null;
+  const prevWindow = global.window;
+  const prevRAF = global.requestAnimationFrame;
+  const prevCAF = global.cancelAnimationFrame;
+
+  class FakeAnalyser {
+    constructor() { this.fftSize = 512; }
+    connect() {}
+    getFloatTimeDomainData(buf) { buf.fill(currentRms); }
+  }
+  class FakeAudioContext {
+    constructor() { this.state = 'running'; }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createAnalyser() { return new FakeAnalyser(); }
+    resume() {}
+    close() {}
+  }
+
+  global.window = { AudioContext: FakeAudioContext };
+  global.requestAnimationFrame = (fn) => { capturedTick = fn; return 1; };
+  global.cancelAnimationFrame = () => {};
+
+  return {
+    tick() {
+      assert.ok(capturedTick, 'expected createMicVad to have scheduled a tick');
+      capturedTick();
+    },
+    restore() {
+      global.window = prevWindow;
+      global.requestAnimationFrame = prevRAF;
+      global.cancelAnimationFrame = prevCAF;
+    },
+  };
+}
+
+test('createMicVad plumbs the live rms into onLevel on every unpaused tick', () => {
+  const env = makeFakeAudioEnv(0.05);
+  try {
+    const levels = [];
+    const events = [];
+    const gate = createVadGate({ threshold: 0.02, silenceMs: 1000 });
+    const mic = createMicVad({
+      stream: {},
+      gate,
+      onEvent: (ev) => events.push(ev),
+      onLevel: (rms) => levels.push(rms),
+    });
+    env.tick();
+    assert.equal(levels.length, 1);
+    assert.ok(Math.abs(levels[0] - 0.05) < 1e-9, `expected onLevel(~0.05), got ${levels[0]}`);
+    assert.deepEqual(events, ['speechstart'], 'gate/onEvent behavior is unaffected by onLevel');
+    mic.destroy();
+  } finally {
+    env.restore();
+  }
+});
+
+test('createMicVad: a throwing onLevel does not change onEvent output', () => {
+  const env = makeFakeAudioEnv(0.05);
+  try {
+    const events = [];
+    const gate = createVadGate({ threshold: 0.02, silenceMs: 1000 });
+    const mic = createMicVad({
+      stream: {},
+      gate,
+      onEvent: (ev) => events.push(ev),
+      onLevel: () => { throw new Error('boom'); },
+    });
+    assert.doesNotThrow(() => env.tick());
+    assert.deepEqual(events, ['speechstart']);
+    mic.destroy();
+  } finally {
+    env.restore();
+  }
 });
 
 // ── resolveVadConfig: pure toggle-state → effective VAD config ──

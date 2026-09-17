@@ -140,6 +140,16 @@ def _run_to_dict(r: TaskRun) -> dict:
     }
 
 
+def query_tasks(db, owner: Optional[str]):
+    """Owner-scoped ScheduledTask query, exactly like GET /api/tasks. Shared
+    with the Today briefing. A falsy `owner` (no auth / anonymous) returns
+    every owner's tasks, matching the original single-user behavior."""
+    q = db.query(ScheduledTask)
+    if owner:
+        q = q.filter(ScheduledTask.owner == owner)
+    return q
+
+
 def _run_research_id(task: ScheduledTask) -> str:
     if (task.task_type or "llm") == "research" and task.session_id:
         return task.session_id
@@ -247,9 +257,7 @@ def setup_task_routes(task_scheduler) -> APIRouter:
                 await task_scheduler.ensure_defaults(owner)
         db = SessionLocal()
         try:
-            q = db.query(ScheduledTask)
-            if user:
-                q = q.filter(ScheduledTask.owner == user)
+            q = query_tasks(db, user)
             if status:
                 q = q.filter(ScheduledTask.status == status)
             tasks = q.order_by(ScheduledTask.created_at.desc()).all()

@@ -11,6 +11,8 @@ import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
+import { initCouncil } from './js/council.js';
+import { initBriefing } from './js/briefing.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
 import markdownModule from './js/markdown.js';
@@ -26,6 +28,8 @@ import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
+import { initWelcomeState } from './js/welcomeState.js';
+import { mountConstellation } from './js/welcomeConstellation.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -42,8 +46,9 @@ import * as researchPanelModule from './js/research/panel.js';
 import browserPanelModule from './js/browserPanel.js';
 import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
-import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
+import { initKeyboardShortcuts, runShortcutAction } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
+import { initSystemPulse } from './js/systemPulse.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
@@ -1148,6 +1153,10 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
+      // Always start the pulse: the no-login desktop mode reports is_admin=false
+      // yet can read /api/system/status; real non-admins get a 403 and the
+      // strip hides itself (forbidden path in systemPulse.js).
+      initSystemPulse({ onOpen: () => settingsModule.open('integrations') });
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const toolActivity = el('tool-activity-btn');
       if (d.is_admin && toolActivity) toolActivity.style.display = '';
@@ -2486,6 +2495,9 @@ function initializeEventListeners() {
       if (_incInd) _incInd.style.display = chk.checked ? '' : 'none';
       // Update active session icon in sidebar
       _syncSessionIncognitoIcon(chk.checked);
+      // Nobody mode hides/reveals the welcome recents+prompts (mountWelcomeState
+      // guards on incognito state) — re-render immediately on toggle.
+      window.dispatchEvent(new CustomEvent('apollo:welcome'));
     });
   }
 
@@ -2521,8 +2533,9 @@ function initializeEventListeners() {
     'email-section':       '#email-section',
     'models-section':      '#models-section',
     'tools-section':       '#tools-section',
+    'know-section':        '#know-section',
     // Per-tool visibility — fine-grained control over which entries show
-    // inside the Tools section in the sidebar.
+    // inside the Work and Know sections in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',
@@ -2537,6 +2550,8 @@ function initializeEventListeners() {
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',
     'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
+    'agent-floor':         '.chat-floor',
+    'memory-constellation':'#welcome-constellation',
     'welcome-brief':       '#welcome-setup',
     'incognito-btn':       '.incognito-btn',
     'web-toggle-btn':      '#web-toggle-btn',
@@ -3573,8 +3588,23 @@ function startApolloApp() {
   }  
   // Initialize search chat module
   if (searchChatModule) {
-    searchChatModule.init(API_BASE);
+    searchChatModule.init(API_BASE, {
+      getSessions: sessionModule.getSessions, selectSession: sessionModule.selectSession,
+      createDirectChat: sessionModule.createDirectChat, runAction: runShortcutAction,
+      getCachedItems: modelsModule.getCachedItems, isChatCapable: modelsModule.isChatCapable,
+      refreshModels: modelsModule.refreshModels, openSettings: () => settingsModule.open(),
+    });
   }
+
+  // Initialize The Council (ask several models the same question)
+  initCouncil({
+    API_BASE, getCachedItems: modelsModule.getCachedItems, isChatCapable: modelsModule.isChatCapable,
+    getCurrentModel: sessionModule.getCurrentModel, getCurrentEndpointUrl: sessionModule.getCurrentEndpointUrl,
+    mdToHtml: markdownModule.mdToHtml,
+    showToast: uiModule.showToast, styledPrompt: uiModule.styledPrompt,
+    hideWelcomeScreen: chatRenderer.hideWelcomeScreen,
+  });
+  initBriefing({ showToast: uiModule.showToast });
 
   // Search buttons — icon rail + sidebar
   const railSearchBtn = el('rail-search-btn');
@@ -4132,6 +4162,18 @@ function startApolloApp() {
           try { window._apolloRouteOpener(); } catch (_) {}
           window._apolloRouteOpener = null;
         }
+        initWelcomeState({
+          getSessions: sessionModule.getSessions,
+          onOpenSession: (id) => sessionModule.selectSession(id),
+          onUsePrompt: (t) => {
+            const el = document.getElementById('message');
+            if (!el) return;
+            el.value = t;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.focus();
+          }
+        });
+        mountConstellation();
       });
   } else {
     console.error('Session module not loaded!');

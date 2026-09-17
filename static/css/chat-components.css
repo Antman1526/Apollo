@@ -41,7 +41,7 @@ a.chat-link:hover {
   .session-menu-btn { display: none !important; }
   .item-drag-handle { display: none !important; }
 }
-.session-menu-btn svg { transition: transform 0.2s ease; }
+.session-menu-btn svg { transition: transform var(--dur) var(--ease-out); }
 
 /* First-time swipe hint */
 .swipe-hint {
@@ -52,7 +52,7 @@ a.chat-link:hover {
   font-size: 0.7rem;
   color: var(--color-error, #f44);
   opacity: 0.8;
-  transition: opacity 0.5s ease;
+  transition: opacity var(--dur-slow) var(--ease-out);
   pointer-events: none;
   display: flex;
   align-items: center;
@@ -79,13 +79,13 @@ a.chat-link:hover {
   background: none !important;
   width: 14px !important; height: 14px !important;
   display: inline-flex; align-items: center; justify-content: center;
-  transition: opacity 0.15s;
+  transition: opacity var(--dur);
 }
 .provider-logo svg { width: 14px; height: 14px; display: block; }
 .provider-logo:hover { opacity: 1 !important; transform: scale(1.2); }
 
 /* Hide session menu button until hover — use width:0 so it doesn't steal space from text */
-.list-item .hamburger { opacity: 0; width: 0; min-width: 0; overflow: hidden; padding: 0 !important; transition: opacity 0.15s, width 0.15s, padding 0.15s; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.list-item .hamburger { opacity: 0; width: 0; min-width: 0; overflow: hidden; padding: 0 !important; transition: opacity var(--dur), width var(--dur), padding var(--dur); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .list-item:hover .hamburger { opacity: 1; width: 24px; min-width: 24px; padding: 0 4px !important; }
 @media (max-width: 768px) {
   .list-item .hamburger { opacity: 0.5; width: 28px; min-width: 28px; padding: 0 4px !important; }
@@ -186,7 +186,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   color: var(--hl-string, #98c379);
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-size: 0.9em;
 }
 
@@ -226,7 +226,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   color: var(--hl-function, #5b8def);
   text-decoration: none;
   border-bottom: 1px solid rgba(91, 141, 239, 0.3);
-  transition: border-color 0.15s;
+  transition: border-color var(--dur);
 }
 .msg a:hover {
   border-bottom-color: var(--hl-function, #5b8def);
@@ -256,7 +256,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
 .agent-controls {
   background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
   border: 1px solid #dee2e6;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   margin-bottom: 12px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -279,7 +279,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   width: 100%;
   padding: 6px 12px;
   border: 1px solid #ced4da;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: white;
   font-size: 14px;
 }
@@ -287,7 +287,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
 .agent-progress {
   background: #ffebee;
   border: 1px solid #ef9a9a;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 12px;
   margin: 8px 0;
   text-align: center;
@@ -316,7 +316,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
 .workflow-info {
   background: #f8f9fa;
   border: 1px solid var(--red);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   margin: 4px 0;
   font-size: 0.9em;
@@ -419,12 +419,12 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   display: none;
   z-index: 100;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--dur) var(--ease-out);
 }
 #agent-indicator.active {
   display: block;
@@ -442,13 +442,13 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   padding: 0 8.5px;
   margin-left: 4px;
   border: 1px solid var(--red);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg);
   color: var(--fg);
   font-family: inherit;
   font-size: 10.2px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--dur) var(--ease-out);
 }
 
 .preset-btn:hover {
@@ -472,7 +472,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   gap: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   margin-top: 12px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -530,8 +530,8 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   right: 0;
   bottom: 0;
   background-color: color-mix(in srgb, var(--fg) 15%, transparent);
-  border-radius: 8px;
-  transition: background 0.08s;
+  border-radius: var(--radius-lg);
+  transition: background var(--dur-fast);
 }
 
 .toggle-slider:before {
@@ -543,7 +543,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   top: 2px;
   background-color: var(--panel);
   border-radius: 50%;
-  transition: transform 0.08s;
+  transition: transform var(--dur-fast);
   box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
 
@@ -589,10 +589,10 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   margin: 0;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   color: var(--fg);
-  transition: all 0.2s ease;
+  transition: all var(--dur) var(--ease-out);
 }
 
 .action-button:hover {
@@ -669,8 +669,8 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   display: flex;
   gap: 6px;
   align-items: center;
-  border-radius: 4px;
-  transition: all 0.2s ease;
+  border-radius: var(--radius-sm);
+  transition: all var(--dur) var(--ease-out);
   max-width: 180px;
 }
 .thumb-img {
@@ -716,7 +716,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   font-size: 15px;
   line-height: 1;
   z-index: 3;
-  transition: transform 0.12s ease, filter 0.12s ease, box-shadow 0.12s ease;
+  transition: transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .thumb.thumb-image button:hover {
   transform: scale(1.12);
@@ -771,7 +771,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   height: 24px;
   padding: 0 7px;
   font-size: 13px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--accent-primary, var(--red));
 }
 
@@ -782,7 +782,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   background: color-mix(in srgb, var(--red) 10%, transparent);
   font-weight: 600;
   gap: 8px;
-  border-radius: 999px;   /* pill — rounder than the square file chips */
+  border-radius: var(--radius-pill);   /* pill — rounder than the square file chips */
   padding-left: 12px;
 }
 .thumb-collapsed:hover {
@@ -790,7 +790,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
 }
 .thumb-collapsed-label { white-space: nowrap; }
 .thumb-collapsed-x {
-  height: 24px; padding: 0 7px; font-size: 13px; border-radius: 4px;
+  height: 24px; padding: 0 7px; font-size: 13px; border-radius: var(--radius-sm);
   color: var(--accent-primary, var(--red));
   background: none; border: none; cursor: pointer; opacity: 0.6;
 }
@@ -805,7 +805,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   background: rgba(0, 0, 0, 0.8);
   backdrop-filter: blur(10px);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px;
   margin: 10px;
   z-index: 1000;
@@ -841,12 +841,12 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   background: var(--color-recording);
   color: white;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 12px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background var(--dur) var(--ease-out);
 }
 
 .stop-recording-btn:hover {
@@ -869,7 +869,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   padding: 16px;
   background: color-mix(in srgb, var(--bg) 95%, var(--fg));
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow-x: auto;
   text-align: center;
 }
@@ -892,10 +892,10 @@ body.hide-thinking .thinking-section { display: none !important; }
   max-width: 100%;
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--red) 5%, transparent);
   overflow: hidden;
-  transition: all 0.3s ease;
+  transition: all var(--dur-slow) var(--ease-out);
 }
 
 .thinking-header {
@@ -908,7 +908,7 @@ body.hide-thinking .thinking-section { display: none !important; }
   user-select: none;
   background: color-mix(in srgb, var(--red) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
-  transition: background 0.2s ease;
+  transition: background var(--dur) var(--ease-out);
 }
 
 .thinking-header:hover {
@@ -929,7 +929,7 @@ body.hide-thinking .thinking-section { display: none !important; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--dur) var(--ease-out);
 }
 
 .thinking-icon {
@@ -939,7 +939,7 @@ body.hide-thinking .thinking-section { display: none !important; }
 .thinking-toggle {
   font-size: 0.9em;
   color: var(--red);
-  transition: transform 0.3s ease;
+  transition: transform var(--dur-slow) var(--ease-out);
 }
 .thinking-toggle::after {
   content: '\25BC'; /* ▼ */
@@ -952,7 +952,7 @@ body.hide-thinking .thinking-section { display: none !important; }
 .thinking-content {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s ease, padding 0.3s ease;
+  transition: max-height var(--dur-slow) var(--ease-out), padding var(--dur-slow) var(--ease-out);
   padding: 0 12px;
 }
 
@@ -1011,9 +1011,9 @@ body.hide-thinking .thinking-section { display: none !important; }
 .sources-section {
   margin: 8px 0 12px;
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  transition: all 0.3s ease;
+  transition: all var(--dur-slow) var(--ease-out);
 }
 .sources-header {
   display: flex;
@@ -1023,7 +1023,7 @@ body.hide-thinking .thinking-section { display: none !important; }
   cursor: pointer;
   background: color-mix(in srgb, var(--red) 8%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
-  transition: background 0.2s ease;
+  transition: background var(--dur) var(--ease-out);
   user-select: none;
 }
 .sources-header:hover {
@@ -1058,7 +1058,7 @@ body.hide-thinking .thinking-section { display: none !important; }
 .sources-content {
   max-height: 0;
   overflow: hidden;
-  transition: max-height 0.3s ease, padding 0.3s ease;
+  transition: max-height var(--dur-slow) var(--ease-out), padding var(--dur-slow) var(--ease-out);
   padding: 0 10px;
 }
 .sources-content.expanded {
@@ -1082,11 +1082,11 @@ body.hide-thinking .thinking-section { display: none !important; }
   align-items: center;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--fg) 4%, transparent);
   text-decoration: none;
   color: var(--fg);
-  transition: background 0.15s ease;
+  transition: background var(--dur) var(--ease-out);
 }
 .source-link:hover {
   background: color-mix(in srgb, var(--fg) 10%, transparent);
@@ -1166,5 +1166,125 @@ body.hide-thinking .thinking-section { display: none !important; }
 @keyframes stream-complete-pulse {
   0%, 100% { box-shadow: none; }
   50% { box-shadow: inset 0 0 0 1.5px var(--accent); }
+}
+
+/* ── The Council — ask several models, reviewer synthesizes ── */
+.council-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+.council-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  font-weight: 600;
+  color: var(--fg);
+}
+.council-muted {
+  font-weight: 400;
+  color: var(--color-muted);
+  font-size: 0.85em;
+}
+.council-question {
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  color: var(--fg);
+  font-style: italic;
+}
+.council-block--loading .thinking-indicator {
+  padding: 0;
+}
+.council-cancel-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3, 12px);
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all var(--dur) var(--ease-out);
+}
+.council-cancel-btn:hover {
+  color: var(--fg);
+  border-color: var(--color-error);
+}
+.council-error {
+  color: var(--color-error);
+  font-size: 0.9em;
+}
+.council-answers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+}
+.council-answer {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+}
+.council-answer summary {
+  cursor: pointer;
+  font-weight: 600;
+  color: var(--fg);
+  list-style: none;
+}
+.council-answer summary::-webkit-details-marker { display: none; }
+.council-answer summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform var(--dur) var(--ease-out);
+  color: var(--color-muted);
+}
+.council-answer[open] summary::before {
+  transform: rotate(90deg);
+}
+.council-answer-body {
+  margin-top: var(--space-2, 8px);
+}
+.council-answer--error {
+  border-color: var(--color-error);
+}
+.council-answer--error summary {
+  color: var(--color-error);
+}
+.council-answer-error-msg {
+  color: var(--color-error);
+  margin-top: var(--space-2, 8px);
+  font-size: 0.9em;
+}
+.council-synthesis {
+  background: var(--surface-3);
+  border-radius: var(--radius-lg);
+  border-left: 3px solid var(--accent, var(--red));
+  padding: var(--space-3, 12px);
+  box-shadow: var(--shadow-1);
+}
+.council-synthesis-header {
+  font-weight: 600;
+  margin-bottom: var(--space-2, 8px);
+  color: var(--fg);
+}
+.council-synthesis-section + .council-synthesis-section {
+  margin-top: var(--space-2, 8px);
+}
+.council-section-label {
+  display: block;
+  font-size: 0.72em;
+  font-variant: small-caps;
+  letter-spacing: 0.04em;
+  color: var(--color-muted);
+  margin-bottom: 2px;
+}
+.council-synthesis--error {
+  border-left-color: var(--color-error);
+}
+.council-synthesis-error-msg {
+  color: var(--color-error);
+  font-size: 0.9em;
 }
 

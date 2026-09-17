@@ -23,6 +23,7 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLifecycle.js';
+import { floorToolStart, floorToolEnd, floorTurnEnd, cockpitEvent } from './chat/hooks.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -285,7 +286,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
           }
         }
       });
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming')); floorTurnEnd();
 
       // Clean up any thinking spinners
       document.querySelectorAll('.agent-thinking-dots').forEach(el => {
@@ -1790,7 +1791,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
                   sessionModule.updateModelPicker();
                 }
                 continue;
-              } else if (json.type === 'model_info') {
+              } else if (json.type === 'model_info') { cockpitEvent(json, _isBg);
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
@@ -1908,7 +1909,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
                   uiModule.showToast('Context compacted — older messages summarized');
                 }
               } else if (json.type === 'metrics') {
-                metrics = json.data;
+                metrics = json.data; cockpitEvent(json, _isBg);
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
@@ -1993,7 +1994,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
                   }
                   chatBox.appendChild(threadWrap);
                 }
-                threadWrap.classList.add('streaming');
+                threadWrap.classList.add('streaming'); floorToolStart(threadWrap, json.tool);
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
@@ -2071,7 +2072,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
                     clearInterval(currentToolBubble._elapsedTicker);
                     currentToolBubble._elapsedTicker = null;
                   }
-                  const ok = (json.exit_code === 0 || json.exit_code == null);
+                  const ok = (json.exit_code === 0 || json.exit_code == null); floorToolEnd(currentToolBubble.parentElement, json.tool, ok);
                   const cmd = json.command || '';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
@@ -2309,6 +2310,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
 
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
+        floorTurnEnd();  // foreground only: a background finish must not move the visible minifig
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
         finalModelName = _shortModel(metrics?.model || finalMeta?.model);
         // Preserve suffix (e.g. "Research") if set by model_info event
@@ -2610,7 +2612,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
             sessionModule.clearStreaming(streamSessionId);
           }
         }
-      } else {
+      } else { floorTurnEnd();
         // Stop streaming TTS on any error/abort
         if (streamingTTS && window.aiTTSManager) window.aiTTSManager.stop();
 

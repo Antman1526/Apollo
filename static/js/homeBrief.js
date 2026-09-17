@@ -373,6 +373,14 @@ export function render(root, data, opts = {}) {
   const dismissed = opts.dismissed === undefined ? readDismissed() : !!opts.dismissed;
   const modelsReady = !!(setup.models && setup.models.ready);
   const showBrief = allReady || (modelsReady && dismissed);
+  // The Today briefing card (briefing.js, #welcome-briefing) covers the same
+  // agenda in more depth, so when it is mounted the brief mode yields to it
+  // and only the setup checklist is rendered here.
+  const todayCard = opts.todayCard === undefined ? hasTodayCard() : !!opts.todayCard;
+  if (showBrief && todayCard) {
+    root.hidden = true;
+    return;
+  }
   root.hidden = false;
   root.classList.toggle('is-checklist', !showBrief);
   root.classList.toggle('is-brief', showBrief);
@@ -384,6 +392,10 @@ export function render(root, data, opts = {}) {
       render(root, data, { ...opts, dismissed: true });
     });
   }
+}
+
+function hasTodayCard() {
+  return typeof document !== 'undefined' && !!document.getElementById('welcome-briefing');
 }
 
 // ── Self-init ──────────────────────────────────────────────────────────

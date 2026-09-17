@@ -16,7 +16,8 @@ Order:
 6. `layout-chat.css` — chat container, history, welcome screen, composer (desktop)
 7. `layout-mobile.css` — the `@media (max-width:768px)` layout block + loading spinner
 5. `controls.css` — radio/preset/toolbar controls, color palette
-6. `overlays.css` — voice, search overlay, theme popup, syntax highlighting
+6. `overlays.css` — search overlay, theme popup, syntax highlighting
+7. `voice.css` — voice-call overlay: token-colored orb, live mic-level ring, speaking bars
 7. `chat-components.css` — chat markdown, agent UI, input area
 8. `agent-thread.css` — slash responses, agent thread timeline, tool output
 9. `memory.css` — memory modal
@@ -30,7 +31,7 @@ Order:
 17. `notes.css` — notes, goals, today view
 18. `calendar.css` — calendar, personal assistant
 19. `theme-extras.css` — in-house color picker, frosted-glass theme
-20. `mobile-overrides.css` — iOS focus-zoom fix, voice-call overlay (**last**)
+20. `mobile-overrides.css` — iOS focus-zoom fix (**last**)
 
 `../style.css` remains as a compatibility shim that `@import`s all of the
 above, so clients holding cached old HTML (which linked `/static/style.css`)

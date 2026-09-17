@@ -46,7 +46,7 @@ export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
 // Browser-only: drive a gate from a live mic MediaStream. Returns handles to
 // pause (mute), resume, and destroy. References Web Audio globals only here,
 // inside the function body — never at module top level.
-export function createMicVad({ stream, gate, onEvent }) {
+export function createMicVad({ stream, gate, onEvent, onLevel }) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioCtx();
   const source = ctx.createMediaStreamSource(stream);
@@ -68,6 +68,10 @@ export function createMicVad({ stream, gate, onEvent }) {
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     const rms = Math.sqrt(sum / buf.length);
     if (!paused) {
+      // The only onLevel tap in this module — a pure observation hook (e.g.
+      // driving a UI meter). It must never affect gate state or be able to
+      // break the tick loop if it throws.
+      if (onLevel) { try { onLevel(rms); } catch {} }
       const ev = gate.push(rms, performance.now());
       if (ev) onEvent(ev, rms);
     }

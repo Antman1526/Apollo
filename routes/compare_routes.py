@@ -11,7 +11,9 @@ import logging
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
+from routes.compare_helpers import resolve_ad_hoc_endpoint
 from src.auth_helpers import require_user
+from src.url_safety import check_outbound_url
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,11 @@ def setup_compare_routes(session_manager: SessionManager):
         owner = require_user(request)
         # Create ephemeral sessions (prefixed [CMP])
         for sid, model, endpoint in [(sid_a, model_a, endpoint_a), (sid_b, model_b, endpoint_b)]:
+            # SSRF hardening: reject a non-HTTP(S) or metadata-range endpoint
+            # URL before anything is created for it.
+            ok, reason = check_outbound_url(endpoint)
+            if not ok:
+                raise HTTPException(400, f"Rejected endpoint URL: {reason}")
             session_manager.create_session(
                 session_id=sid,
                 name=f"[CMP] {model.split('/')[-1]}",
@@ -58,22 +65,13 @@ def setup_compare_routes(session_manager: SessionManager):
                 rag=False,
                 owner=owner,
             )
-            # Copy API key from endpoint config
-            db = SessionLocal()
-            try:
-                from core.database import ModelEndpoint
-                from src.endpoint_resolver import build_headers, normalize_base
-                # Find matching endpoint by URL
-                base = normalize_base(endpoint)
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.base_url == base
-                ).first()
-                if ep and ep.api_key:
-                    s = session_manager.sessions.get(sid)
-                    if s:
-                        s.headers = build_headers(ep.api_key, ep.base_url)
-            finally:
-                db.close()
+            # Copy API key from endpoint config — owner-scoped so a user
+            # can't spend another user's stored key via a shared URL.
+            _, headers = resolve_ad_hoc_endpoint(endpoint, owner=owner)
+            if headers:
+                s = session_manager.sessions.get(sid)
+                if s:
+                    s.headers = headers
 
         # Blind mapping: randomly assign left/right
         blind = str(is_blind).lower() == "true"

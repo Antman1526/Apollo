@@ -2,7 +2,7 @@
       .box { max-height:none; }
       .chat-container { padding:10px; flex:1; margin-top:0; padding-top:42px; min-height:0; }
       .scroll-nav-btn { width:44px; height:44px; font-size:14px; margin-bottom:0; }
-      .send-btn { width:48px; height:48px !important; border-radius:12px; }
+      .send-btn { width:48px; height:48px !important; border-radius: var(--radius-xl); }
       .send-btn svg { width:22px; height:22px; }
       #compare-toggle-btn { display:none !important; }
       .section[draggable] { -webkit-user-drag:none; }
@@ -71,7 +71,7 @@
       .section-header-flex {
         padding: 12px 10px !important;
         height: 48px !important;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
         box-sizing: border-box;
       }
       .section-header-flex h4,
@@ -90,7 +90,7 @@
         padding: 12px 10px !important;
         min-height: 48px;
         font-size: 14px;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
         gap: 10px !important;
       }
       .list-item .grow {
@@ -112,7 +112,7 @@
       /* Section separator — more breathing room */
       .section {
         margin-top: 4px;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
       }
       /* Wave accent — slightly bigger on mobile */
       .section-header-flex h4::before {
@@ -297,7 +297,7 @@
       /* Mode toggle — larger touch targets */
       .mode-toggle {
         height: 34px;
-        border-radius: 12px;
+        border-radius: var(--radius-xl);
       }
       .mode-toggle::before {
         border-radius: 11px;
@@ -885,7 +885,7 @@
       }
     }
     .modal-content {
-      background:var(--panel);
+      background:var(--surface-3);
       border:1px solid var(--border);
       width:min(520px, 92vw); max-height:85vh; padding:10px;
       box-sizing:border-box; font-size:14px;
@@ -895,7 +895,7 @@
       position:relative;
       overflow-y:auto;
       border-radius:10px;
-      box-shadow:0 8px 32px rgba(0,0,0,0.45);
+      box-shadow:var(--shadow-3);
       pointer-events:auto;
       animation: modal-enter 0.25s ease-out both;
     }
@@ -971,7 +971,7 @@
       line-height:1;
       text-indent:0;
       cursor:pointer;
-      border-radius:4px;
+      border-radius: var(--radius-sm);
       line-height:1;
       flex-shrink:0;
     }
@@ -995,7 +995,7 @@
       justify-content:center;
       line-height:1;
       cursor:pointer;
-      border-radius:4px;
+      border-radius: var(--radius-sm);
       flex-shrink:0;
       margin-left:auto; /* push to the right so it docks next to .close-btn */
       margin-right:4px;
@@ -1098,7 +1098,7 @@
         width: 85vw;
         padding: 12px 16px;
         font-size: 0.88rem;
-        border-radius: 12px;
+        border-radius: var(--radius-xl);
       }
       .styled-confirm-box .modal-header h4 { font-size: 0.9rem; }
       .styled-confirm-box .modal-body p { font-size: 0.85rem; margin: 6px 0 10px; }
@@ -1109,14 +1109,14 @@
            sitting low in the taller mobile buttons. */
         padding: 8px 12px 12px;
         font-size: 0.85rem;
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
         text-align: center;
       }
     }
     .confirm-btn {
       /* Asymmetric padding nudges the label UP ~2px from where it was (more
          bottom than top padding), so the confirm-dialog text isn't sitting low. */
-      padding:3px 16px 5px; border-radius:4px; font-size:0.85rem;
+      padding:3px 16px 5px; border-radius: var(--radius-sm); font-size:0.85rem;
       cursor:pointer; border:1px solid var(--border);
       font-family:inherit;
     }
@@ -1156,7 +1156,7 @@
       margin-top:8px;
       padding:9px 12px;
       border:1px solid var(--border);
-      border-radius:6px;
+      border-radius: var(--radius-md);
       background:var(--bg);
       color:var(--fg);
       font:inherit;
@@ -1230,7 +1230,7 @@
       height: 32px;
       background: none;
       border: 1px solid transparent;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       padding: 0;
       cursor: pointer;
       transition: background 0.15s, border-color 0.15s;
@@ -1257,7 +1257,7 @@
       color: var(--fg);
       border: 1px solid var(--border);
       padding: 6px 12px;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       font-size: 12px;
       display: none;
       z-index: 100;

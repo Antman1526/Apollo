@@ -5333,6 +5333,7 @@ const COMMANDS = {
     noUserBubble: true,
     usage: '/event tomorrow 14:00 Team call',
   },
+  council: { alias: ['co'], category: 'Productivity', help: 'Ask up to three models the same question', handler: (args) => { const q = args.join(' ').trim(); if (!q) { slashReply('Usage: /council Your question'); return true; } window.councilModule?.ask(q); return true; }, noUserBubble: true, usage: '/council Your question' },
   setup: {
     alias: ['su', 'seutp'],
     category: 'Getting started',
@@ -5936,5 +5937,4 @@ const slashCommands = {
   typewriterReply,
   typewriterInto,
 };
-
 export default slashCommands;

@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'apollo-v341';
+const CACHE_NAME = 'apollo-v344';
 
 // Core shell precached on install so repeat opens are instant without any
 // network wait. Keep this list in sync with the <script type="module"> tags
@@ -25,6 +25,7 @@ const PRECACHE = [
   '/static/css/layout-mobile.css',
   '/static/css/controls.css',
   '/static/css/overlays.css',
+  '/static/css/voice.css',
   '/static/css/chat-components.css',
   '/static/css/agent-thread.css',
   '/static/css/memory.css',
@@ -76,6 +77,17 @@ const PRECACHE = [
   '/static/js/cookbook.js',
   '/static/js/search-chat.js',
   '/static/js/compare/index.js',
+  '/static/js/council.js',
+  '/static/js/briefing.js',
+  '/static/js/cockpit.js',
+  '/static/js/chat/cockpitHook.js',
+  '/static/js/chat/hooks.js',
+  '/static/js/chat/floorHook.js',
+  '/static/js/chatFloor.js',
+  '/static/js/systemPulse.js',
+  '/static/js/paletteItems.js',
+  '/static/js/welcomeState.js',
+  '/static/js/welcomeConstellation.js',
   '/static/js/theme.js',
   '/static/js/censor.js',
   '/static/js/settings.js',

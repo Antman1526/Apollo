@@ -31,11 +31,11 @@
       color: var(--accent);
       cursor: pointer;
       padding: 4px;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: opacity 0.15s, background 0.15s, left 0.15s;
+      transition: opacity var(--dur), background var(--dur), left var(--dur);
       z-index: 1;
       opacity: 0.7;
     }
@@ -58,11 +58,11 @@
       opacity: 0.6;
       cursor: pointer;
       padding: 4px;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: opacity 0.08s, background 0.08s, left 0.15s, right 0.15s;
+      transition: opacity var(--dur-fast), background var(--dur-fast), left var(--dur), right var(--dur);
       flex-shrink: 0;
       z-index: 1;
     }
@@ -143,9 +143,9 @@
       background: none; border: none;
       color: inherit;
       cursor: pointer;
-      padding: 4px 5px; border-radius: 4px;
+      padding: 4px 5px; border-radius: var(--radius-sm);
       display: flex; align-items: center;
-      transition: color 0.08s, background 0.08s;
+      transition: color var(--dur-fast), background var(--dur-fast);
     }
     .export-dl-btn:hover {
       color: var(--accent);
@@ -154,8 +154,8 @@
     .export-dropdown-menu {
       display: none;
       position: fixed;
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 8px; padding: 4px; min-width: 120px;
+      background: var(--surface-3); border: 1px solid var(--border);
+      border-radius: var(--radius-lg); padding: 4px; min-width: 120px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.4);
       z-index: 300;
       color: var(--fg);
@@ -163,9 +163,9 @@
     .export-dropdown-menu.open { display: block; }
     .export-dropdown-item {
       padding: 6px 8px; font-size: 11px; cursor: pointer;
-      border-radius: 6px; color: var(--fg); white-space: nowrap;
+      border-radius: var(--radius-md); color: var(--fg); white-space: nowrap;
       display: flex; align-items: center; gap: 10px;
-      transition: background 0.1s;
+      transition: background var(--dur-fast);
     }
     .export-dropdown-item:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
     .export-dropdown-item .dropdown-icon {
@@ -199,7 +199,7 @@
       width: 240px;
       background: var(--sidebar-bg, var(--panel));
       border-right: 1px solid var(--border);
-      transition: width 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+      transition: width var(--dur) var(--ease-out), opacity var(--dur) var(--ease-out), padding var(--dur) var(--ease-out);
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
@@ -271,8 +271,8 @@
       min-width: 0;
       cursor: pointer;
       padding: 6px 8px;
-      border-radius: 8px;
-      transition: background 0.15s;
+      border-radius: var(--radius-lg);
+      transition: background var(--dur);
     }
 
     .user-bar-left:hover {
@@ -318,11 +318,11 @@
       opacity: 0.35;
       cursor: pointer;
       padding: 6px;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: opacity 0.12s, background 0.12s;
+      transition: opacity var(--dur-fast), background var(--dur-fast);
     }
 
     .user-bar-btn:hover {
@@ -332,6 +332,108 @@
 
 
     .sidebar.hidden .sidebar-user-bar {
+      display: none;
+    }
+
+    /* ===== System Pulse Strip ===== */
+    /* Always-visible (admin-only) summary of /api/system/status: a single
+       ready dot when everything is healthy, or labelled alert chips for
+       anything that isn't. Non-admins never fetch it, so an empty strip
+       (forbidden, or before the first admin-gated fetch resolves) collapses
+       to nothing via :empty. */
+    .system-pulse {
+      padding: var(--space-2) var(--space-3);
+      min-height: 32px;
+      font-size: 11px;
+      color: var(--color-muted);
+      background: var(--surface-2);
+      border-top: 1px solid var(--border);
+      flex-shrink: 0;
+      box-sizing: border-box;
+      container-type: inline-size;
+      container-name: system-pulse;
+      transition: background var(--dur) var(--ease-out);
+    }
+    .system-pulse:hover {
+      background: var(--surface-3);
+    }
+    .system-pulse:empty {
+      display: none;
+    }
+    .system-pulse-btn {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      background: none;
+      font: inherit;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--color-muted);
+    }
+    .pulse-dot--ready {
+      background: var(--color-success);
+    }
+    .pulse-text {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pulse-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      padding: 2px var(--space-2);
+      border-radius: var(--radius-pill);
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      max-width: 100%;
+      overflow: hidden;
+    }
+    .pulse-chip::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--color-error);
+    }
+    .pulse-chip-summary {
+      opacity: 0.65;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .pulse-chip-summary::before {
+      content: ' \2014 ';
+    }
+    .pulse-more {
+      opacity: 0.6;
+      flex-shrink: 0;
+    }
+    /* Narrow sidebar: drop the chip detail text, keep the compact pills. */
+    @container system-pulse (max-width: 280px) {
+      .pulse-chip-summary {
+        display: none;
+      }
+    }
+    /* Sidebar collapsed to the icon rail: the whole strip disappears, same
+       as .sidebar-user-bar above — there is no separate icon-only slot for
+       it in the current sidebar chrome. */
+    .sidebar.hidden .system-pulse {
       display: none;
     }
 
@@ -364,7 +466,7 @@
       gap: 0;
       padding: 10px 8px 8px;
       min-height: 0;
-      transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+      transition: transform var(--dur-slow) cubic-bezier(0.25, 1, 0.5, 1);
     }
     .sidebar-brand {
       display: flex;
@@ -407,7 +509,8 @@
     #tools-section {
       margin-top: 1px;
     }
-    #tools-section .list-item {
+    #tools-section .list-item,
+    #know-section .list-item {
       padding: 8px 8px;
     }
     .sidebar.right-side .sidebar-header {
@@ -443,7 +546,7 @@
       opacity: 0.5;
       -webkit-tap-highlight-color: transparent;
       outline: none;
-      transition: opacity 0.15s;
+      transition: opacity var(--dur);
       padding: 0;
       display: flex;
     }
@@ -518,13 +621,13 @@
       background: transparent;
       color: var(--accent, var(--red));
       font-size: 16px;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       opacity: 0.5;
-      transition: opacity 0.08s, background 0.08s;
+      transition: opacity var(--dur-fast), background var(--dur-fast);
     }
     .rail-notes-badge {
       position: absolute;
@@ -642,9 +745,9 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       flex-shrink: 0;
-      transition: background 0.15s, color 0.15s;
+      transition: background var(--dur), color var(--dur);
     }
     .modal-minimize-btn:hover { background: var(--fg); color: var(--bg); }
     .modal.modal-minimized { display: none !important; }
@@ -653,9 +756,9 @@
       position: fixed; pointer-events: none; z-index: 9000;
       background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
       border: 2px solid color-mix(in srgb, var(--accent, var(--red)) 55%, transparent);
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       opacity: 0; transform: scale(0.96);
-      transition: left 0.12s ease, top 0.12s ease, width 0.12s ease, height 0.12s ease, opacity 0.12s, transform 0.12s;
+      transition: left var(--dur-fast) var(--ease-out), top var(--dur-fast) var(--ease-out), width var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), opacity var(--dur-fast), transform var(--dur-fast);
     }
     #tile-ghost.visible { opacity: 1; transform: scale(1); }
     /* Bottom dock — chip per minimized modal */
@@ -673,11 +776,11 @@
       padding: 6px 8px 6px 10px;
       background: var(--panel, var(--bg));
       border: 1px solid var(--border);
-      border-radius: 999px;
+      border-radius: var(--radius-pill);
       color: var(--fg); font-family: inherit; font-size: 12px;
       cursor: grab; touch-action: none; user-select: none;
       box-shadow: 0 4px 14px rgba(0,0,0,0.35);
-      transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.15s, border-color 0.15s;
+      transition: transform var(--dur-slow) cubic-bezier(0.34, 1.56, 0.64, 1), background var(--dur), border-color var(--dur);
       animation: dock-chip-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
     }
     .minimized-dock-chip:hover {
@@ -794,9 +897,9 @@
       opacity: 0;
       z-index: 9000;
       box-shadow: 0 8px 28px color-mix(in srgb, var(--accent, var(--red, #e53935)) 55%, transparent);
-      transition: opacity 0.18s ease,
-                  transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1),
-                  box-shadow 0.18s ease;
+      transition: opacity var(--dur) var(--ease-out),
+                  transform var(--dur) cubic-bezier(0.34, 1.56, 0.64, 1),
+                  box-shadow var(--dur) var(--ease-out);
     }
     /* Off-screen start position depends on which side the chip is on so
        the X slides in from the opposite edge with a snappy overshoot. */
@@ -823,7 +926,7 @@
       opacity: 0;
       pointer-events: none;
       animation: whirlpool-spin 0.85s linear infinite;
-      transition: opacity 0.15s ease;
+      transition: opacity var(--dur) var(--ease-out);
     }
     #dock-trash-zone.engaged .whirlpool { opacity: 1; }
     #dock-trash-zone.dropping .whirlpool {
@@ -860,7 +963,7 @@
       font-weight: 700;
       line-height: 16px;
       text-align: center;
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       box-shadow: 0 0 0 2px var(--bg);
       pointer-events: none;
     }
@@ -877,7 +980,7 @@
       font-weight: 700;
       line-height: 16px;
       white-space: nowrap;
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       box-shadow: 0 0 0 2px var(--bg);
       pointer-events: none;
     }
@@ -893,7 +996,7 @@
       from { opacity: 0; transform: translateY(20px) scale(0.85); }
       to   { opacity: 1; transform: translateY(0)   scale(1); }
     }
-    .rail-new-chat svg { transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .rail-new-chat svg { transition: transform var(--dur-slow) cubic-bezier(0.34, 1.56, 0.64, 1); }
     .rail-new-chat:hover svg { transform: rotate(90deg); }
     /* A "New" label slides out from the right of the + as it spins, so users
        discover what the icon does without needing the tooltip. */
@@ -913,10 +1016,10 @@
       color: var(--fg);
       background: var(--panel);
       padding: 2px 6px;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       box-shadow: 0 2px 6px rgba(0,0,0,0.25);
       z-index: 20;
-      transition: opacity 0.25s ease, transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+      transition: opacity var(--dur) var(--ease-out), transform var(--dur) cubic-bezier(0.34, 1.56, 0.64, 1);
     }
     .rail-new-chat:hover::after {
       opacity: 1;

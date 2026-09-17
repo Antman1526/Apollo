@@ -71,7 +71,7 @@
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font: inherit;
   font-size: 12px;
   outline: none;
@@ -103,7 +103,7 @@
   padding: 4px 8px;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font: inherit;
   font-size: 11px;
@@ -317,13 +317,13 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .gallery-grid.gallery-dragover {
   border: 2px dashed var(--red);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--red) 5%, transparent);
 }
 .gallery-card {
   position: relative;
   aspect-ratio: 1;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--border);
   cursor: pointer;
@@ -362,7 +362,7 @@ body.gallery-selecting .gallery-dl-btn,
 .attach-image-skeleton {
   position: relative;
   width: 160px; height: 120px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   display: flex; align-items: center; justify-content: center;
   background: linear-gradient(100deg,
     color-mix(in srgb, var(--fg) 4%, var(--panel)) 30%,
@@ -399,7 +399,7 @@ body.gallery-selecting .gallery-dl-btn,
   z-index: 5;  /* sit above msg-action overlays so the click lands here */
   height: 22px;
   background: rgba(0,0,0,0.55); color: #fff;
-  border: 1px solid rgba(255,255,255,0.2); border-radius: 4px;
+  border: 1px solid rgba(255,255,255,0.2); border-radius: var(--radius-sm);
   padding: 0 8px 0 6px; cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center; gap: 5px;
   font-size: 11px; font-weight: 500; line-height: 1;
@@ -443,7 +443,7 @@ body.gallery-selecting .gallery-dl-btn,
 .vision-editor-text {
   width: 100%; min-height: 180px;
   background: var(--panel); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: 8px 10px;
   font-family: inherit; font-size: 12px; line-height: 1.5;
   resize: vertical; outline: none;
@@ -456,7 +456,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .vision-editor-btn {
   background: var(--panel); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: 6px 14px; font-size: 12px; cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
   display: inline-flex; align-items: center; gap: 5px;
@@ -482,14 +482,14 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .attach-lightbox img {
   max-width: 100%; max-height: 100%;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   object-fit: contain;
 }
 .attach-lightbox-err {
   position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
   background: var(--bg); color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-md);
   padding: 6px 10px; font-size: 12px;
 }
 @keyframes attach-lightbox-fade {
@@ -540,7 +540,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .gallery-select-btn {
   padding: 9px 10px 11px; background: transparent; color: var(--fg);
-  border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-md); cursor: pointer;
   font-size: 11px; font-family: inherit; opacity: 0.6; transition: all 0.15s;
   margin-top: -4px !important;
 }
@@ -576,13 +576,13 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-bulk-all input { accent-color: var(--accent, var(--red)); cursor: pointer; }
 .gallery-bulk-delete {
   padding: 3px 10px; background: transparent; color: var(--red);
-  border: 1px solid var(--red); border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--red); border-radius: var(--radius-sm); cursor: pointer;
   font-size: 11px; font-family: inherit;
 }
 .gallery-bulk-delete:hover { background: var(--red); color: #fff; }
 .gallery-bulk-cancel {
   padding: 3px 10px; background: transparent; color: var(--fg);
-  border: 1px solid var(--border); border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); cursor: pointer;
   font-size: 11px; font-family: inherit; opacity: 0.6;
 }
 .gallery-bulk-cancel:hover { opacity: 1; }
@@ -618,7 +618,7 @@ body.gallery-selecting .gallery-dl-btn,
 }
 .gallery-card-model {
   padding: 1px 5px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: rgba(255,255,255,0.15);
 }
 .gallery-empty {
@@ -634,7 +634,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 6px 16px;
   background: none;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   cursor: pointer;
   font: inherit;
@@ -681,7 +681,7 @@ body.gallery-selecting .gallery-dl-btn,
   font: inherit;
   font-size: 12px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   position: relative;
   top: -2px;
 }
@@ -698,7 +698,7 @@ body.gallery-selecting .gallery-dl-btn,
   font: inherit;
   font-size: 11px;
   padding: 3px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: border-color 0.15s;
 }
 .gallery-detail-action:hover {
@@ -731,7 +731,7 @@ body.gallery-selecting .gallery-dl-btn,
   padding: 3px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 4px 14px color-mix(in srgb, var(--fg) 18%, transparent);
   z-index: 12;
   display: flex;
@@ -785,7 +785,7 @@ body.gallery-selecting .gallery-dl-btn,
 .gallery-detail-img-frame video {
   max-width: 100%;
   max-height: 80vh;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   object-fit: contain;
   display: block;
 }
@@ -851,7 +851,7 @@ body.gallery-selecting .gallery-dl-btn,
   /* Nudge up 8px so the heart sits visually above the Date label
      baseline rather than centred on it. */
   margin-top: -8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg-muted);
   opacity: 0.6;
   cursor: pointer;
@@ -933,7 +933,7 @@ body.gallery-selecting .gallery-dl-btn,
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font: inherit;
   font-size: 11px;
   margin-bottom: 4px;
@@ -984,7 +984,7 @@ body.gallery-selecting .gallery-dl-btn,
   font: inherit;
   font-size: 10px;
   padding: 3px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: border-color 0.15s, color 0.15s;
 }
 .gallery-tag-save:hover {

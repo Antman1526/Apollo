@@ -205,7 +205,7 @@ body.notes-drag-mode .note-card-pin svg {
 .note-card-placeholder {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border: 2px dashed color-mix(in srgb, var(--fg) 25%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-sizing: border-box;
   flex-shrink: 0;
   transition: width 0.18s ease, height 0.18s ease;
@@ -259,7 +259,7 @@ body.notes-drag-mode .note-card-pin svg {
 .note-fullscreen-actions .note-form-text-btn {
   padding: 8px 12px;
   font-size: 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
 }
 .note-fullscreen-actions .note-form-text-btn svg {
   width: 14px;
@@ -274,7 +274,7 @@ body.notes-drag-mode .note-card-pin svg {
   background: none;
   border: none;
   color: var(--fg);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
@@ -379,13 +379,13 @@ body.notes-drag-mode .note-card-pin svg {
 .note-cl-row-dragging {
   box-shadow: 0 12px 28px rgba(0,0,0,0.4);
   background: var(--bg);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   opacity: 0.98;
 }
 .note-cl-row-placeholder {
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border: 2px dashed color-mix(in srgb, var(--fg) 22%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   margin: 4px 0;
   box-sizing: border-box;
   transition: height 0.16s ease;
@@ -405,7 +405,7 @@ body.notes-drag-mode .note-card-pin svg {
   padding: 10px 18px;
   font-size: 15px;
   font-weight: 600;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   letter-spacing: -0.01em;
   opacity: 0.85;
 }
@@ -444,7 +444,7 @@ body.notes-drag-mode .note-card-pin svg {
   width: auto;
   height: 36px;
   padding: 0 12px 0 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   /* No border / no background — the surrounding +Add row provides the
      bordered container, the camera is just an icon inside it. */
   border: none;
@@ -540,7 +540,7 @@ body.notes-drag-mode .note-card-pin svg {
   margin: 0 auto 0 0;
   background: transparent;
   border: 1px dashed color-mix(in srgb, var(--fg) 16%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   text-align: left;
 }
 
@@ -564,7 +564,7 @@ body.notes-drag-mode .note-card-pin svg {
      28px tall with overflow:hidden — which clipped them. Grow the track so
      the bigger touch targets fit. */
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
 }
 .note-fullscreen-overlay .note-form-actions-group {
   order: 4;
@@ -743,7 +743,7 @@ body.notes-drag-mode .note-card-pin svg {
   background: none;
   border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
   color: color-mix(in srgb, var(--fg) 50%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 6px 0;
   flex: 1;
   cursor: pointer;
@@ -834,7 +834,7 @@ body.notes-drag-mode .note-card-pin svg {
 .note-corner-menu-dropdown {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 8px 24px rgba(0,0,0,0.3);
   padding: 4px;
   min-width: 168px;
@@ -854,7 +854,7 @@ body.notes-drag-mode .note-card-pin svg {
   font-size: 12px;
   text-align: left;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 .note-corner-menu-dropdown .ncm-item:hover {
@@ -869,7 +869,7 @@ body.notes-drag-mode .note-card-pin svg {
   background: color-mix(in srgb, var(--accent, var(--red)) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, transparent);
   color: var(--accent, var(--red));
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 3px 10px 3px 8px;
   font-size: 11px;
   font-weight: 600;
@@ -884,7 +884,7 @@ body.notes-drag-mode .note-card-pin svg {
      visually separates from the panel background it sits on. */
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   /* Extra right padding so the corner buttons (pin / edit / copy / done)
      never collide with the title, and a min-height so an empty/short
      note is still tall enough to fit that row of corner controls. */
@@ -1250,7 +1250,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   gap: 4px;
   margin-left: 6px;
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 11px;
   font-weight: 500;
   font-family: inherit;
@@ -1363,7 +1363,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-agent-menu {
   background: var(--panel, var(--bg));
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   padding: 4px 0;
   min-width: 140px;
@@ -1414,7 +1414,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   width: 100%;
   max-height: 180px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   margin: 4px 0;
   display: block;
 }
@@ -1426,7 +1426,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   width: 100%;
   max-height: 200px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: block;
   /* Images are draggable=true by default; that catches the mousedown
      and beats the X button to the click. Disabling drag at the CSS
@@ -1461,7 +1461,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border: 1px solid var(--border);
   color: var(--fg);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   width: auto;
   min-width: 32px;
   height: 32px;
@@ -1482,7 +1482,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   gap: 4px;
   background: var(--panel);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 35%, var(--border));
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   /* Toggle pill sits at the very left of the bar — no inset padding. The
      pill's own border provides visual breathing room from the wrapper edge. */
   padding: 4px 6px 4px 4px;
@@ -1557,7 +1557,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   opacity: 0.45;
   cursor: pointer;
   padding: 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   transition: opacity 0.15s, background 0.15s;
@@ -1572,7 +1572,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   display: inline-flex;
   height: 28px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   overflow: hidden;
   position: relative;
   flex-shrink: 0;
@@ -1589,7 +1589,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   width: 50%;
   height: 100%;
   background: color-mix(in srgb, var(--fg) 10%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
   z-index: 0;
 }
@@ -1671,7 +1671,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 }
 .notes-skeleton-card {
   height: 72px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: linear-gradient(
     90deg,
@@ -1700,7 +1700,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   width: 32px;
   height: 32px;
   display: inline-flex;
@@ -1756,7 +1756,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
   border: none;
-  border-radius: 12px;
+  border-radius: var(--radius-xl);
   padding: 4px 4px 4px 9px;
   font-size: 10px;
   font-family: inherit;
@@ -1803,7 +1803,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   position: fixed;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   box-shadow: 0 6px 24px rgba(0,0,0,0.25);
   /* Above the fullscreen note overlay (z-index: 10500) — otherwise the
      reminder picker opens hidden behind it on mobile and reads as
@@ -1857,7 +1857,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   width: 100%;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-family: inherit;
   font-size: 12px;
@@ -1923,7 +1923,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   height: 28px;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: var(--fg);
   font-family: inherit;
   font-size: 11px;
@@ -1952,7 +1952,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border: 1px solid var(--border);
   color: var(--fg);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   width: 32px;
   height: 32px;
   display: inline-flex;
@@ -2037,7 +2037,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 2px 6px;
   font: inherit;
   font-size: 9px;
@@ -2064,7 +2064,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-family: inherit;
   font-size: 11px;
   height: 30px;
@@ -2092,7 +2092,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background-repeat: no-repeat;
   background-position: 9px center;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-family: inherit;
   outline: none;
@@ -2324,7 +2324,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   padding: 2px 7px 2px 5px;
   background: color-mix(in srgb, var(--accent-warm) 18%, transparent);
   color: var(--accent-warm);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -2360,7 +2360,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   box-sizing: border-box;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   color: var(--fg);
   font-family: inherit;
   font-size: 13px;
@@ -2383,7 +2383,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--accent-warm) 16%, transparent);
   color: var(--accent-warm);
   border: 1px solid color-mix(in srgb, var(--accent-warm) 45%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 5px 10px;
   font-size: 12px;
   font-weight: 600;
@@ -2468,7 +2468,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: var(--panel, var(--bg));
   border: 1px solid var(--border);
   border-left: 3px solid color-mix(in srgb, var(--accent-warm) 70%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   transition: opacity 0.2s, transform 0.2s;
 }
 .notes-today-row.done {
@@ -2548,7 +2548,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   color: var(--fg);
   font-size: 11px;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: none;
   width: 80px;
   font-family: inherit;
@@ -2707,7 +2707,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-cl-row.dragging {
   opacity: 0.4;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
 }
 .note-cl-row.drop-before {
   box-shadow: 0 -2px 0 0 var(--accent);
@@ -2820,7 +2820,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
      against the card edge. */
   padding: 0 4px 0 8px;
   line-height: 1.25;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
@@ -2936,7 +2936,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-due-badge {
   font-size: 10px;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--fg) 10%, transparent);
   color: var(--fg);
   opacity: 0.6;
@@ -2991,7 +2991,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-form {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -3068,7 +3068,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   width: 26px;
   height: 26px;
   display: inline-flex;
@@ -3096,7 +3096,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   color: var(--fg);
   font-size: 11px;
   padding: 3px 10px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   opacity: 0.5;
   transition: opacity 0.15s, background 0.15s;
@@ -3113,7 +3113,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   color: var(--fg);
   font-size: 12px;
   padding: 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   resize: vertical;
   /* Roomier default so editing a note isn't cramped; JS auto-grow takes
      it further as you type. */
@@ -3156,7 +3156,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   background: color-mix(in srgb, var(--fg) 6%, transparent);
   border: 1px solid var(--border);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 5px 12px;
   font-size: 12px;
   font-family: inherit;
@@ -3188,7 +3188,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border: 1px solid var(--border);
   color: var(--fg);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   width: 38px;
   height: 38px;
   display: inline-flex;
@@ -3242,7 +3242,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
 .note-form-canvas {
   background: #ffffff;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   touch-action: none;
   max-width: 100%;
   cursor: crosshair;
@@ -3304,7 +3304,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   width: 100%;
   height: 4px;
   background: color-mix(in srgb, var(--fg) 25%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   accent-color: var(--red);
   cursor: pointer;
   transition: height 0.15s ease;
@@ -3390,7 +3390,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   border: 1px solid var(--border);
   color: var(--fg);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   height: 32px;
   width: 34px;
   font-family: inherit;
@@ -3468,7 +3468,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   color: var(--fg);
   font-size: 11px;
   padding: 3px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   outline: none;
   opacity: 0.4;
   transition: opacity 0.15s, border-color 0.15s;
@@ -3489,7 +3489,7 @@ body.notes-mobile-mode.notes-drag-mode .note-card-pin.active {
   color: var(--fg);
   font-size: 11px;
   padding: 4px 12px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition: background 0.15s;
 }

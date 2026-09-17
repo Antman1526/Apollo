@@ -26,7 +26,7 @@
   padding: 2px;
   margin: 0 8px 0 0;
   border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--panel) 82%, var(--bg));
 }
 
@@ -34,7 +34,7 @@
   min-width: 58px;
   height: 26px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   color: color-mix(in srgb, var(--fg) 72%, transparent);
   background: transparent;
   font: inherit;
@@ -238,7 +238,7 @@
   padding: 4px 7px;
   transform: translate(-50%, -118px);
   border: 1px dashed color-mix(in srgb, var(--fg) 36%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   color: color-mix(in srgb, var(--fg) 76%, transparent);
   background: color-mix(in srgb, var(--panel) 88%, var(--bg));
   font-size: 9px;
@@ -290,7 +290,7 @@
   margin-bottom: 10px;
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   color: var(--fg);
   background: color-mix(in srgb, var(--panel) 72%, var(--bg));
 }
@@ -536,7 +536,7 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
 .paperclip-tool-chip {
   padding: 3px 6px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 10px;
   color: color-mix(in srgb, var(--fg) 72%, transparent);
 }
@@ -585,7 +585,7 @@ g.paperclip-roaming-agent.thinking .paperclip-fig-arm {
   gap: 7px;
   padding: 10px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--panel) 72%, var(--bg));
   color: var(--fg);
   font: inherit;
