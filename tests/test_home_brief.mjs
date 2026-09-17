@@ -107,3 +107,47 @@ test('buildDayPrompt summarizes the brief and ends with a question', () => {
   assert.match(quiet, /Nothing scheduled or due\./);
   assert.match(quiet, /What should I focus on first/);
 });
+
+// ── render(): brief mode yields to the Today briefing card ─────────────
+
+function fakeEl() {
+  const el = {
+    children: [], attrs: {}, className: '', textContent: '', hidden: false,
+    appendChild(c) { el.children.push(c); return c; },
+    replaceChildren() { el.children = []; },
+    setAttribute(k, v) { el.attrs[k] = v; },
+    addEventListener() {},
+    classList: {
+      set: new Set(),
+      add(c) { this.set.add(c); },
+      remove(c) { this.set.delete(c); },
+      toggle(c, on) { on ? this.set.add(c) : this.set.delete(c); return on; },
+      contains(c) { return this.set.has(c); },
+    },
+  };
+  return el;
+}
+
+test('render skips the brief when the Today card is mounted, but still shows the checklist', async (t) => {
+  global.document = { createElement: fakeEl, createTextNode: (s) => ({ text: s }), getElementById: () => null };
+  t.after(() => { delete global.document; });
+  const { render } = await import('../static/js/homeBrief.js');
+  const ready = { models: { ready: true, endpoints: 1 }, search: { ready: true, state: 'sidecar' }, email: { ready: true, accounts: 1 } };
+  const data = { setup: ready, brief: { calendar_today: [], tasks_due: [], notes_due: [], email: null } };
+
+  const root = fakeEl();
+  render(root, data, { incognito: false, visible: true, dismissed: false, todayCard: true });
+  assert.equal(root.hidden, true);
+  assert.equal(root.children.length, 0);
+
+  const root2 = fakeEl();
+  render(root2, data, { incognito: false, visible: true, dismissed: false, todayCard: false });
+  assert.equal(root2.hidden, false);
+  assert.ok(root2.classList.contains('is-brief'));
+
+  const notReady = { ...ready, email: { ready: false, accounts: 0 } };
+  const root3 = fakeEl();
+  render(root3, { setup: notReady, brief: {} }, { incognito: false, visible: true, dismissed: false, todayCard: true });
+  assert.equal(root3.hidden, false);
+  assert.ok(root3.classList.contains('is-checklist'));
+});
