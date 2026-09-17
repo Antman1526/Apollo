@@ -68,8 +68,7 @@ export function pickRecentSessions(sessions, n = 4) {
 }
 
 // When two memories share a category, prefer the pinned one, then the
-// more recent one (routes/memory_routes.py sorts memories by this same
-// pinned-then-timestamp precedence).
+// more recent one (the memory routes themselves sort by timestamp only).
 function _betterCandidate(a, b) {
   const ap = !!a.pinned;
   const bp = !!b.pinned;
