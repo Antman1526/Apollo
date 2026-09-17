@@ -1,11 +1,14 @@
 /* ── Voice call mode overlay ──
-   Token-driven so the orb, ring and bars follow the active theme instead of
-   hardcoded hex. The orb's --vc-level custom property (0..1) is written by
-   voiceCall.js's rAF loop from the live mic RMS (see levelToRing()); it drives
-   the box-shadow ring width/opacity below. Reduced-motion users get the first
-   keyframe of every infinite animation as a frozen resting state (handled by
-   the global guard in base.css), so each keyframe below starts at a state
-   that looks correct standing still. */
+   Colors, spacing and the bars' animation duration are theme tokens, not
+   hardcoded hex/ms. The orb's --vc-level custom property (0..1) is set by
+   voiceCall.js's onLevel callback — an EMA-smoothed mic RMS run through
+   levelToRing(), memoized so an unchanged value skips the DOM write; there is
+   no separate rAF loop. --vc-level only means anything during the user's
+   turn: it is forced to 0 below for the thinking/transcribing/speaking states
+   and again under prefers-reduced-motion. Reduced-motion users also get the
+   first keyframe of every infinite animation as a frozen resting state
+   (handled by the global guard in base.css), so each keyframe below starts at
+   a state that looks correct standing still. */
 .voice-call-overlay {
   position: fixed; inset: 0; z-index: 1000;
   display: none; flex-direction: column; align-items: center; justify-content: center;
@@ -33,6 +36,16 @@
   width: 72px; height: 72px; border-radius: 50%;
   background: var(--accent, var(--red));
   transition: background var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+}
+
+/* The level ring only represents the user's own mic — meaningless once it's
+   not their turn to talk, so it's pinned to 0 for those states regardless of
+   whatever --vc-level the (still-running) painter last wrote on the overlay.
+   A rule directly on .vc-orb beats the inherited value from the ancestor. */
+.voice-call-overlay[data-state="speaking"] .vc-orb,
+.voice-call-overlay[data-state="thinking"] .vc-orb,
+.voice-call-overlay[data-state="transcribing"] .vc-orb {
+  --vc-level: 0;
 }
 
 /* ── Per-state orb styling ── */
@@ -64,7 +77,9 @@
   width: 6px; height: 12px;
   background: var(--bg);
   border-radius: var(--radius-pill);
-  animation: vc-bar 0.9s ease-in-out infinite;
+  /* var(--dur-slow) is 400ms, so this lands on the same 900ms cadence as
+     before while staying token-derived instead of a bare literal. */
+  animation: vc-bar calc(var(--dur-slow) * 2.25) ease-in-out infinite;
 }
 .vc-bars i:nth-child(1) { animation-delay: 0s; }
 .vc-bars i:nth-child(2) { animation-delay: .12s; }
@@ -101,4 +116,10 @@
 @media (max-width: 520px) {
   .vc-orb { width: 128px; height: 128px; }
   .vc-orb-inner { width: 56px; height: 56px; }
+}
+
+/* Belt-and-suspenders with voiceCall.js's own reducedMotion() check: even if
+   something paints --vc-level on the overlay anyway, the ring itself stays off. */
+@media (prefers-reduced-motion: reduce) {
+  .vc-orb { --vc-level: 0 !important; }
 }

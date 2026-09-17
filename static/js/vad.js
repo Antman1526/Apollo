@@ -6,7 +6,7 @@
 // Only createMicVad touches browser APIs, and only when called (never at
 // import), so this module imports cleanly in Node for testing.
 
-export function createVadGate({ threshold = 0.02, silenceMs = 1200, onLevel } = {}) {
+export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
   let speaking = false;
   let lastLoudMs = 0;
 
@@ -16,10 +16,6 @@ export function createVadGate({ threshold = 0.02, silenceMs = 1200, onLevel } = 
   return {
     // Returns 'speechstart' | 'speechend' | null.
     push(rms, nowMs) {
-      // onLevel is a pure observation tap (e.g. driving a UI meter) — it must
-      // never affect gate state or be able to break push() if it throws.
-      if (onLevel) { try { onLevel(rms); } catch {} }
-
       const loud = rms >= threshold;
       if (loud) lastLoudMs = nowMs;
 
@@ -72,6 +68,9 @@ export function createMicVad({ stream, gate, onEvent, onLevel }) {
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     const rms = Math.sqrt(sum / buf.length);
     if (!paused) {
+      // The only onLevel tap in this module — a pure observation hook (e.g.
+      // driving a UI meter). It must never affect gate state or be able to
+      // break the tick loop if it throws.
       if (onLevel) { try { onLevel(rms); } catch {} }
       const ev = gate.push(rms, performance.now());
       if (ev) onEvent(ev, rms);

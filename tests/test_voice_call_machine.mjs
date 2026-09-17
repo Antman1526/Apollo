@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createCallMachine, levelToRing } from '../static/js/voiceCall.js';
+import { createCallMachine, levelToRing, VAD_DEFAULTS } from '../static/js/voiceCall.js';
 
 function spyEffects() {
   const calls = [];
@@ -172,10 +172,24 @@ test('parseVoiceAssign returns null for normal speech', () => {
   assert.equal(parseVoiceAssign(null), null);
 });
 
-// ── levelToRing: pure rms → 0..1 orb-ring intensity ──
+// ── levelToRing: pure rms → 0..1 orb-ring intensity (threshold-anchored log) ──
 
-test('levelToRing maps rms to a 0..1 ring intensity', () => {
+test('levelToRing maps rms to a 0..1 ring intensity via a threshold-anchored log curve', () => {
+  const { threshold } = VAD_DEFAULTS; // 0.02
+  const ceiling = 0.3;
+
+  // At/below the VAD's own speech threshold reads as silence.
   assert.equal(levelToRing(0), 0);
-  assert.equal(levelToRing(0.05), 0.4);
-  assert.equal(levelToRing(1), 1);
+  assert.equal(levelToRing(threshold), 0);
+  assert.equal(levelToRing(threshold / 2), 0);
+
+  // At/above the ceiling reads as fully lit, and stays clamped past it.
+  assert.equal(levelToRing(ceiling), 1);
+  assert.equal(levelToRing(ceiling * 10), 1);
+
+  // Strictly between: grows monotonically, without snapping straight to 1.
+  const low = levelToRing(0.05);
+  const high = levelToRing(0.1);
+  assert.ok(low > 0 && low < 1, `expected 0 < ${low} < 1`);
+  assert.ok(high > low && high < 1, `expected ${low} < ${high} < 1`);
 });
