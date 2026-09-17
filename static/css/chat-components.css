@@ -1181,8 +1181,35 @@ body.hide-thinking .thinking-section { display: none !important; }
   font-weight: 600;
   color: var(--fg);
 }
+.council-muted {
+  font-weight: 400;
+  color: var(--color-muted);
+  font-size: 0.85em;
+}
+.council-question {
+  background: var(--surface-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  color: var(--fg);
+  font-style: italic;
+}
 .council-block--loading .thinking-indicator {
   padding: 0;
+}
+.council-cancel-btn {
+  align-self: flex-start;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 2px var(--space-3, 12px);
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all var(--dur) var(--ease-out);
+}
+.council-cancel-btn:hover {
+  color: var(--fg);
+  border-color: var(--color-error);
 }
 .council-error {
   color: var(--color-error);
@@ -1252,5 +1279,12 @@ body.hide-thinking .thinking-section { display: none !important; }
   letter-spacing: 0.04em;
   color: var(--color-muted);
   margin-bottom: 2px;
+}
+.council-synthesis--error {
+  border-left-color: var(--color-error);
+}
+.council-synthesis-error-msg {
+  color: var(--color-error);
+  font-size: 0.9em;
 }
 

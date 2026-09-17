@@ -92,14 +92,27 @@ function renderSectionText(text, mdToHtml) {
   return `<pre>${escapeHtml(t)}</pre>`;
 }
 
+function councilHeaderHtml(label) {
+  return `<div class="council-header">${label} <span class="council-muted">· not saved to history</span></div>`;
+}
+
+function councilQuestionHtml(question) {
+  return question ? `<div class="council-question">${escapeHtml(question)}</div>` : '';
+}
+
 /**
  * Render a Council result as the HTML for a `.msg.msg-ai.council-block`
  * transcript bubble. Pure — takes the /api/council/ask response shape and
  * an optional markdown renderer.
+ *
+ * The exchange is never persisted to chat history, so the question is
+ * rendered inside the block itself (`.council-question`) rather than as a
+ * normal user bubble, and the header says so.
  */
 export function renderCouncilHTML(result, mdToHtml) {
   const answers = (result && result.answers) || [];
   const synthesis = result && result.synthesis;
+  const question = (result && result.question) || '';
   const n = answers.length;
 
   const answerBlocks = answers.map((a, i) => {
@@ -116,7 +129,15 @@ export function renderCouncilHTML(result, mdToHtml) {
   }).join('');
 
   let synthesisHtml = '';
-  if (synthesis) {
+  if (synthesis && synthesis.error) {
+    // Reviewer itself failed: empty sections would just look broken —
+    // show a clear error state instead of three blank labels.
+    synthesisHtml =
+      `<div class="council-synthesis council-synthesis--error">` +
+        `<div class="council-synthesis-header">Reviewer synthesis · ${escapeHtml(synthesis.model || '')}</div>` +
+        `<div class="council-synthesis-error-msg">${escapeHtml(synthesis.error)}</div>` +
+      `</div>`;
+  } else if (synthesis) {
     const sections = synthesis.sections || {};
     synthesisHtml =
       `<div class="council-synthesis">` +
@@ -129,7 +150,8 @@ export function renderCouncilHTML(result, mdToHtml) {
 
   return (
     `<div class="msg msg-ai council-block">` +
-      `<div class="council-header">The Council · ${n} model${n === 1 ? '' : 's'}</div>` +
+      councilHeaderHtml(`The Council · ${n} model${n === 1 ? '' : 's'}`) +
+      councilQuestionHtml(question) +
       `<div class="council-answers">${answerBlocks}</div>` +
       synthesisHtml +
     `</div>`
@@ -139,6 +161,8 @@ export function renderCouncilHTML(result, mdToHtml) {
 // ── DOM-touching runtime (not exercised by the pure-function tests) ──
 
 let deps = {};
+// Re-entry guard: only one Council round may be in flight at a time.
+let inFlight = false;
 
 function htmlToNode(html) {
   const tmp = document.createElement('div');
@@ -146,12 +170,14 @@ function htmlToNode(html) {
   return tmp.firstElementChild;
 }
 
-function placeholderNode(count) {
+function placeholderNode(question, count) {
   const wrap = document.createElement('div');
   wrap.className = 'msg msg-ai council-block council-block--loading';
   wrap.innerHTML =
-    `<div class="council-header">The Council</div>` +
-    `<div class="thinking-indicator"><span>Convening ${count} models</span><span class="thinking-dots"></span></div>`;
+    councilHeaderHtml('The Council') +
+    councilQuestionHtml(question) +
+    `<div class="thinking-indicator"><span>Convening ${count} models</span><span class="thinking-dots"></span></div>` +
+    `<button type="button" class="council-cancel-btn">Cancel</button>`;
   return wrap;
 }
 
@@ -160,12 +186,16 @@ export async function askCouncil(question) {
   const q = (question || '').trim();
   if (!q) return;
 
+  const showToast = deps.showToast || (() => {});
+  if (inFlight) {
+    showToast('The Council is already in session');
+    return;
+  }
+
   const getCachedItems = deps.getCachedItems || (() => []);
   const isChatCapable = deps.isChatCapable || (() => true);
   const getCurrentModel = deps.getCurrentModel || (() => null);
   const getCurrentEndpointUrl = deps.getCurrentEndpointUrl || (() => null);
-  const showToast = deps.showToast || (() => {});
-  const addUserMessage = deps.addMessage;
   const mdToHtml = deps.mdToHtml;
 
   const current = { model: getCurrentModel(), url: getCurrentEndpointUrl() };
@@ -175,10 +205,18 @@ export async function askCouncil(question) {
     return;
   }
 
-  if (typeof addUserMessage === 'function') addUserMessage('user', q);
-
+  inFlight = true;
+  const controller = new AbortController();
   const box = document.getElementById('chat-history');
-  const placeholder = placeholderNode(members.length);
+  const placeholder = placeholderNode(q, members.length);
+  const cancelBtn = placeholder.querySelector('.council-cancel-btn');
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      controller.abort();
+      placeholder.remove();
+      inFlight = false;
+    });
+  }
   if (box) {
     box.appendChild(placeholder);
     placeholder.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -193,6 +231,7 @@ export async function askCouncil(question) {
         question: q,
         members: members.map((m) => ({ model: m.model, endpoint_url: m.endpoint_url })),
       }),
+      signal: controller.signal,
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
@@ -201,12 +240,17 @@ export async function askCouncil(question) {
     else if (box) box.appendChild(node);
     node.scrollIntoView({ behavior: 'smooth', block: 'end' });
   } catch (error) {
+    if (error && error.name === 'AbortError') return; // user hit Cancel
     showToast('The Council could not be reached');
-    placeholder.classList.remove('council-block--loading');
-    placeholder.classList.add('council-block--error');
-    placeholder.innerHTML =
-      `<div class="council-header">The Council</div>` +
-      `<div class="council-error">Something went wrong asking the Council: ${escapeHtml(error && error.message)}</div>`;
+    if (placeholder.parentNode) {
+      placeholder.classList.remove('council-block--loading');
+      placeholder.classList.add('council-block--error');
+      placeholder.innerHTML =
+        councilHeaderHtml('The Council') +
+        `<div class="council-error">Something went wrong asking the Council: ${escapeHtml(error && error.message)}</div>`;
+    }
+  } finally {
+    inFlight = false;
   }
 }
 

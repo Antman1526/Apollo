@@ -103,3 +103,24 @@ test('renderCouncilHTML renders nothing for synthesis when null', () => {
   const html = renderCouncilHTML({ answers: [{ model: 'm1', text: 'a', error: null }], synthesis: null });
   assert.ok(!html.includes('council-synthesis'));
 });
+
+test('renderCouncilHTML renders a reviewer-error branch instead of blank sections', () => {
+  const html = renderCouncilHTML({
+    answers: [{ model: 'm1', text: 'a', error: null }],
+    synthesis: { model: 'rev', text: '', sections: { consensus: '', disagreements: '', recommended: '' }, error: 'timed out' },
+  });
+  assert.ok(html.includes('council-synthesis--error'));
+  assert.ok(html.includes('timed out'));
+  assert.ok(!html.includes('council-section-label'));
+});
+
+test('renderCouncilHTML renders the question inside the block, escaped', () => {
+  const html = renderCouncilHTML({
+    question: '<script>alert(1)</script>',
+    answers: [{ model: 'm1', text: 'a', error: null }],
+    synthesis: null,
+  });
+  assert.ok(html.includes('council-question'));
+  assert.ok(!html.includes('<script>alert(1)</script>'));
+  assert.ok(html.includes('not saved to history'));
+});

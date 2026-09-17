@@ -3596,7 +3596,7 @@ function startApolloApp() {
   initCouncil({
     API_BASE, getCachedItems: modelsModule.getCachedItems, isChatCapable: modelsModule.isChatCapable,
     getCurrentModel: sessionModule.getCurrentModel, getCurrentEndpointUrl: sessionModule.getCurrentEndpointUrl,
-    addMessage: chatRenderer.addMessage, mdToHtml: markdownModule.mdToHtml,
+    mdToHtml: markdownModule.mdToHtml,
     showToast: uiModule.showToast, styledPrompt: uiModule.styledPrompt,
   });
 
