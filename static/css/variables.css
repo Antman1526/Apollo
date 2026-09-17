@@ -13,6 +13,10 @@
  *   Accents:  --accent-primary, --accent-error (set by theme.js)
  *   Semantic: --color-error, --color-success, --color-warning, --color-danger,
  *             --color-accent, --color-muted, --color-muted-alt
+ *   Shape:    --radius-xs..xl, --radius-pill
+ *   Space:    --space-1..6 (4pt grid)
+ *   Elevation: --shadow-1..3; Surfaces: --surface-1..3
+ *   Motion:   --dur-fast, --dur, --dur-slow, --ease-out, --ease-in-out
  */
 
 :root {
