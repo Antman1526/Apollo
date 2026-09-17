@@ -39,7 +39,7 @@ test('word-start and prefix matches outrank scattered ones', () => {
     ...ctx,
     actions: [
       { id: 'open_compare', label: 'Open Compare' },
-      { id: 'open_calendar', label: 'Open Calendar' },
+      { id: 'check_book', label: 'Check out our book' },
       { id: 'open_cookbook', label: 'Open Cookbook' },
     ],
   };

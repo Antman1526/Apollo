@@ -4,7 +4,6 @@
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
-import { isListableSession } from './welcomeState.js';
 import { buildPaletteGroups, relativeTime } from './paletteItems.js';
 
 let API_BASE = '';
@@ -50,8 +49,9 @@ function collectSessions() {
   const get = deps.getSessions || (sessionModule && sessionModule.getSessions);
   let list = [];
   try { list = (typeof get === 'function' ? get() : []) || []; } catch (_) { list = []; }
-  // Same rule as the sidebar and the welcome screen — empty chats included.
-  return list.filter(isListableSession);
+  // paletteItems applies isListableSession (sidebar rules, empty chats
+  // excluded); return the raw list so the rule lives in one place.
+  return list;
 }
 
 function collectModels() {
@@ -125,7 +125,9 @@ function render(query) {
   const container = el('search-results');
   if (!container) return;
 
-  // Keep the highlight on whatever row the user was on, if it survived.
+  // Keep the highlight on whatever row the user was on, if it survived —
+  // but only for async re-renders; typing (see handleInput) resets to the
+  // best match.
   const prev = selectedIndex >= 0 ? rows[selectedIndex] : null;
   rows = [];
   let html = '';
@@ -242,7 +244,8 @@ export function openSearch() {
 
   // Models are only cached once the sidebar has listed them. Warm them up
   // without blocking the palette, then fill the group in when they land.
-  if (typeof deps.refreshModels === 'function' && collectModels().length === 0) {
+  const cached = typeof deps.getCachedItems === 'function' ? (deps.getCachedItems() || []) : [];
+  if (typeof deps.refreshModels === 'function' && cached.length === 0) {
     Promise.resolve()
       .then(() => deps.refreshModels())
       .then(() => {
@@ -302,6 +305,7 @@ function handleKeydown(e) {
 function handleInput(e) {
   const query = e.target.value.trim();
   if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
+  selectedIndex = -1;  // new query: highlight the best match, not the old row
 
   if (query.length < MESSAGE_MIN_CHARS) {
     messageResults = [];
