@@ -36,10 +36,38 @@ def test_base_font_fallback_is_inter():
     assert re.search(r"html\s*\{[^}]*font-family:\s*var\(--font-family,\s*'Inter'", base)
 
 
+def _rule_bodies(css, selector):
+    """Bodies of every standalone (exact-selector, single-selector) rule
+    block matching `selector`, e.g. `.chat-input-bar {`. Excludes rules
+    scoped by an ancestor/ID, combined selector lists, or modifier classes,
+    so a match can only be the base rule (or a media-query variant of it
+    that also happens to write the selector standalone)."""
+    pat = re.compile(rf"(?m)^\s*{re.escape(selector)}\s*\{{([^}}]*)\}}")
+    return pat.findall(css)
+
+
 def test_surface_tokens_used_by_composer_and_popovers():
     allcss = "\n".join(f.read_text() for f in CSS_DIR.glob("*.css"))
     assert allcss.count("var(--surface-3)") >= 3
     assert allcss.count("var(--surface-2)") >= 2
+
+    layout_chat = (CSS_DIR / "layout-chat.css").read_text()
+    overlays = (CSS_DIR / "overlays.css").read_text()
+    layout_mobile = (CSS_DIR / "layout-mobile.css").read_text()
+
+    composer = "\n".join(_rule_bodies(layout_chat, ".chat-input-bar"))
+    assert "var(--surface-3)" in composer, "chat-input-bar background fallback"
+
+    model_picker = "\n".join(_rule_bodies(layout_chat, ".model-picker-menu"))
+    assert "background: var(--surface-3)" in model_picker
+
+    search_popup = "\n".join(_rule_bodies(overlays, ".search-popup"))
+    assert "var(--surface-3)" in search_popup
+
+    # The generic tool-modal frame, not a mobile @media / ID-scoped variant.
+    modal_content = "\n".join(_rule_bodies(layout_mobile, ".modal-content"))
+    assert "var(--surface-3)" in modal_content
+    assert "var(--shadow-3)" in modal_content
 
 
 def test_global_reduced_motion_guard():
