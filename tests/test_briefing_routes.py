@@ -165,6 +165,10 @@ def test_missing_or_bad_tz_header_falls_back_to_none(monkeypatch):
     resp = client.get("/api/briefing/today", headers={"X-Tz-Offset": "not-a-number"})
     assert resp.status_code == 200
     assert captured["tz"] is None
+    # Out-of-range offsets (timezone() rejects >= 24h) are ignored, not a 500.
+    resp = client.get("/api/briefing/today", headers={"X-Tz-Offset": "99999"})
+    assert resp.status_code == 200
+    assert captured["tz"] is None
 
 
 def test_cache_avoids_refetching_each_source_within_ttl(monkeypatch):

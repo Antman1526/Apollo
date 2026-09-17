@@ -68,9 +68,11 @@ def _resolve_tz(request: Request):
         return None, None
     try:
         offset = int(raw)
+        # timezone() rejects offsets at or beyond 24h; treat those like a
+        # malformed header rather than letting the ValueError become a 500.
+        return timezone(timedelta(minutes=offset)), offset
     except (TypeError, ValueError):
         return None, None
-    return timezone(timedelta(minutes=offset)), offset
 
 
 # ── Owner resolution — mirrors each source's own route exactly ──
