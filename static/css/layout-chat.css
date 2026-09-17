@@ -1062,6 +1062,56 @@
       height: 12px;
       opacity: 0.7;
     }
+    /* Cockpit gauge — live tokens/sec + context fill, next to the model picker */
+    .cockpit {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      font-size: 11px;
+      color: var(--color-muted);
+      flex-shrink: 0;
+    }
+    .cockpit:empty {
+      display: none;
+    }
+    .cockpit-model {
+      max-width: 14ch;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cockpit-tps {
+      white-space: nowrap;
+    }
+    .cockpit-ctx {
+      display: inline-block;
+      width: 64px;
+      height: 6px;
+      border-radius: var(--radius-pill);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .cockpit-fill {
+      display: block;
+      height: 100%;
+      transition: width var(--dur) var(--ease-out);
+    }
+    .cockpit-fill--ok {
+      background: var(--color-success);
+    }
+    .cockpit-fill--warm {
+      background: var(--color-warning);
+    }
+    .cockpit-fill--hot {
+      background: var(--color-error);
+    }
+    @media (max-width: 520px) {
+      .cockpit-model {
+        display: none;
+      }
+    }
     .model-picker-menu {
       position: absolute;
       bottom: calc(100% + 16px);

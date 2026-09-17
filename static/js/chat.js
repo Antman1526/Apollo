@@ -24,6 +24,7 @@ import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handle
 import createResearchSynapse from './researchSynapse.js';
 import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLifecycle.js';
 import { floorToolStart, floorToolEnd, floorTurnEnd } from './chat/floorHook.js';
+import { cockpitEvent } from './chat/cockpitHook.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -1793,6 +1794,7 @@ import { floorToolStart, floorToolEnd, floorTurnEnd } from './chat/floorHook.js'
                 }
                 continue;
               } else if (json.type === 'model_info') {
+                cockpitEvent(json, _isBg);
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
@@ -1910,7 +1912,7 @@ import { floorToolStart, floorToolEnd, floorTurnEnd } from './chat/floorHook.js'
                   uiModule.showToast('Context compacted — older messages summarized');
                 }
               } else if (json.type === 'metrics') {
-                metrics = json.data;
+                metrics = json.data; cockpitEvent(json, _isBg);
                 if (_isBg) {
                   var bgM = _backgroundStreams.get(streamSessionId);
                   if (bgM) bgM.metrics = json.data;
