@@ -23,7 +23,7 @@ const INITIAL_STATE = Object.freeze({
 
 // Bands match the footer's context-usage ring (static/js/chatRenderer.js
 // ~1513-1517: warm at 70%, hot at 85%) so the two indicators never disagree
-// at a glance. An earlier draft of this gauge used 75/90 — replaced to line
+// at a glance. An earlier draft of this gauge used 75/85 (the plan said 75/90) — replaced to line
 // up with the existing ring instead of inventing a second scale.
 const WARM_PCT = 70;
 const HOT_PCT = 85;
