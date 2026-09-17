@@ -2523,7 +2523,7 @@ function initializeEventListeners() {
     'tools-section':       '#tools-section',
     'know-section':        '#know-section',
     // Per-tool visibility — fine-grained control over which entries show
-    // inside the Tools section in the sidebar.
+    // inside the Work and Know sections in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
     'tool-compare':        '#tool-compare-btn',
     'tool-cookbook':       '#tool-cookbook-btn',

@@ -13,6 +13,7 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 _INDEX = (_REPO / "static" / "index.html").read_text(encoding="utf-8")
+_APP_JS = (_REPO / "static" / "app.js").read_text(encoding="utf-8")
 
 WORK_IDS = [
     "tool-calendar-btn",
@@ -21,6 +22,9 @@ WORK_IDS = [
     "tool-browser-btn",
     "tool-gallery-btn",
     "tool-paperclip-btn",
+    # Theme predates the Work/Know split and isn't one of the 12 redistributed
+    # tools — it intentionally stays put as the trailing item under Work.
+    "tool-theme-btn",
 ]
 KNOW_IDS = [
     "tool-memory-btn",
@@ -31,7 +35,7 @@ KNOW_IDS = [
     "tool-activity-btn",
 ]
 ALL_IDS = WORK_IDS + KNOW_IDS
-# Matches only the 12 ids being redistributed, in whatever order they appear.
+# Matches only the ids being asserted on here, in whatever order they appear.
 _TOOL_ID_RE = re.compile(r'id="(' + "|".join(re.escape(i) for i in ALL_IDS) + r')"')
 
 
@@ -41,13 +45,22 @@ def _section_bounds():
     tools-section: from its own opening <div ...> to know-section's opening tag.
     know-section: from its opening tag to the sidebar-user-bar that follows
     every sidebar section.
+
+    The opening-tag patterns tolerate extra attributes landing on the div
+    (e.g. a future `draggable="true"`) so an unrelated markup change gives a
+    readable assertion failure here instead of a raw ValueError from `.index`.
     """
-    work_start_marker = '<div class="section" id="tools-section">'
-    know_start_marker = '<div class="section" id="know-section">'
+    work_start_re = re.compile(r'<div class="section"[^>]*id="tools-section"')
+    know_start_re = re.compile(r'<div class="section"[^>]*id="know-section"')
     end_marker = 'id="sidebar-user-bar"'
 
-    work_start = _INDEX.index(work_start_marker)
-    know_start = _INDEX.index(know_start_marker)
+    work_match = work_start_re.search(_INDEX)
+    assert work_match, "could not find the tools-section opening <div> in index.html"
+    know_match = know_start_re.search(_INDEX)
+    assert know_match, "could not find the know-section opening <div> in index.html"
+
+    work_start = work_match.start()
+    know_start = know_match.start()
     end = _INDEX.index(end_marker)
 
     assert work_start < know_start < end, (
@@ -62,10 +75,9 @@ def _section_bounds():
 def _section_title_text(chunk):
     m = re.search(r'<span class="section-title"[^>]*>(.*?)</span>', chunk, re.DOTALL)
     assert m, "could not find a .section-title span in section chunk"
-    # Strip the leading icon <svg>...</svg> (and any nested tags) to get the
-    # plain title text, then collapse whitespace.
+    # Strip the leading icon <svg>...</svg> to get the plain title text, then
+    # collapse whitespace.
     inner = re.sub(r'<svg.*?</svg>', '', m.group(1), flags=re.DOTALL)
-    inner = re.sub(r'<[^>]+>.*?</[^>]+>', '', inner, flags=re.DOTALL)  # drop nested spans (notif dots etc)
     return inner.strip()
 
 
@@ -102,3 +114,12 @@ def test_paperclip_and_activity_stay_hidden_by_default():
         m = re.search(r'<div class="list-item" id="%s"[^>]*>' % re.escape(tool_id), _INDEX)
         assert m, f"could not find opening tag for {tool_id!r}"
         assert "display:none" in m.group(0), f"{tool_id!r} should still default to display:none"
+
+
+def test_know_section_has_an_appearance_visibility_toggle():
+    assert 'data-ui-key="know-section"' in _INDEX, (
+        "expected an Appearance-tab vis-row checkbox for know-section in index.html"
+    )
+    assert "'know-section'" in _APP_JS, (
+        "expected a 'know-section' entry in UI_VIS_MAP in static/app.js"
+    )
