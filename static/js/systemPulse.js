@@ -1,33 +1,36 @@
 // static/js/systemPulse.js — Always-visible sidebar "system pulse" strip.
-// Summarizes /api/system/status into a single dot (all ready) or a row of
-// labelled chips for degraded/idle/stopped components. Pure render helper
-// (renderPulseHTML) has no DOM dependency so it can be unit tested directly;
-// initSystemPulse wires it to a mount element and a polling refresh loop.
+// Summarizes /api/system/status (admin-only) into a single dot when every
+// component is ready, or a row of alert chips for anything that is not.
+// renderPulseHTML has no DOM dependency so it is unit tested directly;
+// initSystemPulse wires it to a mount element with a synchronous
+// placeholder (no layout jump), a de-duped refresh loop (no redundant
+// screen-reader announcements), and admin-forbidden handling.
 
 import { escapeStatusHTML } from './systemStatusCard.js';
 
-const INFO_STATES = new Set(['idle', 'stopped', 'limited']);
 const MAX_CHIPS = 4;
 const SUMMARY_MAX = 48;
-
-function severityForState(state) {
-  return INFO_STATES.has(state) ? 'info' : 'alert';
-}
 
 function truncate(text, max) {
   const s = String(text || '');
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-function renderChip(label, state, summary) {
-  const esc = escapeStatusHTML;
-  const severity = severityForState(state);
-  const fullSummary = esc(summary);
-  const shortSummary = esc(truncate(summary, SUMMARY_MAX));
-  const stateClass = esc(state || 'unknown');
-  return `<span class="pulse-chip pulse-chip--${stateClass} pulse-chip--${severity}" title="${fullSummary}">${esc(label)}<span class="pulse-chip-summary">${shortSummary}</span></span>`;
+function sanitizeStateToken(state) {
+  return String(state || 'unknown').replace(/[^a-z0-9_-]/gi, '') || 'unknown';
 }
 
+function renderChip(label, state, summary) {
+  const esc = escapeStatusHTML;
+  const stateClass = sanitizeStateToken(state);
+  const fullSummary = esc(summary);
+  const shortSummary = esc(truncate(summary, SUMMARY_MAX));
+  return `<span class="pulse-chip pulse-chip--${stateClass} pulse-chip--alert" title="${fullSummary}">${esc(label)}<span class="pulse-chip-summary">${shortSummary}</span></span>`;
+}
+
+// Every component here has ready:false — idle/limited components stay
+// ready:true from the backend, so there is no separate "informational"
+// severity: anything surfaced here needs attention.
 export function renderPulseHTML(status) {
   if (!status || typeof status !== 'object' || !status.components || typeof status.components !== 'object') {
     return '';
@@ -60,11 +63,28 @@ function unavailableStatus() {
 async function defaultFetchStatus() {
   try {
     const res = await fetch('/api/system/status', { credentials: 'same-origin' });
+    // /api/system/status is admin-only (require_admin). A non-admin caller
+    // gets 401/403 — that's not an outage, so it renders nothing rather
+    // than a permanent "Unreachable" chip.
+    if (res.status === 401 || res.status === 403) return { forbidden: true };
     if (!res.ok) return null;
     return await res.json();
   } catch (_) {
     return null;
   }
+}
+
+function wrapButton(innerHtml) {
+  return `<button type="button" class="system-pulse-btn" aria-label="Open system status">${innerHtml}</button>`;
+}
+
+// Skips the DOM write (and the aria-live re-announcement that comes with
+// it) when the rendered markup hasn't actually changed since last time.
+function paint(state, innerHtml) {
+  const html = innerHtml ? wrapButton(innerHtml) : '';
+  if (html === state.lastHtml) return;
+  state.lastHtml = html;
+  state.mountEl.innerHTML = html;
 }
 
 async function refresh(state) {
@@ -75,7 +95,16 @@ async function refresh(state) {
     status = null;
   }
   state.lastFetchTime = Date.now();
-  state.mountEl.innerHTML = renderPulseHTML(status) || renderPulseHTML(unavailableStatus());
+  if (status && status.forbidden) {
+    paint(state, '');
+    state.stopped = true;
+    if (state.timerId) {
+      clearInterval(state.timerId);
+      state.timerId = null;
+    }
+    return;
+  }
+  paint(state, renderPulseHTML(status) || renderPulseHTML(unavailableStatus()));
 }
 
 export function initSystemPulse(options = {}) {
@@ -90,22 +119,23 @@ export function initSystemPulse(options = {}) {
   if (!mountEl || mountEl.__pulseInited) return;
   mountEl.__pulseInited = true;
 
-  if (!mountEl.getAttribute('role')) mountEl.setAttribute('role', 'status');
-  if (!mountEl.getAttribute('aria-live')) mountEl.setAttribute('aria-live', 'polite');
+  const state = { mountEl, fetchStatus, lastFetchTime: 0, lastHtml: null, timerId: null, stopped: false };
 
-  const state = { mountEl, fetchStatus, lastFetchTime: 0 };
+  // Neutral placeholder so the strip doesn't jump in height once the first
+  // real fetch resolves; .system-pulse's min-height covers the rest.
+  paint(state, '<span class="pulse-dot pulse-dot--pending" title="Checking…"></span>');
 
-  mountEl.addEventListener('click', () => {
-    if (typeof onOpen === 'function') onOpen();
+  mountEl.addEventListener('click', (event) => {
+    if (event.target.closest('.system-pulse-btn') && typeof onOpen === 'function') onOpen();
   });
 
   refresh(state);
-  setInterval(() => {
-    if (document.visibilityState === 'visible') refresh(state);
+  state.timerId = setInterval(() => {
+    if (!state.stopped && document.visibilityState === 'visible') refresh(state);
   }, intervalMs);
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && Date.now() - state.lastFetchTime >= intervalMs) {
+    if (!state.stopped && document.visibilityState === 'visible' && Date.now() - state.lastFetchTime >= intervalMs) {
       refresh(state);
     }
   });

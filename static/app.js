@@ -1144,13 +1144,14 @@ function initializeEventListeners() {
   if (userBarAdmin) {
     userBarAdmin.addEventListener('click', () => adminModule.open());
   }
-  initSystemPulse({ onOpen: () => settingsModule.open(window._isAdmin ? 'system' : undefined) });
 
   // Fetch auth status — populate user bar and show admin button if admin
   fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
+      // /api/system/status is admin-only — only admins get the pulse strip.
+      if (d.is_admin) initSystemPulse({ onOpen: () => settingsModule.open('integrations') });
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const toolActivity = el('tool-activity-btn');
       if (d.is_admin && toolActivity) toolActivity.style.display = '';
