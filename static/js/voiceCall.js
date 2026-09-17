@@ -135,8 +135,11 @@ export const VAD_DEFAULTS = { threshold: 0.02, silenceMs: 1200 };
 // zero instead of needing to get loud before the ring reacts. Pure/testable —
 // no browser globals.
 export function levelToRing(rms, threshold = VAD_DEFAULTS.threshold, ceiling = 0.3) {
-  if (rms <= threshold) return 0;
-  const ratio = Math.log(rms / threshold) / Math.log(ceiling / threshold);
+  if (!(rms > threshold)) return 0;
+  // Keep the top of the range above the threshold even when a user tunes the
+  // VAD threshold past the default ceiling, so the ring still has a slope.
+  const top = Math.max(ceiling, threshold * 4);
+  const ratio = Math.log(rms / threshold) / Math.log(top / threshold);
   return Math.max(0, Math.min(1, ratio));
 }
 

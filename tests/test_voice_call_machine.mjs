@@ -174,6 +174,12 @@ test('parseVoiceAssign returns null for normal speech', () => {
 
 // ── levelToRing: pure rms → 0..1 orb-ring intensity (threshold-anchored log) ──
 
+test('levelToRing keeps a slope when the threshold exceeds the ceiling', () => {
+  assert.equal(levelToRing(0.5, 0.5), 0);
+  assert.ok(levelToRing(1.0, 0.5) > 0 && levelToRing(1.0, 0.5) < 1);
+  assert.equal(levelToRing(2.0, 0.5), 1);
+});
+
 test('levelToRing maps rms to a 0..1 ring intensity via a threshold-anchored log curve', () => {
   const { threshold } = VAD_DEFAULTS; // 0.02
   const ceiling = 0.3;
