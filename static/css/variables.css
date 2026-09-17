@@ -72,6 +72,35 @@
   /* Warm accent — used by the Goals/Today UI in Notes. Lives as a token so
      themes can override without touching the goal CSS. */
   --accent-warm: #d19a66;
+
+  /* Shape */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-pill: 999px;
+  /* Space (4pt grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  /* Elevation */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.25);
+  --shadow-2: 0 4px 12px rgba(0,0,0,.30);
+  --shadow-3: 0 12px 32px rgba(0,0,0,.40);
+  /* Surfaces: 1 = page, 2 = card, 3 = elevated (popover/composer) */
+  --surface-1: var(--bg);
+  --surface-2: color-mix(in srgb, var(--panel) 55%, var(--bg));
+  --surface-3: color-mix(in srgb, var(--panel) 80%, var(--bg));
+  /* Motion */
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 400ms;
+  --ease-out: cubic-bezier(.2,.7,.2,1);
+  --ease-in-out: cubic-bezier(.4,0,.2,1);
 }
 
 :root.light {
@@ -94,5 +123,8 @@
   --select-option-bg: var(--panel);
   --select-option-fg: var(--fg);
   --select-option-active-bg: color-mix(in srgb, var(--red) 16%, var(--panel));
+  --shadow-1: 0 1px 2px rgba(0,0,0,.08);
+  --shadow-2: 0 4px 12px rgba(0,0,0,.12);
+  --shadow-3: 0 12px 32px rgba(0,0,0,.18);
 }
 

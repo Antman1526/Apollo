@@ -1,0 +1,36 @@
+import re
+from pathlib import Path
+
+CSS_DIR = Path(__file__).resolve().parents[1] / "static" / "css"
+VARS = (CSS_DIR / "variables.css").read_text()
+
+REQUIRED = [
+    "--radius-xs", "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-pill",
+    "--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6",
+    "--shadow-1", "--shadow-2", "--shadow-3",
+    "--surface-1", "--surface-2", "--surface-3",
+    "--dur-fast", "--dur", "--dur-slow", "--ease-out", "--ease-in-out",
+]
+
+
+def test_tokens_defined_on_root():
+    for name in REQUIRED:
+        assert re.search(rf"^\s*{re.escape(name)}\s*:", VARS, re.M), name
+
+
+def test_single_value_radius_literals_migrated():
+    # After migration, single-value 4/6/8/12/999px radii must use tokens.
+    pat = re.compile(r"border-radius:\s*(4|6|8|12|999)px\s*;")
+    hits = []
+    for f in CSS_DIR.glob("*.css"):
+        if f.name == "variables.css":
+            continue
+        for i, line in enumerate(f.read_text().splitlines(), 1):
+            if pat.search(line):
+                hits.append(f"{f.name}:{i}")
+    assert len(hits) < 20, hits[:40]
+
+
+def test_base_font_fallback_is_inter():
+    base = (CSS_DIR / "base.css").read_text()
+    assert re.search(r"html\s*\{[^}]*font-family:\s*var\(--font-family,\s*'Inter'", base)

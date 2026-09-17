@@ -106,7 +106,7 @@
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font: inherit;
   display: inline-flex;
@@ -137,7 +137,7 @@
   border: 1px solid var(--border);
   background: var(--input-bg, var(--panel));
   color: var(--fg);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 0 10px;
   font: 12px var(--font-family, inherit);
 }
@@ -288,7 +288,7 @@
 .vc-state-label { margin: 0; font-size: 16px; font-weight: 500; color: #f1f3f4; }
 .vc-transcript { margin: 4px 0 0; font-size: 14px; color: #bdc1c6; min-height: 20px; }
 .vc-controls { display: flex; gap: 12px; }
-.vc-btn { padding: 8px 16px; border-radius: 8px; border: 1px solid #5f6368; background: transparent; color: #e8eaed; cursor: pointer; }
+.vc-btn { padding: 8px 16px; border-radius: var(--radius-lg); border: 1px solid #5f6368; background: transparent; color: #e8eaed; cursor: pointer; }
 .vc-btn:hover { background: rgba(255,255,255,0.06); }
 .vc-btn.vc-active { border-color: #378add; color: #8ab4f8; }
 .vc-btn-danger { border-color: #a3312d; color: #f28b82; }

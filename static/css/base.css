@@ -53,7 +53,7 @@ pre, code, .hljs {
      recede until hovered. */
   ::-webkit-scrollbar-thumb {
     background-color: color-mix(in srgb, var(--red) 45%, var(--panel));
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     border: 2px solid var(--panel);
   }
   ::-webkit-scrollbar-thumb:hover {

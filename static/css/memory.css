@@ -197,7 +197,7 @@
   flex: 1;
   height: 28px;
   padding: 0 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
@@ -224,7 +224,7 @@ textarea.memory-add-input {
 .memory-add-btn {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
@@ -266,7 +266,7 @@ textarea.memory-add-input {
   font-size: 11px;
   height: 24px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-family: inherit;
   transition: all 0.15s;
@@ -336,7 +336,7 @@ textarea.memory-add-input {
   gap: 8px;
   padding: 6px 2px;
   border: 1px solid color-mix(in srgb, var(--red) 30%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--red) 5%, transparent);
   font-size: 11px;
 }
@@ -452,7 +452,7 @@ textarea.memory-add-input {
   color: color-mix(in srgb, var(--fg) 60%, transparent);
   font-size: 10px;
   padding: 4px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   user-select: none;
   position: relative;
   top: 0;
@@ -511,7 +511,7 @@ textarea.memory-add-input {
   height: 24px;
   margin-top: 6px;
   padding: 0 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--fg);
@@ -622,7 +622,7 @@ textarea.memory-add-input {
   background: color-mix(in srgb, var(--accent, var(--red)) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent, var(--red)) 40%, transparent);
   padding: 1px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   flex-shrink: 0;
   white-space: nowrap;
 }
@@ -637,7 +637,7 @@ textarea.memory-add-input {
   gap: 8px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   background: color-mix(in srgb, var(--fg) 3%, transparent);
   max-height: 200px;
   flex-shrink: 0;        /* memory-list is a flex column; without this, items get squeezed to fit */
@@ -731,7 +731,7 @@ textarea.memory-add-input {
 .memory-item-edit-input {
   flex: 1;
   padding: 3px 5px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--red);
   background: var(--bg);
   color: var(--fg);
@@ -756,7 +756,7 @@ textarea.memory-add-input {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--red);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   font-family: inherit;
   font-size: 9px;
   padding: 2px 3px;
@@ -782,7 +782,7 @@ textarea.memory-add-input {
   height: 24px;
   line-height: 24px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   flex-shrink: 0;
   opacity: 0;
@@ -808,7 +808,7 @@ textarea.memory-add-input {
   z-index: 1000;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   padding: 4px;
   box-shadow: 0 4px 16px rgba(0,0,0,0.3);
   min-width: auto;
@@ -819,7 +819,7 @@ textarea.memory-add-input {
   padding: 6px 10px;
   font-size: 12px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   white-space: nowrap;
 }
 
@@ -862,7 +862,7 @@ textarea.memory-add-input {
   font-size: 11px;
   height: 22px;
   padding: 0 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.15s;
   display: flex;
@@ -955,7 +955,7 @@ textarea.memory-add-input {
 }
 .memory-pinned {
   border-left: 3px solid var(--red);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--red) 4%, transparent);
 }
 .memory-pinned .memory-item-actions {
@@ -1009,7 +1009,7 @@ textarea.memory-add-input {
   background: var(--bg);
   color: var(--fg);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   font-family: inherit;
   font-size: 11px;
   height: 24px;
@@ -1034,7 +1034,7 @@ textarea.memory-add-input {
 .memory-cat-badge {
   font-size: 10px;
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--fg) 8%, transparent);
   color: color-mix(in srgb, var(--fg) 55%, transparent);
   text-transform: lowercase;
@@ -1161,7 +1161,7 @@ textarea.memory-add-input {
   gap: 6px;
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--red) 3%, transparent);
 }
 

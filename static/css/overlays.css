@@ -4,7 +4,7 @@
     #mic-btn {
       color: var(--fg);
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       transition: all 0.2s ease;
     }
     
@@ -33,7 +33,7 @@
       background: rgba(0, 0, 0, 0.8);
       backdrop-filter: blur(10px);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       padding: 12px;
       margin: 10px;
       z-index: 1000;
@@ -69,7 +69,7 @@
       background: var(--color-recording);
       color: white;
       border: none;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       padding: 6px 12px;
       font-size: 14px;
       font-weight: 500;
@@ -129,7 +129,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       max-width: 90vw;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: var(--radius-xl);
       box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px color-mix(in srgb, var(--fg) 6%, transparent);
       overflow: hidden;
       display: flex;
@@ -172,7 +172,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       align-items: baseline;
       gap: 8px;
       padding: 8px 12px;
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       cursor: pointer;
       transition: background 0.1s;
     }
@@ -242,7 +242,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       gap: 6px; margin-bottom: 12px;
     }
     .theme-swatch {
-      border: 2px solid var(--border); border-radius: 8px; cursor: pointer;
+      border: 2px solid var(--border); border-radius: var(--radius-lg); cursor: pointer;
       padding: 5px; text-align: center; font-size: 0.65rem; color: var(--fg);
       transition: border-color 0.15s, transform 0.15s;
     }
@@ -332,13 +332,13 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: flex; gap: 6px; margin-top: 8px;
     }
     .theme-save-row input {
-      flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+      flex: 1; padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-md);
       background: var(--bg); color: var(--fg); font-size: 12px; font-family: inherit;
     }
     .theme-save-row input:focus { outline: none; border-color: var(--red); }
     .theme-save-row input::placeholder { color: color-mix(in srgb, var(--fg) 35%, transparent); }
     .theme-save-row button {
-      padding: 6px 12px; border: 1px solid var(--red); border-radius: 6px;
+      padding: 6px 12px; border: 1px solid var(--red); border-radius: var(--radius-md);
       background: transparent; color: var(--red); cursor: pointer;
       font-size: 12px; font-family: inherit; white-space: nowrap; transition: all 0.15s;
     }
@@ -349,14 +349,14 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     /* Import/Export */
     .theme-io-row { display: flex; gap: 6px; margin-top: 6px; }
     .theme-io-btn {
-      flex: 1; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px;
+      flex: 1; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-md);
       background: transparent; color: var(--fg); cursor: pointer;
       font-size: 12px; opacity: 0.7; transition: all 0.15s; font-family: inherit;
     }
     .theme-io-btn:hover { opacity: 1; border-color: var(--fg); background: color-mix(in srgb, var(--fg) 5%, transparent); }
     .theme-import-area {
       width: 100%; margin-top: 6px; padding: 6px 8px;
-      border: 1px solid var(--border); border-radius: 6px;
+      border: 1px solid var(--border); border-radius: var(--radius-md);
       background: var(--bg); color: var(--fg); font-size: 0.7rem;
       font-family: inherit; resize: vertical; min-height: 48px;
     }
@@ -369,7 +369,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-fd-group { flex: 1; display: flex; flex-direction: column; gap: 3px; }
     .theme-fd-label { font-size: 12px; font-weight: 500; color: var(--fg); opacity: 0.6; }
     .theme-fd-select {
-      padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 8px; border: 1px solid var(--border); border-radius: var(--radius-md);
       background: var(--bg); color: var(--fg); font-size: 12px;
       font-family: inherit; cursor: pointer;
     }
@@ -406,21 +406,21 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     /* Color Harmony Generator */
     .theme-harmony-row { display: flex; gap: 8px; align-items: flex-end; }
     .harmony-generate-btn {
-      padding: 5px 14px; border: 1px solid var(--red); border-radius: 6px;
+      padding: 5px 14px; border: 1px solid var(--red); border-radius: var(--radius-md);
       background: transparent; color: var(--red); cursor: pointer;
       font-size: 12px; white-space: nowrap; transition: all 0.15s;
       font-family: inherit; width: 100%;
     }
     .harmony-generate-btn:hover { background: color-mix(in srgb, var(--red) 11%, transparent); }
     .harmony-preview {
-      display: flex; height: 20px; border-radius: 6px; overflow: hidden;
+      display: flex; height: 20px; border-radius: var(--radius-md); overflow: hidden;
       margin-top: 8px; border: 1px solid var(--border);
     }
     .harmony-preview:empty { display: none; border: none; }
     .harmony-preview span { flex: 1; }
     #theme-reset-btn {
       margin-top: 6px; width: 100%; padding: 6px; border: 1px solid var(--border);
-      border-radius: 6px; background: var(--bg); color: var(--fg); cursor: pointer;
+      border-radius: var(--radius-md); background: var(--bg); color: var(--fg); cursor: pointer;
       font-size: 12px; font-family: inherit; opacity: 0.7; transition: opacity 0.15s;
     }
     #theme-reset-btn:hover { opacity: 1; }
@@ -428,7 +428,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       margin-top: 10px; margin-bottom: 10px;
       padding: 6px 8px; cursor: pointer;
       font-size: 11px; color: var(--red); opacity: 0.8;
-      border: 1px solid var(--border); border-radius: 6px;
+      border: 1px solid var(--border); border-radius: var(--radius-md);
       transition: opacity 0.15s, background 0.15s;
       user-select: none;
     }
@@ -447,7 +447,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .theme-adv-clear-btn {
       margin-top: 6px; width: 100%; padding: 5px; border: 1px solid var(--border);
-      border-radius: 6px; background: transparent; color: var(--fg); opacity: 0.5;
+      border-radius: var(--radius-md); background: transparent; color: var(--fg); opacity: 0.5;
       cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity 0.15s;
     }
     .theme-adv-clear-btn:hover { opacity: 1; }
@@ -735,20 +735,20 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .cmp-header-action-btn {
       background: none; border: 1px solid var(--border); color: var(--fg);
       cursor: pointer; padding: 3px 10px; font-size: 11px; font-weight: 600;
-      opacity: 0.7; transition: all 0.15s; line-height: 1; border-radius: 4px;
+      opacity: 0.7; transition: all 0.15s; line-height: 1; border-radius: var(--radius-sm);
       display: inline-flex; align-items: center; font-family: inherit;
     }
     .cmp-form-control {
       padding: 8px; background: var(--bg); color: var(--fg);
-      border: 1px solid var(--border); border-radius: 6px; font-size: 0.85em;
+      border: 1px solid var(--border); border-radius: var(--radius-md); font-size: 0.85em;
     }
     .cmp-btn-secondary {
       background: transparent; color: var(--fg); border: 1px solid var(--border);
-      border-radius: 6px; cursor: pointer;
+      border-radius: var(--radius-md); cursor: pointer;
     }
     .cmp-btn-primary {
       background: var(--fg); color: var(--bg); border: none;
-      border-radius: 6px; cursor: pointer; font-weight: 600;
+      border-radius: var(--radius-md); cursor: pointer; font-weight: 600;
       transition: filter 0.12s, background 0.12s, color 0.12s;
     }
     /* Override global button:hover (which switches bg to var(--panel) =
@@ -791,7 +791,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       padding: 4px 8px;
       background: transparent;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       color: var(--fg);
       font-size: 11px; font-weight: 500;
       font-family: inherit;
@@ -806,7 +806,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       max-height: 360px; overflow-y: auto;
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
       padding: 4px;
       z-index: 1000;
@@ -824,7 +824,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       background: none; border: none;
       color: var(--fg); font-size: 11px;
       font-family: inherit;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
     }
     .cmp-eval-item:hover {
@@ -855,7 +855,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       font-size: 11px;
       background: var(--panel);
       border: 1px solid color-mix(in srgb, var(--color-success, #4caf50) 50%, transparent);
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.2);
       color: var(--fg);
       width: fit-content;
@@ -907,7 +907,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       align-items: center; justify-content: center;
     }
     .compare-probe-card {
-      background: var(--panel); border-radius: 12px; padding: 20px 24px;
+      background: var(--panel); border-radius: var(--radius-xl); padding: 20px 24px;
       display: flex; flex-direction: column; align-items: center; gap: 12px;
       min-width: 280px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
       overflow: hidden;
@@ -920,7 +920,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .compare-probe-row {
       display: flex; align-items: center; gap: 6px; padding: 6px 10px;
-      border-radius: 6px; background: color-mix(in srgb, var(--fg) 4%, transparent);
+      border-radius: var(--radius-md); background: color-mix(in srgb, var(--fg) 4%, transparent);
       font-size: 12px; transition: background 0.2s; overflow: hidden;
     }
     .compare-probe-row.fail {
@@ -938,7 +938,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-probe-status.fail { color: var(--color-error, #f44); opacity: 1; }
     .compare-probe-action-btn {
       padding: 2px 8px; background: transparent; color: var(--fg); border: 1px solid var(--border);
-      border-radius: 4px; cursor: pointer; font-size: 10px; font-family: inherit;
+      border-radius: var(--radius-sm); cursor: pointer; font-size: 10px; font-family: inherit;
       opacity: 0.7; transition: opacity 0.15s, border-color 0.15s; white-space: nowrap; flex-shrink: 0;
     }
     .compare-probe-action-btn:hover { opacity: 1; border-color: var(--accent); }
@@ -1006,7 +1006,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: flex;
       flex-direction: column;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       overflow: hidden;
       min-height: 0;
       min-width: 0;
@@ -1052,7 +1052,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       background: var(--bg);
       color: var(--fg);
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       padding: 6px 10px;
       font-family: inherit;
       font-size: 12px;
@@ -1073,7 +1073,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .pane-action-btn {
       background: none; border: none; color: var(--fg); cursor: pointer;
-      opacity: 0.3; padding: 2px; border-radius: 4px;
+      opacity: 0.3; padding: 2px; border-radius: var(--radius-sm);
       display: flex; align-items: center; transition: all 0.15s;
     }
     .pane-action-btn:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 6%, transparent); }
@@ -1101,14 +1101,14 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       overflow-y: auto;
       background: var(--bg);
       border: 1px solid var(--border);
-      border-radius: 8px;
+      border-radius: var(--radius-lg);
       box-shadow: 0 4px 16px rgba(0,0,0,0.3);
       padding: 4px;
     }
     .pane-model-item {
       display: block; width: 100%;
       padding: 6px 10px; font-size: 0.7em;
-      text-align: left; background: none; border: none; border-radius: 4px;
+      text-align: left; background: none; border: none; border-radius: var(--radius-sm);
       color: var(--fg); cursor: pointer; transition: background 0.1s;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
@@ -1159,7 +1159,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       max-width: 100%;
       max-height: 100%;
       object-fit: contain;
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       cursor: pointer;
     }
     .compare-section {
@@ -1200,7 +1200,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-mode-tab {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       width: 56px; height: auto; flex: 1 1 0;
-      padding: 5px 4px 4px; border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 4px 4px; border: 1px solid var(--border); border-radius: var(--radius-md);
       cursor: pointer; user-select: none; transition: all 0.15s;
       background: none; color: var(--fg); opacity: 0.35;
       flex-shrink: 0; gap: 0;
@@ -1216,7 +1216,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-sources-box {
       display: flex; align-items: center; gap: 6px;
       padding: 6px 10px; margin-bottom: 8px;
-      border-radius: 6px; font-size: 0.78em;
+      border-radius: var(--radius-md); font-size: 0.78em;
       background: color-mix(in srgb, var(--red) 8%, transparent);
       border: 1px solid color-mix(in srgb, var(--red) 20%, transparent);
       color: color-mix(in srgb, var(--fg) 70%, transparent);
@@ -1240,7 +1240,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .compare-vote-bar.hidden { display: none; }
     .compare-vote-btn {
-      padding: 6px 13px; border: 1px solid var(--border); border-radius: 6px;
+      padding: 6px 13px; border: 1px solid var(--border); border-radius: var(--radius-md);
       background: var(--panel); color: var(--fg); cursor: pointer; font-size: 0.8em;
       transition: all 0.15s; white-space: nowrap;
     }
@@ -1268,7 +1268,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       z-index: 100;
       background: var(--panel, var(--bg));
       border: 1px solid var(--border);
-      border-radius: 6px;
+      border-radius: var(--radius-md);
       max-height: 300px;
       overflow-y: auto;
       min-width: 220px;
@@ -1279,7 +1279,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       width: 100%;
       padding: 6px 8px;
       border: 1px solid var(--border);
-      border-radius: 4px;
+      border-radius: var(--radius-sm);
       background: var(--bg);
       color: var(--fg);
       font-size: 0.85em;
@@ -1304,7 +1304,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-reset-toggle {
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       width: 56px; height: auto; flex: 1 1 0;
-      padding: 5px 4px 4px; border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 4px 4px; border: 1px solid var(--border); border-radius: var(--radius-md);
       cursor: pointer; user-select: none; transition: all 0.15s;
       background: none; color: var(--fg); opacity: 0.35;
       flex-shrink: 0; gap: 0;
