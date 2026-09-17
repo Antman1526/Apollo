@@ -285,7 +285,10 @@ def setup_briefing_routes(
                 _safe("notes", fetch_notes, _note_owner(request)),
                 _safe("tasks", fetch_tasks, _task_owner(request)),
             )
-            _cache_put(cache_key, (emails, events, notes, tasks))
+            # Only cache a fully successful fetch so a transient source failure
+            # is retried on the next welcome show instead of hiding for 60s.
+            if not warnings:
+                _cache_put(cache_key, (emails, events, notes, tasks))
 
         briefing = compose_briefing(
             now=datetime.now(tz or timezone.utc), emails=emails, events=events,
