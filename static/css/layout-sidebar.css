@@ -154,7 +154,7 @@
     .export-dropdown-menu {
       display: none;
       position: fixed;
-      background: var(--panel); border: 1px solid var(--border);
+      background: var(--surface-3); border: 1px solid var(--border);
       border-radius: var(--radius-lg); padding: 4px; min-width: 120px;
       box-shadow: 0 4px 16px rgba(0,0,0,0.4);
       z-index: 300;

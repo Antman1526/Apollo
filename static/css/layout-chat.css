@@ -304,7 +304,7 @@
       align-items: flex-start;
       margin-right: auto;
       margin-left: 8px;
-      background: var(--ai-bubble-bg, var(--panel));
+      background: var(--ai-bubble-bg, var(--surface-2));
       border: 1px solid var(--bubble-border, var(--border));
       border-radius: 18px 18px 18px 0;
       align-self: flex-start;
@@ -484,7 +484,7 @@
 
     /* Unified chat input bar */
     .chat-input-bar {
-      background: var(--input-bg, var(--panel));
+      background: var(--input-bg, var(--surface-3));
       border: 1px solid var(--input-border, var(--border));
       border-radius: 16px;
       padding: 10px 12px;
@@ -1011,7 +1011,7 @@
       z-index: 300;
       min-width: 260px;
       max-width: 360px;
-      background: var(--panel);
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
@@ -1300,7 +1300,7 @@
     }
     .overflow-menu {
       position: fixed;
-      background: var(--panel);
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: 10px;
       padding: 4px;
@@ -1573,7 +1573,7 @@
     .memory-used-pill {
       display: inline-flex;
       align-items: center;
-      background: var(--panel);
+      background: var(--surface-2);
       border: 1px solid var(--border);
       color: var(--fg);
       font-size: 0.7rem;
@@ -1673,7 +1673,7 @@
     }
     .msg-overflow-menu {
       position:fixed;
-      background:var(--panel);
+      background:var(--surface-3);
       border:1px solid var(--border);
       border-radius: var(--radius-md);
       padding:4px;
@@ -1848,7 +1848,7 @@
     .ctx-popup {
       position:fixed;
       z-index:250;
-      background:var(--panel);
+      background:var(--surface-3);
       border:1px solid var(--border);
       border-radius: var(--radius-lg);
       padding:10px 14px;

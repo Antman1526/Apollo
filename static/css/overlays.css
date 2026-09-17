@@ -127,10 +127,10 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .search-popup {
       width: 520px;
       max-width: 90vw;
-      background: var(--bg);
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-xl);
-      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5), 0 0 0 1px color-mix(in srgb, var(--fg) 6%, transparent);
+      box-shadow: var(--shadow-2), 0 0 0 1px color-mix(in srgb, var(--fg) 6%, transparent);
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -804,7 +804,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       position: absolute; bottom: calc(100% + 4px); right: 0;
       min-width: 220px; max-width: 280px;
       max-height: 360px; overflow-y: auto;
-      background: var(--panel);
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
       box-shadow: 0 -4px 16px rgba(0,0,0,0.3);
@@ -907,9 +907,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       align-items: center; justify-content: center;
     }
     .compare-probe-card {
-      background: var(--panel); border-radius: var(--radius-xl); padding: 20px 24px;
+      background: var(--surface-3); border-radius: var(--radius-xl); padding: 20px 24px;
       display: flex; flex-direction: column; align-items: center; gap: 12px;
-      min-width: 280px; max-width: 90vw; box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+      min-width: 280px; max-width: 90vw; box-shadow: var(--shadow-3);
       overflow: hidden;
     }
     .compare-probe-title {
@@ -1099,7 +1099,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       min-width: 220px;
       max-height: 300px;
       overflow-y: auto;
-      background: var(--bg);
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-lg);
       box-shadow: 0 4px 16px rgba(0,0,0,0.3);
@@ -1266,7 +1266,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       position: absolute;
       right: 0;
       z-index: 100;
-      background: var(--panel, var(--bg));
+      background: var(--surface-3);
       border: 1px solid var(--border);
       border-radius: var(--radius-md);
       max-height: 300px;

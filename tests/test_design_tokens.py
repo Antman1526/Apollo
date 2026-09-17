@@ -34,3 +34,9 @@ def test_single_value_radius_literals_migrated():
 def test_base_font_fallback_is_inter():
     base = (CSS_DIR / "base.css").read_text()
     assert re.search(r"html\s*\{[^}]*font-family:\s*var\(--font-family,\s*'Inter'", base)
+
+
+def test_surface_tokens_used_by_composer_and_popovers():
+    allcss = "\n".join(f.read_text() for f in CSS_DIR.glob("*.css"))
+    assert allcss.count("var(--surface-3)") >= 3
+    assert allcss.count("var(--surface-2)") >= 2
