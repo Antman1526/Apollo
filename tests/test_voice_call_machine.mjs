@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createCallMachine } from '../static/js/voiceCall.js';
+import { createCallMachine, levelToRing } from '../static/js/voiceCall.js';
 
 function spyEffects() {
   const calls = [];
@@ -170,4 +170,12 @@ test('parseVoiceAssign returns null for normal speech', () => {
   assert.equal(parseVoiceAssign('assign'), null);          // no task body
   assert.equal(parseVoiceAssign(''), null);
   assert.equal(parseVoiceAssign(null), null);
+});
+
+// ── levelToRing: pure rms → 0..1 orb-ring intensity ──
+
+test('levelToRing maps rms to a 0..1 ring intensity', () => {
+  assert.equal(levelToRing(0), 0);
+  assert.equal(levelToRing(0.05), 0.4);
+  assert.equal(levelToRing(1), 1);
 });

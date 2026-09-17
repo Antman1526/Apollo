@@ -130,6 +130,13 @@ export const VAD_DEFAULTS = { threshold: 0.02, silenceMs: 1200 };
 // Pure resolver: given a toggle-state object, return the effective VAD config,
 // falling back to defaults for missing / non-finite / non-positive values. No
 // browser globals — unit-testable in Node.
+// Pure helper: raw mic RMS → 0..1 ring intensity for the overlay orb's
+// --vc-level CSS var. RMS from speech rarely exceeds ~0.12, so *8 brings a
+// normal speaking level near the top of the ring while staying pure/testable.
+export function levelToRing(rms) {
+  return Math.min(1, rms * 8);
+}
+
 export function resolveVadConfig(toggles) {
   const st = toggles || {};
   const threshold = Number(st.voiceVadThreshold);
@@ -154,6 +161,26 @@ function _readVadConfig() {
 }
 
 function _overlay() { return document.getElementById('voice-call-overlay'); }
+
+// Live mic-level ring: one rAF loop shared for the whole call, running only
+// while the overlay is visible (any state but idle). _latestRms is updated by
+// the VAD's onLevel tap; the loop just paints it, decoupled from tick rate.
+let _latestRms = 0;
+let _levelRaf = 0;
+function _startLevelLoop() {
+  if (_levelRaf) return; // already running
+  const tick = () => {
+    const ov = _overlay();
+    if (ov) ov.style.setProperty('--vc-level', levelToRing(_latestRms).toFixed(3));
+    _levelRaf = requestAnimationFrame(tick);
+  };
+  _levelRaf = requestAnimationFrame(tick);
+}
+function _stopLevelLoop() {
+  if (_levelRaf) cancelAnimationFrame(_levelRaf);
+  _levelRaf = 0;
+}
+
 function _setState(state) {
   const ov = _overlay();
   if (ov) ov.dataset.state = state;
@@ -163,6 +190,12 @@ function _setState(state) {
       listening: 'Listening…', capturing: 'Listening…', transcribing: 'Transcribing…',
       thinking: 'Thinking…', speaking: 'Speaking…', idle: '',
     }[state] || '';
+  }
+  if (state === 'idle') {
+    _stopLevelLoop();
+    if (ov) ov.style.removeProperty('--vc-level');
+  } else {
+    _startLevelLoop();
   }
 }
 function _setTranscript(text) {
@@ -266,6 +299,7 @@ export async function startCall() {
     stream,
     gate,
     onEvent: (ev) => machine.dispatch(ev === 'speechstart' ? 'speechStart' : 'speechEnd'),
+    onLevel: (rms) => { _latestRms = rms; },
   });
 
   _active = { machine, mic, stream, recorder: null, prevAutoPlay };
@@ -301,6 +335,7 @@ export function endCall() {
   _setState('idle');
   _setTranscript('');
   _active = null;
+  _latestRms = 0;
 }
 
 const voiceCallModule = { startCall, endCall, createCallMachine, createVadGate };

@@ -43,6 +43,21 @@ test('reset() returns to not-speaking', () => {
   assert.equal(g.push(0.0, 10), null);
 });
 
+test('createVadGate forwards every level via onLevel without changing events', () => {
+  // The real gate has no onSpeechStart/onSpeechEnd callbacks — push() *returns*
+  // 'speechstart' | 'speechend' | null instead. Adapted intent: onLevel must
+  // fire with every raw rms on every push(), and must not change what push()
+  // returns (compare a gate with onLevel against an identical one without it).
+  const levels = [];
+  const gate = createVadGate({ threshold: 0.02, onLevel: (v) => levels.push(v) });
+  const eventsWithOnLevel = [gate.push(0.5, 0), gate.push(0.01, 100)];
+  assert.deepEqual(levels, [0.5, 0.01]);
+
+  const gate2 = createVadGate({ threshold: 0.02 });
+  const eventsWithoutOnLevel = [gate2.push(0.5, 0), gate2.push(0.01, 100)];
+  assert.deepEqual(eventsWithOnLevel, eventsWithoutOnLevel);
+});
+
 // ── resolveVadConfig: pure toggle-state → effective VAD config ──
 
 test('resolveVadConfig falls back to defaults for empty/undefined input', () => {

@@ -6,7 +6,7 @@
 // Only createMicVad touches browser APIs, and only when called (never at
 // import), so this module imports cleanly in Node for testing.
 
-export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
+export function createVadGate({ threshold = 0.02, silenceMs = 1200, onLevel } = {}) {
   let speaking = false;
   let lastLoudMs = 0;
 
@@ -16,6 +16,10 @@ export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
   return {
     // Returns 'speechstart' | 'speechend' | null.
     push(rms, nowMs) {
+      // onLevel is a pure observation tap (e.g. driving a UI meter) — it must
+      // never affect gate state or be able to break push() if it throws.
+      if (onLevel) { try { onLevel(rms); } catch {} }
+
       const loud = rms >= threshold;
       if (loud) lastLoudMs = nowMs;
 
@@ -46,7 +50,7 @@ export function createVadGate({ threshold = 0.02, silenceMs = 1200 } = {}) {
 // Browser-only: drive a gate from a live mic MediaStream. Returns handles to
 // pause (mute), resume, and destroy. References Web Audio globals only here,
 // inside the function body — never at module top level.
-export function createMicVad({ stream, gate, onEvent }) {
+export function createMicVad({ stream, gate, onEvent, onLevel }) {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioCtx();
   const source = ctx.createMediaStreamSource(stream);
@@ -68,6 +72,7 @@ export function createMicVad({ stream, gate, onEvent }) {
     for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
     const rms = Math.sqrt(sum / buf.length);
     if (!paused) {
+      if (onLevel) { try { onLevel(rms); } catch {} }
       const ev = gate.push(rms, performance.now());
       if (ev) onEvent(ev, rms);
     }
