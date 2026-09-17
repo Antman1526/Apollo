@@ -80,6 +80,11 @@
         var fm = {mono:"'Fira Code', monospace",sans:"system-ui, -apple-system, 'Segoe UI', sans-serif",serif:"Georgia, 'Times New Roman', serif"};
         if (fm[t.font]) { s.setProperty('--font-family', fm[t.font]); }
         else { s.setProperty('--font-family', "'" + t.font.replace(/'/g,'') + "', sans-serif"); }
+      } else {
+        // No stored font preference (fresh install / no localStorage yet):
+        // match the runtime default (DEFAULT_FONT='sans' in theme.js) so
+        // first paint doesn't flash the monospace fallback.
+        document.documentElement.style.setProperty('--font-family', "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif");
       }
       // Apply density class on html
       if (t && t.density && t.density !== 'comfortable') {
