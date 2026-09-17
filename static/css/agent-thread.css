@@ -1239,13 +1239,24 @@ details a:hover {
 .chat-floor {
   width: 100%;
   max-width: 720px;
+  /* The plan called for a fixed height: 120px. An aspect-ratio locked to the
+     SVG's viewBox replaces it, because a fixed height clipped the drawing at
+     narrow widths -- preserveAspectRatio letterboxes to the shorter axis, so
+     the floor shrank away from the box instead of filling it. */
   height: auto;
-  aspect-ratio: 1200 / 420;
-  margin: var(--space-2) 0 var(--space-3);
+  aspect-ratio: 1200 / 360;
+  /* Matches .agent-thread's margin-left so the floor shares its column. */
+  margin: var(--space-2) 0 var(--space-3) 28px;
   border-radius: var(--radius-lg);
   overflow: hidden;
   background: var(--surface-2);
   border: 1px solid var(--border);
+}
+/* A floor already fills the gap above the thread, so the rail must not stub
+   upwards into it. */
+.agent-thread.has-floor::before,
+.agent-thread.has-floor.has-top::before {
+  top: 14px;
 }
 .chat-floor svg {
   width: 100%;
@@ -1319,8 +1330,12 @@ details a:hover {
 }
 .chat-floor-shadow { fill: var(--fg); opacity: 0.12; }
 .chat-floor-torso,
-.chat-floor-leg { fill: var(--accent, var(--red)); }
-.chat-floor-leg { opacity: 0.8; }
+.chat-floor-arm { fill: var(--accent, var(--red)); }
+.chat-floor-arm { opacity: 0.9; }
+.chat-floor-leg,
+.chat-floor-hip { fill: color-mix(in srgb, var(--accent, var(--red)) 55%, var(--fg)); }
+.chat-floor-hand,
+.chat-floor-stud,
 .chat-floor-head { fill: var(--fg); opacity: 0.85; }
 
 /* Thinking dots above the figure while a tool is running */
@@ -1339,6 +1354,10 @@ details a:hover {
   50%      { opacity: 1; }
 }
 
-@media (max-width: 520px) {
-  .chat-floor { max-width: 100%; }
+@media (max-width: 768px) {
+  .chat-floor { margin-left: 16px; }
+}
+/* Below this the 22px labels render at ~7px on screen -- the glyphs carry it. */
+@media (max-width: 480px) {
+  .chat-floor-label { display: none; }
 }

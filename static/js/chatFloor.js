@@ -9,15 +9,16 @@
 // plain Node. mount() is the only DOM-touching entry point.
 
 // Isometric projection. This is a copy of paperclip.js's isoProject() math
-// re-scaled to a 1200x420 stage. It is copied rather than imported because
+// re-scaled to a 1200x360 stage. It is copied rather than imported because
 // paperclip.js touches `document` at module load, which makes it unusable
 // from a headless test (and would drag ~1300 lines of office renderer into
-// every chat turn).
-const STAGE = { w: 1200, h: 420, originX: 360, originY: 60, sx: 8, sy: 2.2 };
+// every chat turn). sx/sy keep the big Floor's iso angle so the two rooms
+// read as the same building.
+const STAGE = { w: 1200, h: 360, originX: 390, originY: 20, sx: 6, sy: 2.6 };
 
-// Logical floor is 100 wide x 40 deep.
+// Logical floor is 100 wide x 30 deep.
 const FLOOR_W = 100;
-const FLOOR_D = 40;
+const FLOOR_D = 30;
 
 function isoProject(x, y) {
   return {
@@ -43,12 +44,12 @@ const GLYPHS = {
 // Logical coords chosen so the six desks spread across the rhombus instead of
 // stacking on one iso row. `desk` is home: centre-left, where the figure idles.
 export const STATIONS = [
-  { id: 'desk', label: 'Desk', x: 10, y: 14 },
-  { id: 'files', label: 'Files', x: 20, y: 34 },
-  { id: 'web', label: 'Web', x: 55, y: 5 },
-  { id: 'shell', label: 'Shell', x: 65, y: 30 },
-  { id: 'browser', label: 'Browser', x: 90, y: 12 },
-  { id: 'memory', label: 'Memory', x: 93, y: 33 },
+  { id: 'desk', label: 'Desk', x: 8, y: 9 },
+  { id: 'files', label: 'Files', x: 10, y: 25 },
+  { id: 'web', label: 'Web', x: 38, y: 4 },
+  { id: 'shell', label: 'Shell', x: 46, y: 24 },
+  { id: 'browser', label: 'Browser', x: 72, y: 5 },
+  { id: 'memory', label: 'Memory', x: 80, y: 24 },
 ];
 
 const STATION_BY_ID = STATIONS.reduce((acc, s) => { acc[s.id] = s; return acc; }, {});
@@ -62,7 +63,7 @@ export function stationForTool(name) {
   if (/memor|skill|reference_search|search_chats/.test(t)) return 'memory';
   if (/^browser/.test(t)) return 'browser';
   if (/^bash$|shell|^python|^run_|^pipeline$/.test(t)) return 'shell';
-  if (/file|list_dir|glob|grep/.test(t)) return 'files';
+  if (/file|document|list_dir|glob|grep/.test(t)) return 'files';
   if (/^web_|fetch|search|research/.test(t)) return 'web';
   return 'desk';
 }
@@ -118,9 +119,9 @@ function stationSVG(s, st) {
   const gx = p.px - (24 * GLYPH_SCALE) / 2;
   const gy = p.py - DESK_H - 34;
   return `<g class="${stationClass(s.id, st)}" data-station="${s.id}">`
-    + deskSVG(s.x, s.y, 11, 9, DESK_H)
+    + deskSVG(s.x, s.y, 11, 7, DESK_H)
     + `<g class="chat-floor-glyph" transform="translate(${gx.toFixed(1)},${gy.toFixed(1)}) scale(${GLYPH_SCALE})">${GLYPHS[s.id] || GLYPHS.desk}</g>`
-    + `<text class="chat-floor-label" x="${p.px.toFixed(1)}" y="${(p.py + 30).toFixed(1)}" font-size="22" fill="var(--color-muted)" text-anchor="middle">${s.label}</text>`
+    + `<text class="chat-floor-label" x="${p.px.toFixed(1)}" y="${(p.py + 38).toFixed(1)}" font-size="22" fill="var(--color-muted)" text-anchor="middle">${s.label}</text>`
     + '</g>';
 }
 
@@ -137,7 +138,7 @@ function pathSVG(st) {
 }
 
 // The figure stands just in front of (i.e. deeper than) the desk it is at.
-const FIG_OFFSET = 6;
+const FIG_OFFSET = 5;
 
 function figTransform(st) {
   const s = STATION_BY_ID[st.at] || STATION_BY_ID.desk;
@@ -145,16 +146,25 @@ function figTransform(st) {
   return `translate(${p.px.toFixed(1)},${p.py.toFixed(1)})`;
 }
 
-// Head / torso / two legs, drawn from the figure's feet at (0, 0).
+// One minifig, anchored at its feet at the group origin. Same silhouette as
+// paperclip.js's minifigSVG() -- legs, hip block, torso, two arms, and a
+// rounded head with the stud on top -- at ~0.75 scale for the smaller stage,
+// so the strip reads as the same family of figure as the big Floor.
 const FIG_BODY =
-  '<ellipse class="chat-floor-shadow" cx="0" cy="0" rx="13" ry="5"/>'
-  + '<rect class="chat-floor-leg" x="-7" y="-15" width="5.5" height="15" rx="2"/>'
-  + '<rect class="chat-floor-leg" x="1.5" y="-15" width="5.5" height="15" rx="2"/>'
-  + '<rect class="chat-floor-torso" x="-9" y="-33" width="18" height="19" rx="4"/>'
-  + '<circle class="chat-floor-head" cx="0" cy="-42" r="9"/>';
+  '<ellipse class="chat-floor-shadow" cx="0" cy="0" rx="14" ry="5"/>'
+  + '<rect class="chat-floor-leg" x="-7" y="-12" width="6" height="12" rx="2"/>'
+  + '<rect class="chat-floor-leg" x="1" y="-12" width="6" height="12" rx="2"/>'
+  + '<rect class="chat-floor-hip" x="-8" y="-15" width="16" height="4" rx="2"/>'
+  + '<rect class="chat-floor-torso" x="-10" y="-32" width="20" height="18" rx="3.5"/>'
+  + '<rect class="chat-floor-arm" x="-14.5" y="-30" width="5" height="13" rx="2.5"/>'
+  + '<rect class="chat-floor-arm" x="9.5" y="-30" width="5" height="13" rx="2.5"/>'
+  + '<circle class="chat-floor-hand" cx="-12" cy="-16" r="2.4"/>'
+  + '<circle class="chat-floor-hand" cx="12" cy="-16" r="2.4"/>'
+  + '<rect class="chat-floor-stud" x="-4" y="-51" width="8" height="5" rx="2"/>'
+  + '<rect class="chat-floor-head" x="-7.5" y="-47" width="15" height="15" rx="4.5"/>';
 
 const FIG_DOTS =
-  '<circle cx="-9" cy="-60" r="3"/><circle cx="0" cy="-60" r="3"/><circle cx="9" cy="-60" r="3"/>';
+  '<circle cx="-8" cy="-62" r="2.8"/><circle cx="0" cy="-62" r="2.8"/><circle cx="8" cy="-62" r="2.8"/>';
 
 function dotsClass(st) {
   return 'chat-floor-dots' + (st.busy ? ' chat-floor-dots--on' : '');
@@ -201,9 +211,13 @@ export function createFloorStrip() {
     sync();
   }
 
+  // A tool_output can arrive for a tool the figure has already walked away
+  // from (parallel calls, or a late result after the next tool_start). Only
+  // the station the figure is actually standing at may clear `busy`; the
+  // failure mark always lands on the station the tool belongs to.
   function onToolEnd(tool, ok) {
     const id = stationForTool(tool);
-    st.busy = false;
+    if (id === st.at) st.busy = false;
     if (!ok && st.failed.indexOf(id) === -1) st.failed.push(id);
     sync();
   }

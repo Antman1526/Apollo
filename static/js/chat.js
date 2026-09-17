@@ -22,7 +22,8 @@ import * as emailInbox from './emailInbox.js';
 import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
-import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLifecycle.js'; import { floorToolStart, floorToolEnd, floorTurnEnd } from './chat/floorHook.js';
+import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLifecycle.js';
+import { floorToolStart, floorToolEnd, floorTurnEnd } from './chat/floorHook.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -285,7 +286,8 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
           }
         }
       });
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming')); floorTurnEnd();
+      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
+      floorTurnEnd();
 
       // Clean up any thinking spinners
       document.querySelectorAll('.agent-thinking-dots').forEach(el => {
@@ -1993,7 +1995,8 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
                   }
                   chatBox.appendChild(threadWrap);
                 }
-                threadWrap.classList.add('streaming'); floorToolStart(threadWrap, json.tool);
+                threadWrap.classList.add('streaming');
+                floorToolStart(threadWrap, json.tool);
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
@@ -2071,7 +2074,8 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
                     clearInterval(currentToolBubble._elapsedTicker);
                     currentToolBubble._elapsedTicker = null;
                   }
-                  const ok = (json.exit_code === 0 || json.exit_code == null); floorToolEnd(currentToolBubble.parentElement, json.tool, ok);
+                  const ok = (json.exit_code === 0 || json.exit_code == null);
+                  floorToolEnd(currentToolBubble.parentElement, json.tool, ok);
                   const cmd = json.command || '';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
@@ -2301,7 +2305,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
       _cancelThinkingTimer();
       _removeThinkingSpinner();
       // Stop any thread pulse animations
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming')); floorTurnEnd();
+      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // --- Final render (skip if stream was ever backgrounded or currently in background) ---
       // Remove streaming class from all round bubbles
       holder.classList.remove('streaming');
@@ -2309,6 +2313,9 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
 
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
+        // Inside the foreground branch: a background session finishing must not
+        // walk the visible session's minifig back to its desk.
+        floorTurnEnd();
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
         finalModelName = _shortModel(metrics?.model || finalMeta?.model);
         // Preserve suffix (e.g. "Research") if set by model_info event
@@ -2582,7 +2589,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
       if (spinner && spinner.element) spinner.destroy();
       _cancelThinkingTimer();
       _removeThinkingSpinner();
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming')); floorTurnEnd();
+      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
       // Check if this stream was running in background
       const _isBgCatch = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
 
@@ -2603,6 +2610,7 @@ import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLif
           }
         }
       } else {
+        floorTurnEnd();
         // Stop streaming TTS on any error/abort
         if (streamingTTS && window.aiTTSManager) window.aiTTSManager.stop();
 
