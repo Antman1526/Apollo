@@ -45,6 +45,7 @@ import ttsModule from './js/tts-ai.js';
 import spinnerModule from './js/spinner.js';
 import { initKeyboardShortcuts } from './js/keyboard-shortcuts.js';
 import { initSidebarLayout, syncRailSide } from './js/sidebar-layout.js';
+import { initSystemPulse } from './js/systemPulse.js';
 import { initSectionCollapse, initSectionDrag } from './js/section-management.js';
 
 const API_BASE = window.location.origin;
@@ -1143,6 +1144,7 @@ function initializeEventListeners() {
   if (userBarAdmin) {
     userBarAdmin.addEventListener('click', () => adminModule.open());
   }
+  initSystemPulse({ onOpen: () => settingsModule.open(window._isAdmin ? 'system' : undefined) });
 
   // Fetch auth status — populate user bar and show admin button if admin
   fetch(`${API_BASE}/api/auth/status`, { credentials: 'same-origin' })
