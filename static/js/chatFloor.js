@@ -12,7 +12,7 @@
 // re-scaled to a 1200x360 stage. It is copied rather than imported because
 // paperclip.js touches `document` at module load, which makes it unusable
 // from a headless test (and would drag ~1300 lines of office renderer into
-// every chat turn). sx/sy keep the big Floor's iso angle so the two rooms
+// every chat turn). sx/sy sit close to the big Floor's iso angle so the two rooms
 // read as the same building.
 const STAGE = { w: 1200, h: 360, originX: 390, originY: 20, sx: 6, sy: 2.6 };
 
