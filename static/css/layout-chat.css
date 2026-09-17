@@ -211,6 +211,50 @@
       max-width:320px;
       line-height:1.4;
     }
+    /* Recent sessions + memory-derived suggested prompts (welcomeState.js).
+       Chips need real clicks, so they opt back into pointer-events on the
+       otherwise pointer-events:none welcome screen. */
+    #welcome-recent, #welcome-prompts {
+      pointer-events: auto;
+      max-width: 640px;
+      margin: var(--space-4) auto 0;
+    }
+    #welcome-recent .welcome-group-label,
+    #welcome-prompts .welcome-group-label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: color-mix(in srgb, var(--fg) 55%, transparent);
+      margin-bottom: var(--space-2);
+    }
+    #welcome-recent .welcome-chip-row,
+    #welcome-prompts .welcome-chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: var(--space-2);
+    }
+    .welcome-chip {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-pill);
+      padding: var(--space-1) var(--space-3);
+      color: var(--fg);
+      font: inherit;
+      font-size: 0.78rem;
+      cursor: pointer;
+      transition: background var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+    }
+    .welcome-chip:hover, .welcome-chip:focus-visible {
+      background: var(--surface-3);
+      border-color: var(--accent);
+    }
+    #welcome-prompts { margin-top: var(--space-3); }
+    @media (max-height: 520px) {
+      #welcome-recent { display: none; }
+    }
     /* Incognito toggle — on welcome screen */
     .incognito-btn {
       pointer-events: auto;

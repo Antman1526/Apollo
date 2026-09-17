@@ -26,6 +26,7 @@ import calendarModule from './js/calendar.js';
 import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
+import { initWelcomeState } from './js/welcomeState.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -4132,6 +4133,17 @@ function startApolloApp() {
           try { window._apolloRouteOpener(); } catch (_) {}
           window._apolloRouteOpener = null;
         }
+        initWelcomeState({
+          getSessions: sessionModule.getSessions,
+          onOpenSession: (id) => sessionModule.selectSession(id),
+          onUsePrompt: (t) => {
+            const el = document.getElementById('message');
+            if (!el) return;
+            el.value = t;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.focus();
+          }
+        });
       });
   } else {
     console.error('Session module not loaded!');
