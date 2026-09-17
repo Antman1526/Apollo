@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 
 CSS_DIR = Path(__file__).resolve().parents[1] / "static" / "css"
-VARS = (CSS_DIR / "variables.css").read_text()
+VARS = (CSS_DIR / "variables.css").read_text(encoding="utf-8")
 
 REQUIRED = [
     "--radius-xs", "--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--radius-pill",
@@ -25,14 +25,14 @@ def test_single_value_radius_literals_migrated():
     for f in CSS_DIR.glob("*.css"):
         if f.name == "variables.css":
             continue
-        for i, line in enumerate(f.read_text().splitlines(), 1):
+        for i, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             if pat.search(line):
                 hits.append(f"{f.name}:{i}")
     assert len(hits) < 20, hits[:40]
 
 
 def test_base_font_fallback_is_inter():
-    base = (CSS_DIR / "base.css").read_text()
+    base = (CSS_DIR / "base.css").read_text(encoding="utf-8")
     assert re.search(r"html\s*\{[^}]*font-family:\s*var\(--font-family,\s*'Inter'", base)
 
 
@@ -47,13 +47,13 @@ def _rule_bodies(css, selector):
 
 
 def test_surface_tokens_used_by_composer_and_popovers():
-    allcss = "\n".join(f.read_text() for f in CSS_DIR.glob("*.css"))
+    allcss = "\n".join(f.read_text(encoding="utf-8") for f in CSS_DIR.glob("*.css"))
     assert allcss.count("var(--surface-3)") >= 3
     assert allcss.count("var(--surface-2)") >= 2
 
-    layout_chat = (CSS_DIR / "layout-chat.css").read_text()
-    overlays = (CSS_DIR / "overlays.css").read_text()
-    layout_mobile = (CSS_DIR / "layout-mobile.css").read_text()
+    layout_chat = (CSS_DIR / "layout-chat.css").read_text(encoding="utf-8")
+    overlays = (CSS_DIR / "overlays.css").read_text(encoding="utf-8")
+    layout_mobile = (CSS_DIR / "layout-mobile.css").read_text(encoding="utf-8")
 
     composer = "\n".join(_rule_bodies(layout_chat, ".chat-input-bar"))
     assert "var(--surface-3)" in composer, "chat-input-bar background fallback"
@@ -71,7 +71,7 @@ def test_surface_tokens_used_by_composer_and_popovers():
 
 
 def test_global_reduced_motion_guard():
-    base = (CSS_DIR / "base.css").read_text()
+    base = (CSS_DIR / "base.css").read_text(encoding="utf-8")
     assert "@media (prefers-reduced-motion: reduce)" in base
     assert "animation-duration: .01ms !important" in base or "animation-duration: 0.01ms !important" in base
 
@@ -83,7 +83,7 @@ def test_motion_tokens_adopted():
     # "instant" and no visual difference to migrate.
     raw_duration = re.compile(r"(?<![\w-])\d*\.?\d+m?s\b")
     for name in ("layout-chat.css", "layout-sidebar.css", "overlays.css", "chat-components.css"):
-        css = (CSS_DIR / name).read_text()
+        css = (CSS_DIR / name).read_text(encoding="utf-8")
         assert "var(--dur" in css and "var(--ease-out)" in css, name
 
         # Scan every transition declaration, including ones that sit mid-line
