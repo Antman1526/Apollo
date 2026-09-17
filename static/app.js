@@ -29,6 +29,7 @@ import notesModule from './js/notes.js';
 import adminModule from './js/admin.js';
 import settingsModule from './js/settings.js';
 import { initWelcomeState } from './js/welcomeState.js';
+import { mountConstellation } from './js/welcomeConstellation.js';
 // Eagerly bind unified minimize/restore behavior across all tool modals.
 import './js/modalManager.js';
 // Desktop window tiling — drag a modal near an edge/corner to snap.
@@ -4170,6 +4171,7 @@ function startApolloApp() {
             el.focus();
           }
         });
+        mountConstellation();
       });
   } else {
     console.error('Session module not loaded!');
