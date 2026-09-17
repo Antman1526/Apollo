@@ -66,3 +66,15 @@ html {
   scrollbar-width: thin;
 }
 
+/* Global reduced-motion guard: collapses every animation/transition to a
+   single frame when the OS asks for less motion. Per-component guards
+   elsewhere remain for cases that need a different fallback. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

@@ -40,3 +40,15 @@ def test_surface_tokens_used_by_composer_and_popovers():
     allcss = "\n".join(f.read_text() for f in CSS_DIR.glob("*.css"))
     assert allcss.count("var(--surface-3)") >= 3
     assert allcss.count("var(--surface-2)") >= 2
+
+
+def test_global_reduced_motion_guard():
+    base = (CSS_DIR / "base.css").read_text()
+    assert "@media (prefers-reduced-motion: reduce)" in base
+    assert "animation-duration: .01ms !important" in base or "animation-duration: 0.01ms !important" in base
+
+
+def test_motion_tokens_adopted():
+    for name in ("layout-chat.css", "layout-sidebar.css", "overlays.css", "chat-components.css"):
+        css = (CSS_DIR / name).read_text()
+        assert "var(--dur" in css and "var(--ease-out)" in css, name
