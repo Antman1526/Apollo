@@ -172,7 +172,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .doclib-card.email-card-removing {
-    transition: opacity 0.08s ease;
     transform: none;
   }
 }

@@ -49,7 +49,11 @@ def test_global_reduced_motion_guard():
 
 
 def test_motion_tokens_adopted():
-    raw_duration = re.compile(r"(?<![\d.])0?\.(1|12|15|2|25|3|35|4)s\b")
+    # Flags ANY raw duration inside a transition declaration (not just the
+    # values we've historically mapped) so a newly-introduced literal can't
+    # slip back in unnoticed. 0s/0ms are allowed since there's no token for
+    # "instant" and no visual difference to migrate.
+    raw_duration = re.compile(r"(?<![\w-])\d*\.?\d+m?s\b")
     for name in ("layout-chat.css", "layout-sidebar.css", "overlays.css", "chat-components.css"):
         css = (CSS_DIR / name).read_text()
         assert "var(--dur" in css and "var(--ease-out)" in css, name
@@ -60,6 +64,7 @@ def test_motion_tokens_adopted():
         offenders = []
         for i, line in enumerate(css.splitlines(), 1):
             for m in decl.finditer(line):
-                if raw_duration.search(m.group(0)):
+                tokens = raw_duration.finditer(m.group(0))
+                if any(tok.group(0) not in ("0s", "0ms") for tok in tokens):
                     offenders.append(f"{name}:{i}")
         assert not offenders, offenders

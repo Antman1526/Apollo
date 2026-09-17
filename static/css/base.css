@@ -67,8 +67,9 @@ html {
 }
 
 /* Global reduced-motion guard: collapses every animation/transition to a
-   single frame when the OS asks for less motion. Per-component guards
-   elsewhere remain for cases that need a different fallback. */
+   single frame when the OS asks for less motion. This supersedes
+   per-component transition/animation-duration fallbacks; `animation: none`
+   guards elsewhere still apply. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .01ms !important;

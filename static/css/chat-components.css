@@ -52,7 +52,7 @@ a.chat-link:hover {
   font-size: 0.7rem;
   color: var(--color-error, #f44);
   opacity: 0.8;
-  transition: opacity 0.5s ease;
+  transition: opacity var(--dur-slow) var(--ease-out);
   pointer-events: none;
   display: flex;
   align-items: center;
@@ -531,7 +531,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   bottom: 0;
   background-color: color-mix(in srgb, var(--fg) 15%, transparent);
   border-radius: var(--radius-lg);
-  transition: background 0.08s;
+  transition: background var(--dur-fast);
 }
 
 .toggle-slider:before {
@@ -543,7 +543,7 @@ html:not(.chat-font-reading):not(.chat-font-book) .msg :is(em, i) {
   top: 2px;
   background-color: var(--panel);
   border-radius: 50%;
-  transition: transform 0.08s;
+  transition: transform var(--dur-fast);
   box-shadow: 0 1px 2px rgba(0,0,0,0.25);
 }
 

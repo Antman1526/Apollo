@@ -95,7 +95,10 @@
   --shadow-1: 0 1px 2px rgba(0,0,0,.25);
   --shadow-2: 0 4px 12px rgba(0,0,0,.30);
   --shadow-3: 0 12px 32px rgba(0,0,0,.40);
-  /* Surfaces: 1 = page, 2 = card, 3 = elevated (popover/composer) */
+  /* Surfaces: 1 = page, 2 = card, 3 = elevated (popover/composer).
+     Surfaces step tonally toward --panel; because presets differ in
+     whether panel is lighter or darker than bg, elevation is carried by
+     --shadow-* and borders, not by the tonal step. */
   --surface-1: var(--bg);
   --surface-2: color-mix(in srgb, var(--panel) 55%, var(--bg));
   --surface-3: color-mix(in srgb, var(--panel) 80%, var(--bg));

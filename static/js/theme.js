@@ -255,7 +255,21 @@ export function applyColors(colors) {
   // `color-scheme: inherit`.
   try {
     const bgL = hexToHSL(colors.bg)[2];
-    s.colorScheme = bgL < 50 ? 'dark' : 'light';
+    const isLight = bgL >= 50;
+    s.colorScheme = isLight ? 'light' : 'dark';
+
+    // Presets vary in whether --panel reads lighter or darker than --bg, so
+    // elevation can't be carried by a tonal step alone — the shadow itself
+    // has to follow bg lightness. Same threshold as color-scheme above.
+    if (isLight) {
+      s.setProperty('--shadow-1', '0 1px 2px rgba(0,0,0,.08)');
+      s.setProperty('--shadow-2', '0 4px 12px rgba(0,0,0,.12)');
+      s.setProperty('--shadow-3', '0 12px 32px rgba(0,0,0,.18)');
+    } else {
+      s.setProperty('--shadow-1', '0 1px 2px rgba(0,0,0,.25)');
+      s.setProperty('--shadow-2', '0 4px 12px rgba(0,0,0,.30)');
+      s.setProperty('--shadow-3', '0 12px 32px rgba(0,0,0,.40)');
+    }
   } catch (_e) { /* keep whatever's set if bg is unparseable */ }
 
   // Keep the mobile browser toolbar / status bar matched to the theme bg

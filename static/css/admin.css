@@ -1205,8 +1205,6 @@
   to   { transform: scale(1); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  #email-lib-modal .email-lib-fab,
-  #email-lib-modal .email-lib-fab .email-lib-fab-label { transition-duration: 1ms; }
   #email-lib-modal .email-lib-fab.fab-revealed { animation: none; }
 }
 /* When the modal-content has explicit height (fullscreen or user-resized),
