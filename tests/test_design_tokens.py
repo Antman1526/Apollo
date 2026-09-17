@@ -54,10 +54,12 @@ def test_motion_tokens_adopted():
         css = (CSS_DIR / name).read_text()
         assert "var(--dur" in css and "var(--ease-out)" in css, name
 
+        # Scan every transition declaration, including ones that sit mid-line
+        # inside one-liner rule blocks (common in overlays.css).
+        decl = re.compile(r"transition(?:-duration)?\s*:[^;{}]*")
         offenders = []
         for i, line in enumerate(css.splitlines(), 1):
-            stripped = line.strip()
-            if stripped.startswith("transition:") or stripped.startswith("transition-duration:"):
-                if raw_duration.search(stripped):
+            for m in decl.finditer(line):
+                if raw_duration.search(m.group(0)):
                     offenders.append(f"{name}:{i}")
         assert not offenders, offenders
