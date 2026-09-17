@@ -321,8 +321,25 @@
       outline-offset: 2px;
     }
     #welcome-prompts { margin-top: var(--space-3); }
-    @media (max-height: 520px) {
-      #welcome-recent { display: none; }
+    /* Vertical budget for the welcome block on desktop. #welcome-screen is
+       anchored at top:40% and the composer floats up by margin-bottom:30vh,
+       a budget sized for the original three-line welcome. Recent chips, the
+       Try prompts and the Today card roughly doubled its height, so on
+       shorter windows we (a) lower the composer's float and (b) trim the
+       block from the least essential piece downward. Measured at 900px wide:
+       name 52, tagline 20, tip 41, recent 50, prompts 106, card 46, Nobody 48.
+       Mobile widths keep their own rules (the composer sits at the bottom). */
+    @media (min-width: 769px) and (max-height: 900px) {
+      #welcome-screen .welcome-tip { display: none; }
+      #welcome-prompts, .welcome-briefing { margin-top: var(--space-2); }
+      #welcome-screen .incognito-btn { margin-top: var(--space-3); }
+    }
+    @media (min-width: 769px) and (max-height: 760px) {
+      .welcome-briefing { display: none; }
+    }
+    @media (max-height: 600px) {
+      .welcome-briefing { display: none; }
+      #welcome-recent, #welcome-prompts { display: none; }
     }
     /* kb-hidden and the sub-380px fade are transient/invisible states of the
        parent (~106-114 above) — mirror them here so faded chips can't still
@@ -351,9 +368,6 @@
       overflow: hidden;
     }
     .welcome-briefing:empty { display: none; }
-    @media (max-height: 600px) {
-      .welcome-briefing { display: none; }
-    }
     .briefing-header {
       display: flex;
       align-items: center;
@@ -545,6 +559,15 @@
         margin-left:0;
         margin-right:0;
       }
+    }
+    /* Shorter desktop windows: float the composer less so the (taller)
+       welcome block above it has room. Paired with the welcome trims near
+       #welcome-recent; must sit after the 30vh base rule to win the tie. */
+    @media (min-width: 769px) and (max-height: 900px) {
+      .chat-container.welcome-active .chat-input-bar { margin-bottom: 20vh; }
+    }
+    @media (min-width: 769px) and (max-height: 760px) {
+      .chat-container.welcome-active .chat-input-bar { margin-bottom: 16vh; }
     }
     .msg {
       margin: 8px 0;

@@ -144,7 +144,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       outline: none;
       color: var(--fg);
       font-size: 16px;
-      font-family: 'Fira Code', monospace;
+      font-family: inherit;
       padding: 14px 16px;
       box-sizing: border-box;
     }
