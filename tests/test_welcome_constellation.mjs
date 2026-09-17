@@ -34,3 +34,11 @@ test('renderConstellationSVG escapes labels and marks related nodes', () => {
   assert.match(svg, /constellation-edge/);
   assert.equal(renderConstellationSVG({ nodes: [], edges: [] }, new Set()), '');
 });
+
+test('renderConstellationSVG sanitizes a hostile category into a plain class token', () => {
+  const layout = { nodes: [{ id: 'x', label: 'l', category: 'evil" onclick="hack()', x: 1, y: 1 }], edges: [] };
+  const svg = renderConstellationSVG(layout, new Set());
+  assert.doesNotMatch(svg, /onclick=/);
+  assert.doesNotMatch(svg, /evil"/);
+  assert.match(svg, /constellation-node--evilonclickhack/);
+});

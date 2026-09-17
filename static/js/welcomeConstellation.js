@@ -95,11 +95,14 @@ export function renderConstellationSVG(layout, relatedIds) {
   let nodesHtml = '';
   for (const n of nodes) {
     const isRelated = related.has(n.id);
-    const cat = n.category || 'fact';
+    // Category comes from user-importable memory packs; keep it a plain
+    // class token so it can never break out of the attribute.
+    const cat = String(n.category || 'fact').toLowerCase().replace(/[^a-z0-9_-]/g, '') || 'fact';
     const cls = `constellation-node constellation-node--${cat}${isRelated ? ' constellation-node--related' : ''}`;
     const r = isRelated ? 5 : 3;
     const label = n.label || n.text || '';
-    nodesHtml += `<circle class="${cls}" r="${r}" cx="${n.x}" cy="${n.y}" data-id="${_esc(n.id)}"><title>${_esc(label)}</title></circle>`;
+    const x = Number(n.x) || 0, y = Number(n.y) || 0;
+    nodesHtml += `<circle class="${cls}" r="${r}" cx="${x}" cy="${y}" data-id="${_esc(n.id)}"><title>${_esc(label)}</title></circle>`;
   }
 
   return `<g class="constellation-edges">${edgesHtml}</g><g class="constellation-nodes">${nodesHtml}</g>`;
