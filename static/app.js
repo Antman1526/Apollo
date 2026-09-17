@@ -11,6 +11,7 @@ import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
 import chatModule from './js/chat.js';
 import compareModule from './js/compare/index.js';
+import { initCouncil } from './js/council.js';
 import documentModule from './js/document.js';
 import searchChatModule from './js/search-chat.js';
 import markdownModule from './js/markdown.js';
@@ -3590,6 +3591,14 @@ function startApolloApp() {
       refreshModels: modelsModule.refreshModels, openSettings: () => settingsModule.open(),
     });
   }
+
+  // Initialize The Council (ask several models the same question)
+  initCouncil({
+    API_BASE, getCachedItems: modelsModule.getCachedItems, isChatCapable: modelsModule.isChatCapable,
+    getCurrentModel: sessionModule.getCurrentModel, getCurrentEndpointUrl: sessionModule.getCurrentEndpointUrl,
+    addMessage: chatRenderer.addMessage, mdToHtml: markdownModule.mdToHtml,
+    showToast: uiModule.showToast, styledPrompt: uiModule.styledPrompt,
+  });
 
   // Search buttons — icon rail + sidebar
   const railSearchBtn = el('rail-search-btn');

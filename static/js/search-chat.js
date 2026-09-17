@@ -35,7 +35,7 @@ const PALETTE_ACTIONS = [
   { id: 'open_compare', label: 'Open Compare' },
   { id: 'open_theme', label: 'Open Theme' },
   { id: 'open_browser', label: 'Open Browser' },
-  { id: 'council', label: 'Ask the Council', hint: 'Coming soon', dispatch: true },
+  { id: 'council', label: 'Ask the Council', dispatch: true },
   { id: 'briefing', label: "Today's briefing", hint: 'Coming soon', dispatch: true },
 ];
 

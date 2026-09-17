@@ -11,6 +11,7 @@ import logging
 
 from core.database import Comparison, SessionLocal
 from core.session_manager import SessionManager
+from routes.compare_helpers import resolve_ad_hoc_endpoint
 from src.auth_helpers import require_user
 
 logger = logging.getLogger(__name__)
@@ -59,21 +60,11 @@ def setup_compare_routes(session_manager: SessionManager):
                 owner=owner,
             )
             # Copy API key from endpoint config
-            db = SessionLocal()
-            try:
-                from core.database import ModelEndpoint
-                from src.endpoint_resolver import build_headers, normalize_base
-                # Find matching endpoint by URL
-                base = normalize_base(endpoint)
-                ep = db.query(ModelEndpoint).filter(
-                    ModelEndpoint.base_url == base
-                ).first()
-                if ep and ep.api_key:
-                    s = session_manager.sessions.get(sid)
-                    if s:
-                        s.headers = build_headers(ep.api_key, ep.base_url)
-            finally:
-                db.close()
+            _, headers = resolve_ad_hoc_endpoint(endpoint)
+            if headers:
+                s = session_manager.sessions.get(sid)
+                if s:
+                    s.headers = headers
 
         # Blind mapping: randomly assign left/right
         blind = str(is_blind).lower() == "true"

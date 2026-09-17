@@ -671,6 +671,10 @@ build_and_include_router(app, "Local models", setup_localmodels_routes, logger=l
 from routes.compare_routes import setup_compare_routes
 build_and_include_router(app, "Compare", setup_compare_routes, session_manager, logger=logger)
 
+# The Council (ask several models the same question, reviewer synthesizes)
+from routes.council_routes import setup_council_routes
+build_and_include_router(app, "Council", setup_council_routes, session_manager, logger=logger)
+
 # User Preferences
 from routes.prefs_routes import setup_prefs_routes
 build_and_include_router(app, "Preferences", setup_prefs_routes, logger=logger)
