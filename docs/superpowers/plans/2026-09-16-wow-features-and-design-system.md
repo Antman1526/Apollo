@@ -275,7 +275,7 @@ test('degraded components render as labelled chips', () => {
 test('null status renders nothing', () => { assert.equal(renderPulseHTML(null), ''); });
 ```
 
-- [ ] **Step 2:** Implement `renderPulseHTML(status)` (escape text; reuse `renderStatePillHTML` state classes naming: `pulse-chip--degraded|blocked|error|limited|unavailable|stopped|idle`) and `initSystemPulse({ mountId:'system-pulse', intervalMs:60000, onOpen })` that fetches `/api/system/status` on load, every interval while `document.visibilityState === 'visible'`, and on `visibilitychange`. Click → `onOpen()` opens Settings → System tab (grep settings.js for the tab switch function, e.g. `openSettingsTab('system')`).
+- [ ] **Step 2:** Implement `renderPulseHTML(status)` (escape text; reuse `renderStatePillHTML` state classes naming: `pulse-chip--degraded|blocked|error|limited|unavailable|stopped|idle`) and `initSystemPulse({ mountId:'system-pulse', intervalMs:60000, onOpen })` that fetches `/api/system/status` on load, every interval while `document.visibilityState === 'visible'`, and on `visibilitychange`. Click → `onOpen()` opens Settings → **Integrations** tab, where the existing status card renders (`settingsModule.open('integrations')`; the System tab only holds backup/danger-zone).
 - [ ] **Step 3:** Markup: `<div id="system-pulse" class="system-pulse" role="status" aria-live="polite"></div>` before `#sidebar-user-bar`. CSS: thin strip, chips with `--radius-pill`, colors from `--color-success/--color-warning/--color-error`, `--surface-2` bg.
 - [ ] **Step 4:** Wire `initSystemPulse` in `app.js` init. Add test to `package.json`. `npm run test:js` green. Commit `feat(status): always-visible system pulse strip in the sidebar`.
 
@@ -541,3 +541,20 @@ test('layoutConstellation is deterministic and bounded', () => {
 - [ ] `PYTHON=$(cd ../../.. && pwd)/venv/bin/python bash scripts/check.sh` → all green (Python ≥ 2,076 passed, JS ≥ 136 + new tests, module sizes, runtime paths).
 - [ ] Launch the app with an isolated `APOLLO_DATA_DIR`, screenshot: welcome screen (constellation, recent, prompts, Today card), sidebar (Work/Know, pulse strip), Ctrl+K palette, an agent run with the floor strip, the voice overlay. Fix visual regressions found; re-run the gate.
 - [ ] Update `README.md` "What it actually does" with one line each for Council, Today briefing, Cockpit, Agent Floor, Command palette. Commit `docs: describe the new chat-screen features`.
+
+---
+
+## Execution notes (2026-09-17)
+
+Deviations recorded during implementation and review, all deliberate:
+
+- Task 2: the default font was already Inter; the fix was the first-paint fallback in `base.css` and the inline theme script (including the legacy `font: 'sans'` map).
+- Task 4: surfaces step tonally toward `--panel`; because presets differ in whether panel is lighter or darker than bg, elevation is carried by `--shadow-*` and borders. Shadow strength follows bg lightness in `applyColors` since the theme system never sets `:root.light`.
+- Task 5: every raw duration in `transition` declarations across the four files is migrated (0.26s/0.45s rounded to tokens); the test scans mid-line declarations.
+- Task 7: the pulse strip always initializes; real non-admins get a 401/403 and the strip hides itself. The no-login desktop mode reports `is_admin=false` yet can read the status endpoint.
+- Task 9: `isoProject` is copied (paperclip.js touches the DOM at import); stage 1200×360 with `sx: 6, sy: 2.6`, one strip per turn (adopted across narration bubbles), turn-end only from the non-background branches.
+- Task 10: `resolve_ad_hoc_endpoint` is shared with Compare and now owner-scoped + enabled-only; client endpoint URLs pass `check_outbound_url`; total request capped at 240s.
+- Task 11: fill uses the backend's `context_percent` (input tokens accumulate across agent rounds) with bands 70/85 to match the footer ring; `compacted` is reduced but not wired (chat.js is at its size ratchet).
+- Task 12: no injectable managers exist; the route reimplements each list route's owner scoping, with a 60s server cache that is skipped when any source failed.
+- Task 14: the svg lives in `#chat-container` (not inside the shrink-wrapped welcome block), with a radial mask, stopword/word-boundary matching capped at 12, and an Appearance toggle.
+- Task 15 visual pass: the welcome block outgrew its 40%/30vh budget on windows under ~900px tall; height-responsive rules lower the composer float and trim the block. Service-worker registration fails inside the desktop app's browser pane (environmental; `sw.js` serves correctly). The Council, floor strip, cockpit values, and voice orb were verified by unit tests and reviewer harnesses, not against a live model, because the isolated test data directory has no configured model.
