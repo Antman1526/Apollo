@@ -2521,6 +2521,7 @@ function initializeEventListeners() {
     'email-section':       '#email-section',
     'models-section':      '#models-section',
     'tools-section':       '#tools-section',
+    'know-section':        '#know-section',
     // Per-tool visibility — fine-grained control over which entries show
     // inside the Tools section in the sidebar.
     'tool-calendar':       '#tool-calendar-btn',
