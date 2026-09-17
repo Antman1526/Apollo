@@ -651,6 +651,10 @@ build_and_include_router(app, "Assistants", setup_assistant_routes, task_schedul
 from routes.calendar_routes import setup_calendar_routes
 build_and_include_router(app, "Calendar", setup_calendar_routes, logger=logger)
 
+# Home (welcome-screen setup checklist + daily brief)
+from routes.home_routes import setup_home_routes
+build_and_include_router(app, "Home", setup_home_routes, logger=logger)
+
 # Shell (user-facing command execution)
 from routes.shell_routes import setup_shell_routes
 build_and_include_router(app, "Shell", setup_shell_routes, logger=logger)

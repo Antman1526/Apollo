@@ -23,8 +23,7 @@ import codeRunnerModule from './codeRunner.js';
 import slashCommands, { initSlashCommands, isCommand, handleSlashCommand, handleSetupInput, handleSetupWizard, typewriterInto } from './slashCommands.js';
 import createResearchSynapse from './researchSynapse.js';
 import { buildRecoveryPrompt, isRecoverableStreamError } from './chat/requestLifecycle.js';
-import { floorToolStart, floorToolEnd, floorTurnEnd } from './chat/floorHook.js';
-import { cockpitEvent } from './chat/cockpitHook.js';
+import { floorToolStart, floorToolEnd, floorTurnEnd, cockpitEvent } from './chat/hooks.js';
   const RESEARCH_TIMEOUT_MS = 360000;
   const DEFAULT_TIMEOUT_MS = 120000;
   const RESEARCH_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>';
@@ -287,8 +286,7 @@ import { cockpitEvent } from './chat/cockpitHook.js';
           }
         }
       });
-      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming'));
-      floorTurnEnd();
+      document.querySelectorAll('.agent-thread.streaming').forEach(t => t.classList.remove('streaming')); floorTurnEnd();
 
       // Clean up any thinking spinners
       document.querySelectorAll('.agent-thinking-dots').forEach(el => {
@@ -1793,8 +1791,7 @@ import { cockpitEvent } from './chat/cockpitHook.js';
                   sessionModule.updateModelPicker();
                 }
                 continue;
-              } else if (json.type === 'model_info') {
-                cockpitEvent(json, _isBg);
+              } else if (json.type === 'model_info') { cockpitEvent(json, _isBg);
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
                   const roleEl = holder.querySelector('.role');
@@ -1997,8 +1994,7 @@ import { cockpitEvent } from './chat/cockpitHook.js';
                   }
                   chatBox.appendChild(threadWrap);
                 }
-                threadWrap.classList.add('streaming');
-                floorToolStart(threadWrap, json.tool);
+                threadWrap.classList.add('streaming'); floorToolStart(threadWrap, json.tool);
                 const toolLabel = _toolLabels[json.tool.toLowerCase()] || json.tool;
                 const node = document.createElement('div')
                 node.className = 'agent-thread-node running';
@@ -2076,8 +2072,7 @@ import { cockpitEvent } from './chat/cockpitHook.js';
                     clearInterval(currentToolBubble._elapsedTicker);
                     currentToolBubble._elapsedTicker = null;
                   }
-                  const ok = (json.exit_code === 0 || json.exit_code == null);
-                  floorToolEnd(currentToolBubble.parentElement, json.tool, ok);
+                  const ok = (json.exit_code === 0 || json.exit_code == null); floorToolEnd(currentToolBubble.parentElement, json.tool, ok);
                   const cmd = json.command || '';
                   let outHtml = '';
                   if (json.output && json.output.trim()) {
@@ -2315,9 +2310,7 @@ import { cockpitEvent } from './chat/cockpitHook.js';
 
       const _isBgFinal = (sessionModule.getCurrentSessionId() !== streamSessionId) || _backgroundStreams.has(streamSessionId);
       if (!_isBgFinal) {
-        // Inside the foreground branch: a background session finishing must not
-        // walk the visible session's minifig back to its desk.
-        floorTurnEnd();
+        floorTurnEnd();  // foreground only: a background finish must not move the visible minifig
         finalMeta = sessionModule.getSessions().find(s => s.id === sessionModule.getCurrentSessionId());
         finalModelName = _shortModel(metrics?.model || finalMeta?.model);
         // Preserve suffix (e.g. "Research") if set by model_info event
@@ -2498,6 +2491,14 @@ import { cockpitEvent } from './chat/cockpitHook.js';
         if (addAITTSButton && accumulated && window.aiTTSManager?._provider !== 'disabled' && window.aiTTSManager?.available) {
           addAITTSButton(footerTarget, accumulated);
         }
+        // Live artifact pane: a finished foreground reply that contains an
+        // html / svg fence auto-opens its LAST artifact beside the chat
+        // (pref `artifacts_auto_open`, default on; never on history reload).
+        if (accumulated) {
+          import('./artifacts.js')
+            .then(m => (m.autoOpenFromMessage || m.default?.autoOpenFromMessage)?.(accumulated))
+            .catch(() => { /* non-fatal */ });
+        }
         // Inline "Review" button (adversarial reviewer). Always attach on a
         // completed answer; the question is resolved from the preceding user
         // bubble on click.
@@ -2611,8 +2612,7 @@ import { cockpitEvent } from './chat/cockpitHook.js';
             sessionModule.clearStreaming(streamSessionId);
           }
         }
-      } else {
-        floorTurnEnd();
+      } else { floorTurnEnd();
         // Stop streaming TTS on any error/abort
         if (streamingTTS && window.aiTTSManager) window.aiTTSManager.stop();
 

@@ -39,3 +39,9 @@ still render. New rules go in the split files, not the shim.
 
 Keep the `<link>` list in `index.html` and the `PRECACHE` list in `sw.js` in
 sync with this set.
+
+Feature files added 2026-09-11 (linked after `theme-extras.css`, before `mobile-overrides.css`; each is self-contained and owned by one feature):
+- `browser-copilot.css` — ghost cursor / captions / take-over toggle in the Browser panel
+- `home.css` — welcome-screen setup checklist and home brief
+- `artifacts.css` — the live artifact pane
+- `cookbook-feedback.css` — cookbook failure details card

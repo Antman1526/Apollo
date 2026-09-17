@@ -5,7 +5,8 @@
 // ============================================
 
 import uiModule from './ui.js';
-import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
+import { _diagnose, _showDiagnosis, _clearDiagnosis, _redactCrashReportText, _terminalTaskDiagnosis, _recordLaunchFailure, _recordRetryFailure } from './cookbook-diagnosis.js';
+export { _recordLaunchFailure };
 import { registerMenuDismiss } from './escMenuStack.js';
 
 // Human-friendly badge label for a task's internal status. Avoids surfacing
@@ -131,18 +132,6 @@ function _terminalServeDiagnosis(task, outputText) {
       : 'Suggested action: copy the troubleshooting bundle, then edit serve settings or relaunch with a CPU/backend fallback.',
     fixes: [{ label: 'Edit serve', action: (panel) => _openServeEditForTask(task) }],
   };
-}
-
-function _redactCrashReportText(text) {
-  if (!text) return '';
-  return String(text)
-    .replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{12,}/gi, '$1[redacted]')
-    .replace(/\b(hf_[A-Za-z0-9]{16,})\b/g, '[redacted-hf-token]')
-    .replace(/\b(sk-[A-Za-z0-9_-]{16,})\b/g, '[redacted-api-key]')
-    .replace(/\b(xox[baprs]-[A-Za-z0-9-]{16,})\b/g, '[redacted-slack-token]')
-    .replace(/\b(AIza[0-9A-Za-z_-]{20,})\b/g, '[redacted-google-key]')
-    .replace(/\b((?:HF_TOKEN|HUGGING_FACE_HUB_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|BRAVE_API_KEY|TAVILY_API_KEY|SERPER_API_KEY|GOOGLE_API_KEY|API_KEY|TOKEN|PASSWORD)\s*=\s*)(['"]?)[^\s'"\\]+/gi, '$1$2[redacted]')
-    .replace(/\b(--(?:api-key|token|hf-token|password)\s+)([^\s]+)/gi, '$1[redacted]');
 }
 
 function _lastLines(text, count = 160) {
@@ -472,6 +461,7 @@ async function _startQueuedDownload(task) {
         t.id = data.session_id;
         t.status = 'running';
         t._startLaunched = true;
+        if (data.cmd) t.payload = { ...(t.payload || {}), _cmd: data.cmd };
         return true;
       }
       if (t.sessionId === data.session_id) return false;
@@ -646,7 +636,7 @@ export function _addTask(sessionId, name, type, payload) {
   return task;
 }
 
-function _updateTask(sessionId, updates) {
+export function _updateTask(sessionId, updates) {
   const tasks = _loadTasks();
   const task = tasks.find(t => t.sessionId === sessionId);
   if (task) {
@@ -813,7 +803,7 @@ function _registerWaveEl(el) { _waveEls.add(el); _startWaveSync(); }
 
 // ── Notifications ──
 
-function _showCookbookNotif(isError = false) {
+export function _showCookbookNotif(isError = false) {
   const dot = document.getElementById('cookbook-notif-dot');
   if (dot) {
     dot.style.display = '';
@@ -1075,17 +1065,19 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(_payload),
     });
+    const _failRetry = (errText) => { if (replaceSessionId) _recordRetryFailure(replaceSessionId, errText); };
     if (!res.ok) {
       uiModule.showToast('Download failed: HTTP ' + res.status);
-      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+      _failRetry(`HTTP ${res.status}`);
       return;
     }
     const data = await res.json();
     if (!data.ok) {
       uiModule.showToast('Download failed: ' + (data.error || ''));
-      if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+      _failRetry(data.error || 'unknown error');
       return;
     }
+    if (data.cmd) _payload._cmd = data.cmd;
     if (replaceSessionId) {
       const tasks = _loadTasks();
       const task = tasks.find(t => t.sessionId === replaceSessionId);
@@ -1097,6 +1089,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
         task.ts = Date.now();
         task.payload = _payload;
         task._retrying = false;
+        task._launchFailed = false;
         _saveTasks(tasks);
         _soloExpandTaskId = data.session_id;
         _renderRunningTab();
@@ -1111,6 +1104,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
   } catch (e) {
     uiModule.showToast('Download failed: ' + e.message);
     if (replaceSessionId) _updateTask(replaceSessionId, { status: 'crashed', _retrying: false });
+    else _recordLaunchFailure('', name, 'download', payload, `Launch request failed: ${e.message}`);
   }
 }
 
@@ -1472,6 +1466,8 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       const err = data.error || data.detail || res.statusText || 'unknown';
       console.error('[cookbook] /api/model/serve failed', { status: res.status, body: data });
       uiModule.showToast('Failed to start: ' + String(err).slice(0, 200), 9000);
+      const failedPayload = { repo_id: repo, remote_host: _host || undefined, ssh_port: _getPort(_host) || undefined, _cmd: cmd, _fields: fields || undefined, _env: _usedEnv, _envPath: _usedEnvPath, _gpus: _usedGpus };
+      _recordLaunchFailure(data.session_id, shortName, 'serve', failedPayload, `HTTP ${res.status}: ${typeof err === 'string' ? err : JSON.stringify(err)}`);
       return;
     }
 
@@ -1484,6 +1480,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     uiModule.showToast(`Serving ${shortName}...`);
   } catch (e) {
     uiModule.showToast('Failed: ' + e.message);
+    _recordLaunchFailure('', shortName, 'serve', { repo_id: repo, remote_host: _host || undefined, _cmd: cmd, _fields: fields || undefined }, `Launch request failed: ${e.message}`);
   }
 }
 
@@ -1771,7 +1768,7 @@ export function _renderRunningTab() {
       }
       const startNow = el.querySelector('.cookbook-task-start-now');
       if (startNow) startNow.style.display = (task.type === 'download' && task.status === 'queued') ? '' : 'none';
-      const terminalDiag = _terminalServeDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
+      const terminalDiag = _terminalTaskDiagnosis(task, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '', _terminalServeDiagnosis);
       if (terminalDiag) _showDiagnosis(el, terminalDiag, el.querySelector('.cookbook-output-pre')?.textContent || task.output || '');
     }
     if (!task) {
@@ -1808,7 +1805,7 @@ export function _renderRunningTab() {
     const _waveEl = el.querySelector('.cookbook-task-wave');
     if (_waveEl && task.status === 'running') _registerWaveEl(_waveEl);
 
-    const terminalDiag = _terminalServeDiagnosis(task, task.output || '');
+    const terminalDiag = _terminalTaskDiagnosis(task, task.output || '', _terminalServeDiagnosis);
     if (terminalDiag) _showDiagnosis(el, terminalDiag, task.output || '');
 
     const _uptimeEl = el.querySelector('.cookbook-task-uptime');
@@ -3016,6 +3013,7 @@ async function _pollBackgroundStatus() {
       for (const task of localTasks) {
         const live = statusById.get(task.sessionId);
         if (!live) continue;
+        if (task._launchFailed) continue;
         const updates = {};
         const nextStatus = live.status === 'completed'
           ? 'done'

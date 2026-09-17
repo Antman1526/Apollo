@@ -95,7 +95,7 @@ async def test_browser_route_honors_disabled_auth(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_browser_route_maps_browser_input_errors_to_400(monkeypatch):
-    async def fake_execute(_script):
+    async def fake_execute(_script, **_kw):
         raise ValueError("script is required")
 
     monkeypatch.setattr(embedded_browser.session, "execute_script", fake_execute)
@@ -112,7 +112,10 @@ async def test_browser_route_maps_browser_input_errors_to_400(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_browser_route_delegates_navigation(monkeypatch):
-    async def fake_navigate(url):
+    seen = {}
+
+    async def fake_navigate(url, **kw):
+        seen.update(kw)
         return {"ok": True, "url": url, "title": "Local"}
 
     monkeypatch.setattr(embedded_browser.session, "navigate", fake_navigate)
@@ -123,6 +126,23 @@ async def test_browser_route_delegates_navigation(monkeypatch):
     out = await endpoint(NavigateRequest(url="http://localhost:3000"), request=_request())
 
     assert out == {"ok": True, "url": "http://localhost:3000", "title": "Local"}
+    # Panel-initiated navigation bypasses the take-over gate.
+    assert seen == {"_from_user": True}
+
+
+@pytest.mark.asyncio
+async def test_browser_tool_reports_takeover_without_raising(monkeypatch):
+    async def fake_click(_selector, **_kw):
+        raise embedded_browser.BrowserTakenOver(embedded_browser.TAKEN_OVER_MESSAGE)
+
+    monkeypatch.setattr(embedded_browser.session, "click", fake_click)
+
+    out = await tool_implementations.do_browser('{"action":"click","selector":"button"}', owner="alice")
+
+    assert out["exit_code"] == 1
+    assert out["browser"] == {"ok": False, "taken_over": True}
+    assert "hand it back" in out["response"]
+    assert "error" not in out
 
 
 @pytest.mark.asyncio

@@ -474,9 +474,18 @@ export function mdToHtml(src) {
 
     const langClass = lang ? ` class="language-${lang}"` : '';
     const runnableLangs = ['python','py','javascript','js','html','bash','sh','shell','zsh'];
-    const runBtn = (lang && runnableLangs.includes(lang.toLowerCase()))
-      ? `<button type="button" class="run-code" data-code="${escapeHtml(escaped)}" data-lang="${lang}" title="Run code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>`
+    // Live artifact pane (static/js/artifacts.js): html / svg fences — and
+    // xml fences whose content is an <svg> document — get a ▣ Preview button
+    // that renders the block in a sandboxed iframe beside the chat.
+    const _langLc = (lang || '').toLowerCase();
+    const _isArtifact = _langLc === 'html' || _langLc === 'svg'
+      || (_langLc === 'xml' && /^\s*<svg\b/i.test(escaped));
+    const previewBtn = _isArtifact
+      ? `<button type="button" class="preview-artifact" data-code="${escapeHtml(escaped)}" data-lang="${_langLc}" title="Preview" aria-label="Preview in artifact pane"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg></button>`
       : '';
+    const runBtn = previewBtn + ((lang && runnableLangs.includes(lang.toLowerCase()))
+      ? `<button type="button" class="run-code" data-code="${escapeHtml(escaped)}" data-lang="${lang}" title="Run code"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg></button>`
+      : '');
     const editBtn = `<button type="button" class="edit-code" title="Edit"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>`;
     codeBlocks.push(`<pre><code${langClass} data-lang="${lang || ''}">${escapeHtml(escaped)}</code>${runBtn}${editBtn}<button type="button" class="copy-code" data-code="${escapeHtml(escaped)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></pre>`);
 
