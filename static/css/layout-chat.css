@@ -72,30 +72,33 @@
       align-items:center;
       text-align:center;
       pointer-events:none;
+      z-index: 1;
       animation: welcome-enter 0.4s ease-out both;
       transition: top var(--dur-slow) cubic-bezier(0.34, 1.56, 0.64, 1), opacity var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out);
     }
-    /* Live memory constellation (welcomeConstellation.js) — dimmed
-       force-directed graph of memory nodes, drawn behind the welcome
-       content. It's the first child of #welcome-screen and is absolutely
-       positioned + z-index:0, which (per CSS stacking order) would
-       otherwise paint ABOVE its plain, non-positioned static siblings —
-       so every other welcome child is promoted to its own positioned
-       stacking context above it here. */
-    #welcome-screen > *:not(.welcome-constellation) {
-      position: relative;
-      z-index: 1;
-    }
+    /* Live memory constellation (welcomeConstellation.js) — a dimmed,
+       full-bleed force-directed graph of memory nodes behind the welcome
+       screen. #welcome-screen itself shrink-wraps to its text column, so
+       the svg lives as #welcome-screen's PRECEDING sibling directly under
+       #chat-container instead, sized to the whole chat area. It only
+       shows once the welcome screen is the active state, and its
+       z-index:0 sits below #welcome-screen's z-index:1 above. */
     .welcome-constellation {
+      display: none;
       position: absolute;
       inset: 0;
       width: 100%;
       height: 100%;
       pointer-events: none;
       opacity: 0;
-      transition: opacity var(--dur-slow) var(--ease-out);
       z-index: 0;
+      transition: opacity var(--dur-slow) var(--ease-out);
+      /* Keep the center (where the logo/chips/input sit) visually quiet;
+         only the surrounding field of nodes reads as "constellation". */
+      mask-image: radial-gradient(ellipse 55% 55% at 50% 45%, transparent 0, transparent 35%, black 75%);
+      -webkit-mask-image: radial-gradient(ellipse 55% 55% at 50% 45%, transparent 0, transparent 35%, black 75%);
     }
+    #chat-container.welcome-active > .welcome-constellation { display: block; }
     .welcome-constellation--on { opacity: 1; }
     .welcome-constellation .constellation-edge {
       stroke: var(--fg);
@@ -109,7 +112,10 @@
     }
     /* Category fills mirror memoryGraph.js's CATEGORY_COLORS, remapped to
        theme tokens only (memoryGraph.js's contact/task use raw hex, which
-       isn't allowed here — nearest existing tokens substituted instead). */
+       isn't allowed here). No token is spare for either one, so contact
+       is visually merged into project's hue and task into preference's —
+       both are rarer categories, and this only affects the muted
+       background graph, not the Brain modal's own graph tab. */
     .welcome-constellation .constellation-node--fact { fill: var(--accent, var(--red)); }
     .welcome-constellation .constellation-node--identity { fill: var(--hl-function); }
     .welcome-constellation .constellation-node--preference { fill: var(--hl-keyword); }
@@ -121,9 +127,18 @@
       fill-opacity: 1;
       filter: drop-shadow(0 0 6px var(--accent, var(--red)));
     }
-    #welcome-screen.kb-hidden .welcome-constellation { opacity: 0; }
+    /* kb-hidden fades #welcome-screen when the mobile keyboard opens, but
+       the constellation svg now precedes it in the DOM, so a `~`
+       subsequent-sibling selector can't reach it from `.kb-hidden`. :has()
+       reaches back up to the shared parent instead — already used above
+       at .welcome-sub:has(.welcome-setup-action), so no new browser
+       support floor is introduced here. */
+    #chat-container:has(#welcome-screen.kb-hidden) .welcome-constellation { opacity: 0; }
+    /* Same selector (and thus specificity) as the "show" rule above, so
+       this still wins the display:none/block tie on short viewports even
+       while .welcome-active is set. */
     @media (max-height: 520px) {
-      .welcome-constellation { display: none; }
+      #chat-container.welcome-active > .welcome-constellation { display: none; }
     }
     #welcome-screen .welcome-tip,
     #welcome-screen .welcome-sub,
