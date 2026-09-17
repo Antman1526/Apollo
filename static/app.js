@@ -1150,8 +1150,10 @@ function initializeEventListeners() {
     .then(r => r.json())
     .then(d => {
       window._isAdmin = !!d.is_admin;
-      // /api/system/status is admin-only — only admins get the pulse strip.
-      if (d.is_admin) initSystemPulse({ onOpen: () => settingsModule.open('integrations') });
+      // Always start the pulse: the no-login desktop mode reports is_admin=false
+      // yet can read /api/system/status; real non-admins get a 403 and the
+      // strip hides itself (forbidden path in systemPulse.js).
+      initSystemPulse({ onOpen: () => settingsModule.open('integrations') });
       if (d.is_admin && userBarAdmin) userBarAdmin.style.display = '';
       const toolActivity = el('tool-activity-btn');
       if (d.is_admin && toolActivity) toolActivity.style.display = '';
