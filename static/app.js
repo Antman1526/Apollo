@@ -2487,6 +2487,9 @@ function initializeEventListeners() {
       if (_incInd) _incInd.style.display = chk.checked ? '' : 'none';
       // Update active session icon in sidebar
       _syncSessionIncognitoIcon(chk.checked);
+      // Nobody mode hides/reveals the welcome recents+prompts (mountWelcomeState
+      // guards on incognito state) — re-render immediately on toggle.
+      window.dispatchEvent(new CustomEvent('apollo:welcome'));
     });
   }
 

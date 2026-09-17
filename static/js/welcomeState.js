@@ -6,21 +6,19 @@
 // ============================================
 
 const CATEGORY_TEMPLATES = {
-  project: (t) => `Give me a status summary of ${t}`,
-  goal: (t) => `What's the next step toward ${t}?`,
-  preference: (t) => `Draft a short note in my usual style about ${t}`,
-  identity: (t) => `Draft a short note in my usual style about ${t}`,
-  fact: (t) => `Draft a short note in my usual style about ${t}`,
-  task: (t) => `Help me plan: ${t}`,
+  fact: (t) => `What do you remember about ${t}?`,
+  preference: (t) => `Something I'd like, given ${t}`,
+  project: (t) => `Where are we on ${t}?`,
+  goal: (t) => `Next step toward ${t}?`,
 };
 
 const FALLBACK_PROMPTS = [
-  'Summarize what we worked on recently',
-  'Help me plan today',
-  "Explain something I'm curious about",
+  'Pick up where we left off',
+  'Plan my day',
+  'Teach me something new',
 ];
 
-const TEXT_MAX = 60;
+const TEXT_MAX = 40;
 
 function _truncate(text) {
   const s = String(text == null ? '' : text).trim();
@@ -37,30 +35,61 @@ function _escapeHtml(s) {
     .replace(/'/g, '&#39;');
 }
 
-function _sessionSortKey(s) {
-  return s.updated_at || s.last_message_at || s.created_at || '';
+// Mirrors sessions.js renderSessionList()'s sidebar filter (~786) and its
+// "active" sort key (~819-825). _isIncognitoSession there is a private
+// module-level closure (not exported), so the incognito-id half of that
+// filter can't be reused here — the name-based Nobody/Incognito check
+// (also part of the same sidebar rule) approximates it.
+function _isListableSession(s) {
+  if (!s || s.archived) return false;
+  if (s.folder === 'Assistant') return false;
+  const name = (s.name || '').trim();
+  if (name === 'Nobody' || name === 'Incognito') return false;
+  if (s.message_count === 0) return false;
+  return true;
 }
 
-/** Non-archived sessions, most-recently-updated first. */
+function _sessionSortKey(s) {
+  return s.last_message_at || s.updated_at || s.created_at || '';
+}
+
+/** Listable (sidebar-consistent), most-recently-active sessions first. */
 export function pickRecentSessions(sessions, n = 4) {
   return (sessions || [])
-    .filter((s) => s && !s.archived)
+    .filter(_isListableSession)
     .slice()
-    .sort((a, b) => (_sessionSortKey(b) > _sessionSortKey(a) ? 1 : -1))
+    .sort((a, b) => {
+      const ak = _sessionSortKey(a);
+      const bk = _sessionSortKey(b);
+      if (ak === bk) return 0;
+      return ak < bk ? 1 : -1;
+    })
     .slice(0, n);
 }
 
-/** Exactly 3 suggested prompts: one per distinct memory category, then
- * generic fallbacks filling any remaining slots. */
+// When two memories share a category, prefer the pinned one, then the
+// more recent one (routes/memory_routes.py sorts memories by this same
+// pinned-then-timestamp precedence).
+function _betterCandidate(a, b) {
+  const ap = !!a.pinned;
+  const bp = !!b.pinned;
+  if (ap !== bp) return bp ? b : a;
+  return (b.timestamp || 0) > (a.timestamp || 0) ? b : a;
+}
+
+/** Exactly 3 suggested prompts: one per distinct memory category (pinned,
+ * then newest, wins a category), then generic fallbacks filling any
+ * remaining slots. */
 export function buildSuggestedPrompts(memories, n = 3) {
-  const seenCategories = new Set();
-  const prompts = [];
+  const byCategory = new Map();
   for (const m of memories || []) {
-    if (!m || !m.text) continue;
-    const template = CATEGORY_TEMPLATES[m.category];
-    if (!template || seenCategories.has(m.category)) continue;
-    seenCategories.add(m.category);
-    prompts.push(template(_truncate(m.text)));
+    if (!m || !m.text || !CATEGORY_TEMPLATES[m.category]) continue;
+    const existing = byCategory.get(m.category);
+    byCategory.set(m.category, existing ? _betterCandidate(existing, m) : m);
+  }
+  const prompts = [];
+  for (const m of byCategory.values()) {
+    prompts.push(CATEGORY_TEMPLATES[m.category](_truncate(m.text)));
     if (prompts.length >= n) break;
   }
   let i = 0;
@@ -79,27 +108,38 @@ export function renderWelcomeStateHTML({ recent = [], prompts = [] } = {}) {
     const chips = recent
       .map((s) => `<button type="button" class="welcome-chip" data-session-id="${_escapeHtml(s.id)}">${_escapeHtml(s.name || 'Untitled')}</button>`)
       .join('');
-    recentHtml = `<div class="welcome-recent"><span class="welcome-group-label">Recent</span><div class="welcome-chip-row">${chips}</div></div>`;
+    recentHtml = `<div class="welcome-recent" role="group" aria-labelledby="welcome-recent-label"><span class="welcome-group-label" id="welcome-recent-label">Recent</span><div class="welcome-chip-row">${chips}</div></div>`;
   }
   let promptsHtml = '';
   if (prompts.length) {
     const chips = prompts
       .map((p) => `<button type="button" class="welcome-chip welcome-chip--prompt" data-prompt="${_escapeHtml(p)}">${_escapeHtml(p)}</button>`)
       .join('');
-    promptsHtml = `<div class="welcome-prompts"><span class="welcome-group-label">Try</span><div class="welcome-chip-row">${chips}</div></div>`;
+    promptsHtml = `<div class="welcome-prompts" role="group" aria-labelledby="welcome-prompts-label"><span class="welcome-group-label" id="welcome-prompts-label">Try</span><div class="welcome-chip-row">${chips}</div></div>`;
   }
   return { recentHtml, promptsHtml };
 }
 
+// Memories change rarely enough (and every welcome re-render re-fetches on
+// each empty-composer/incognito-toggle event) that a short TTL cache avoids
+// hammering the endpoint without ever showing meaningfully stale data.
+const MEMORY_CACHE_TTL_MS = 60000;
+let _memoryCache = null; // { data, at }
+
 async function _defaultFetchMemories() {
+  const now = Date.now();
+  if (_memoryCache && now - _memoryCache.at < MEMORY_CACHE_TTL_MS) {
+    return _memoryCache.data;
+  }
   try {
     const res = await fetch(`${window.location.origin}/api/memory`);
-    if (!res.ok) return [];
+    if (!res.ok) return _memoryCache ? _memoryCache.data : [];
     const data = await res.json();
-    if (Array.isArray(data)) return data;
-    return Array.isArray(data && data.memory) ? data.memory : [];
+    const list = Array.isArray(data) ? data : (Array.isArray(data && data.memory) ? data.memory : []);
+    _memoryCache = { data: list, at: now };
+    return list;
   } catch (_) {
-    return [];
+    return _memoryCache ? _memoryCache.data : [];
   }
 }
 
@@ -118,8 +158,16 @@ function _wireOnce(container, set, selector, datasetKey, handler) {
   });
 }
 
+function _isIncognitoActive() {
+  const chk = document.getElementById('incognito-toggle');
+  if (chk) return !!chk.checked;
+  const btn = document.getElementById('incognito-btn');
+  return !!(btn && btn.classList.contains('active'));
+}
+
 /** Render recent sessions + suggested prompts into #welcome-recent and
- * #welcome-prompts and wire click delegation. */
+ * #welcome-prompts and wire click delegation. Nobody/incognito mode shows
+ * neither group — no session history or memory should surface there. */
 export async function mountWelcomeState({
   getSessions,
   fetchMemories = _defaultFetchMemories,
@@ -129,6 +177,12 @@ export async function mountWelcomeState({
   const recentEl = document.getElementById('welcome-recent');
   const promptsEl = document.getElementById('welcome-prompts');
   if (!recentEl && !promptsEl) return;
+
+  if (_isIncognitoActive()) {
+    if (recentEl) recentEl.innerHTML = '';
+    if (promptsEl) promptsEl.innerHTML = '';
+    return;
+  }
 
   const sessions = typeof getSessions === 'function' ? getSessions() || [] : [];
   const recent = pickRecentSessions(sessions);
@@ -153,12 +207,15 @@ export async function mountWelcomeState({
   }
 }
 
+// kb-hidden is a transient opacity fade (mobile keyboard open) — the welcome
+// screen is still logically "showing", so it must not skip the mount; the
+// CSS pointer-events:none it carries already keeps faded chips unclickable.
 function _isWelcomeVisible() {
   const ws = document.getElementById('welcome-screen');
   if (!ws) return false;
-  if (ws.classList.contains('hidden') || ws.classList.contains('kb-hidden')) return false;
+  if (ws.classList.contains('hidden')) return false;
   const style = window.getComputedStyle ? window.getComputedStyle(ws) : null;
-  if (style && (style.display === 'none' || style.visibility === 'hidden')) return false;
+  if (style && style.display === 'none') return false;
   return true;
 }
 

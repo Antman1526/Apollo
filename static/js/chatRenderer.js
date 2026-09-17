@@ -1021,8 +1021,8 @@ export function hideWelcomeScreen() {
 export function showWelcomeScreen() {
   const ws = document.getElementById('welcome-screen');
   const cc = document.getElementById('chat-container');
-  if (ws) ws.classList.remove('hidden');
-  if (cc) { cc.classList.add('welcome-active'); window.dispatchEvent(new CustomEvent('apollo:welcome')); }
+  if (ws) ws.classList.remove('hidden'); window.dispatchEvent(new CustomEvent('apollo:welcome'));
+  if (cc) cc.classList.add('welcome-active');
   // Entering the New Chat / welcome state: discard any stale draft left in the
   // composer from the previous session so the input starts empty (issue #1343).
   // Switching between existing sessions loads them directly and does NOT call
