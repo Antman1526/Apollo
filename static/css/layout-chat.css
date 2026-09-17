@@ -58,7 +58,7 @@
     /* Sortable Cookbook column headers had no visual cue, so users couldn't tell
        a header was clickable (the Newest sort on the Model column was invisible).
        Show a pointer + hover highlight, and underline the active sort column. */
-    .hwfit-header .hwfit-sortable { cursor: pointer; transition: color .12s; }
+    .hwfit-header .hwfit-sortable { cursor: pointer; transition: color var(--dur-fast); }
     .hwfit-header .hwfit-sortable:hover { color: var(--fg); text-decoration: underline dotted; }
     .hwfit-header .hwfit-sort-active { color: var(--fg); font-weight: 600; }
     /* Welcome screen — centered in available space above input bar */
@@ -763,7 +763,7 @@
     .send-btn[data-mode="send"] svg { animation: none !important; }
     /* Spin out: + rotates away, then arrow spins in via anim-spin */
     .send-btn.anim-spin-swap svg { animation: btn-spin-out 0.15s ease-in forwards; }
-    .send-btn.anim-spin-swap .send-btn-label { opacity: 0; transition: opacity 0.1s; }
+    .send-btn.anim-spin-swap .send-btn-label { opacity: 0; transition: opacity var(--dur-fast); }
     @keyframes btn-spin-out {
       0%   { transform: rotate(0deg) scale(1); opacity: 1; }
       100% { transform: rotate(90deg) scale(0); opacity: 0; }
@@ -1463,7 +1463,7 @@
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius: var(--radius-md);
       font-size:12px; height:24px; padding:0 8px; cursor:pointer;
-      opacity:0; transition:.15s;
+      opacity:0; transition:var(--dur);
     }
     .msg:hover .copy-btn { opacity:1; }
     .role-timestamp {
@@ -1892,7 +1892,7 @@
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius: var(--radius-md);
       width:28px; height:28px; padding:0; cursor:pointer;
-      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      opacity:0; transition: opacity var(--dur), color var(--dur), border-color var(--dur);
       display:flex; align-items:center; justify-content:center;
     }
     pre .copy-code { top:6px; }
@@ -1921,7 +1921,7 @@
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius: var(--radius-md);
       width:28px; height:28px; padding:0; cursor:pointer;
-      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      opacity:0; transition: opacity var(--dur), color var(--dur), border-color var(--dur);
       display:flex; align-items:center; justify-content:center;
     }
     pre .edit-code.bottom { top:auto; bottom:6px; }
@@ -1941,7 +1941,7 @@
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius: var(--radius-md);
       width:28px; height:28px; padding:0; cursor:pointer;
-      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      opacity:0; transition: opacity var(--dur), color var(--dur), border-color var(--dur);
       display:flex; align-items:center; justify-content:center;
     }
     pre .use-code.bottom { top:auto; bottom:6px; }
@@ -1998,7 +1998,7 @@
       background:var(--bg); color:var(--fg);
       border:1px solid var(--border); border-radius: var(--radius-md);
       width:28px; height:28px; padding:0; cursor:pointer;
-      opacity:0; transition: opacity .15s, color .15s, border-color .15s;
+      opacity:0; transition: opacity var(--dur), color var(--dur), border-color var(--dur);
       display:flex; align-items:center; justify-content:center;
     }
     pre .run-code.bottom { top:auto; bottom:6px; }

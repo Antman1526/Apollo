@@ -894,7 +894,7 @@
       from { opacity: 0; transform: translateY(20px) scale(0.85); }
       to   { opacity: 1; transform: translateY(0)   scale(1); }
     }
-    .rail-new-chat svg { transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1); }
+    .rail-new-chat svg { transition: transform var(--dur-slow) cubic-bezier(0.34, 1.56, 0.64, 1); }
     .rail-new-chat:hover svg { transform: rotate(90deg); }
     /* A "New" label slides out from the right of the + as it spins, so users
        discover what the icon does without needing the tooltip. */

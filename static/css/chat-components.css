@@ -41,7 +41,7 @@ a.chat-link:hover {
   .session-menu-btn { display: none !important; }
   .item-drag-handle { display: none !important; }
 }
-.session-menu-btn svg { transition: transform 0.2s ease; }
+.session-menu-btn svg { transition: transform var(--dur) var(--ease-out); }
 
 /* First-time swipe hint */
 .swipe-hint {
@@ -85,7 +85,7 @@ a.chat-link:hover {
 .provider-logo:hover { opacity: 1 !important; transform: scale(1.2); }
 
 /* Hide session menu button until hover — use width:0 so it doesn't steal space from text */
-.list-item .hamburger { opacity: 0; width: 0; min-width: 0; overflow: hidden; padding: 0 !important; transition: opacity 0.15s, width 0.15s, padding 0.15s; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
+.list-item .hamburger { opacity: 0; width: 0; min-width: 0; overflow: hidden; padding: 0 !important; transition: opacity var(--dur), width var(--dur), padding var(--dur); flex-shrink: 0; display: flex; align-items: center; justify-content: center; }
 .list-item:hover .hamburger { opacity: 1; width: 24px; min-width: 24px; padding: 0 4px !important; }
 @media (max-width: 768px) {
   .list-item .hamburger { opacity: 0.5; width: 28px; min-width: 28px; padding: 0 4px !important; }

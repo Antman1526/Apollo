@@ -340,7 +340,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-save-row button {
       padding: 6px 12px; border: 1px solid var(--red); border-radius: var(--radius-md);
       background: transparent; color: var(--red); cursor: pointer;
-      font-size: 12px; font-family: inherit; white-space: nowrap; transition: all 0.15s;
+      font-size: 12px; font-family: inherit; white-space: nowrap; transition: all var(--dur);
     }
     .theme-save-row button:hover { background: color-mix(in srgb, var(--red) 11%, transparent); }
     .theme-save-error {
@@ -351,7 +351,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-io-btn {
       flex: 1; padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--radius-md);
       background: transparent; color: var(--fg); cursor: pointer;
-      font-size: 12px; opacity: 0.7; transition: all 0.15s; font-family: inherit;
+      font-size: 12px; opacity: 0.7; transition: all var(--dur); font-family: inherit;
     }
     .theme-io-btn:hover { opacity: 1; border-color: var(--fg); background: color-mix(in srgb, var(--fg) 5%, transparent); }
     .theme-import-area {
@@ -408,7 +408,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .harmony-generate-btn {
       padding: 5px 14px; border: 1px solid var(--red); border-radius: var(--radius-md);
       background: transparent; color: var(--red); cursor: pointer;
-      font-size: 12px; white-space: nowrap; transition: all 0.15s;
+      font-size: 12px; white-space: nowrap; transition: all var(--dur);
       font-family: inherit; width: 100%;
     }
     .harmony-generate-btn:hover { background: color-mix(in srgb, var(--red) 11%, transparent); }
@@ -421,7 +421,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     #theme-reset-btn {
       margin-top: 6px; width: 100%; padding: 6px; border: 1px solid var(--border);
       border-radius: var(--radius-md); background: var(--bg); color: var(--fg); cursor: pointer;
-      font-size: 12px; font-family: inherit; opacity: 0.7; transition: opacity 0.15s;
+      font-size: 12px; font-family: inherit; opacity: 0.7; transition: opacity var(--dur);
     }
     #theme-reset-btn:hover { opacity: 1; }
     .theme-adv-toggle {
@@ -434,7 +434,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     }
     .theme-adv-toggle:hover { opacity: 1; background: color-mix(in srgb, var(--fg) 4%, transparent); }
     .theme-adv-toggle .theme-adv-arrow {
-      display: inline-block; transition: transform 0.2s; font-size: 10px;
+      display: inline-block; transition: transform var(--dur); font-size: 10px;
       margin-right: 4px;
     }
     .theme-adv-toggle.open .theme-adv-arrow { transform: rotate(90deg); }
@@ -448,7 +448,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .theme-adv-clear-btn {
       margin-top: 6px; width: 100%; padding: 5px; border: 1px solid var(--border);
       border-radius: var(--radius-md); background: transparent; color: var(--fg); opacity: 0.5;
-      cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity 0.15s;
+      cursor: pointer; font-size: 12px; font-family: inherit; transition: opacity var(--dur);
     }
     .theme-adv-clear-btn:hover { opacity: 1; }
 
@@ -735,7 +735,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .cmp-header-action-btn {
       background: none; border: 1px solid var(--border); color: var(--fg);
       cursor: pointer; padding: 3px 10px; font-size: 11px; font-weight: 600;
-      opacity: 0.7; transition: all 0.15s; line-height: 1; border-radius: var(--radius-sm);
+      opacity: 0.7; transition: all var(--dur); line-height: 1; border-radius: var(--radius-sm);
       display: inline-flex; align-items: center; font-family: inherit;
     }
     .cmp-form-control {
@@ -921,7 +921,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-probe-row {
       display: flex; align-items: center; gap: 6px; padding: 6px 10px;
       border-radius: var(--radius-md); background: color-mix(in srgb, var(--fg) 4%, transparent);
-      font-size: 12px; transition: background 0.2s; overflow: hidden;
+      font-size: 12px; transition: background var(--dur); overflow: hidden;
     }
     .compare-probe-row.fail {
       background: color-mix(in srgb, var(--color-error, #f44) 8%, transparent);
@@ -939,7 +939,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .compare-probe-action-btn {
       padding: 2px 8px; background: transparent; color: var(--fg); border: 1px solid var(--border);
       border-radius: var(--radius-sm); cursor: pointer; font-size: 10px; font-family: inherit;
-      opacity: 0.7; transition: opacity 0.15s, border-color 0.15s; white-space: nowrap; flex-shrink: 0;
+      opacity: 0.7; transition: opacity var(--dur), border-color var(--dur); white-space: nowrap; flex-shrink: 0;
     }
     .compare-probe-action-btn:hover { opacity: 1; border-color: var(--accent); }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -1074,7 +1074,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
     .pane-action-btn {
       background: none; border: none; color: var(--fg); cursor: pointer;
       opacity: 0.3; padding: 2px; border-radius: var(--radius-sm);
-      display: flex; align-items: center; transition: all 0.15s;
+      display: flex; align-items: center; transition: all var(--dur);
     }
     .pane-action-btn:hover { opacity: 0.8; background: color-mix(in srgb, var(--fg) 6%, transparent); }
     /* Pane title as clickable model-swap button */
@@ -1109,7 +1109,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: block; width: 100%;
       padding: 6px 10px; font-size: 0.7em;
       text-align: left; background: none; border: none; border-radius: var(--radius-sm);
-      color: var(--fg); cursor: pointer; transition: background 0.1s;
+      color: var(--fg); cursor: pointer; transition: background var(--dur-fast);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .pane-model-item:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); }
@@ -1201,7 +1201,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       width: 56px; height: auto; flex: 1 1 0;
       padding: 5px 4px 4px; border: 1px solid var(--border); border-radius: var(--radius-md);
-      cursor: pointer; user-select: none; transition: all 0.15s;
+      cursor: pointer; user-select: none; transition: all var(--dur);
       background: none; color: var(--fg); opacity: 0.35;
       flex-shrink: 0; gap: 0;
       font-family: inherit;
@@ -1305,7 +1305,7 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       display: flex; flex-direction: column; align-items: center; justify-content: center;
       width: 56px; height: auto; flex: 1 1 0;
       padding: 5px 4px 4px; border: 1px solid var(--border); border-radius: var(--radius-md);
-      cursor: pointer; user-select: none; transition: all 0.15s;
+      cursor: pointer; user-select: none; transition: all var(--dur);
       background: none; color: var(--fg); opacity: 0.35;
       flex-shrink: 0; gap: 0;
     }

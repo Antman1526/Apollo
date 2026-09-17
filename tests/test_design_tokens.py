@@ -49,6 +49,15 @@ def test_global_reduced_motion_guard():
 
 
 def test_motion_tokens_adopted():
+    raw_duration = re.compile(r"(?<![\d.])0?\.(1|12|15|2|25|3|35|4)s\b")
     for name in ("layout-chat.css", "layout-sidebar.css", "overlays.css", "chat-components.css"):
         css = (CSS_DIR / name).read_text()
         assert "var(--dur" in css and "var(--ease-out)" in css, name
+
+        offenders = []
+        for i, line in enumerate(css.splitlines(), 1):
+            stripped = line.strip()
+            if stripped.startswith("transition:") or stripped.startswith("transition-duration:"):
+                if raw_duration.search(stripped):
+                    offenders.append(f"{name}:{i}")
+        assert not offenders, offenders
