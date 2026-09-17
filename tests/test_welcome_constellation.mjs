@@ -53,6 +53,10 @@ test('renderConstellationSVG marks related nodes and never emits a per-node titl
   // label still can't inject raw markup anywhere in the output.
   assert.doesNotMatch(svg, /<title/);
   assert.doesNotMatch(svg, /<b>x<\/b>/);
+  // data-id is the one remaining user-data attribute: a hostile id stays inert.
+  const hostile = renderConstellationSVG({ nodes: [{ id: 'a" onclick="x()', x: 1, y: 1 }], edges: [] }, new Set());
+  assert.doesNotMatch(hostile, /onclick="x/);
+  assert.match(hostile, /data-id="a&quot; onclick=&quot;x\(\)"/);
   assert.match(svg, /constellation-node--related/);
   assert.match(svg, /constellation-edge/);
   assert.equal(renderConstellationSVG({ nodes: [], edges: [] }, new Set()), '');
@@ -80,7 +84,8 @@ function _classList(initial = []) {
   };
 }
 
-test('mountConstellation patches only r/class on input, without reassigning innerHTML', async () => {
+test('mountConstellation patches only r/class on input, without reassigning innerHTML', async (t) => {
+  t.after(() => { delete global.window; delete global.localStorage; delete global.document; });
   const circle = { dataset: { id: 'a' }, classList: _classList(), setAttribute(k, v) { if (k === 'r') this.r = v; } };
   let html = '';
   let writes = 0;

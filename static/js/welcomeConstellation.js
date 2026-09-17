@@ -191,7 +191,7 @@ export function mountConstellation({
     const svg = document.getElementById(svgId);
     if (!svg) return;
     if (_isWelcomeHidden()) return;
-    if (!_constellationEnabled()) return;
+    if (!_constellationEnabled()) { _clear(svg); return; }  // drop memory ids from the DOM
     const computed = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(svg) : null;
     if (computed && computed.display === 'none') return;
     if (_isIncognitoActive()) { _clear(svg); return; }
