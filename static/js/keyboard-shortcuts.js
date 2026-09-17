@@ -67,7 +67,6 @@ const _toolBtns = {
   open_notes:    'tool-notes-btn',
   open_tasks:    'tool-tasks-btn',
   open_theme:    'tool-theme-btn',
-  open_browser:  'tool-browser-btn',
 };
 
 const _windowVisible = (id) => {

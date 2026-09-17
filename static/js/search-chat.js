@@ -4,7 +4,8 @@
 
 import uiModule from './ui.js';
 import sessionModule from './sessions.js';
-import { buildPaletteItems } from './paletteItems.js';
+import { isListableSession } from './welcomeState.js';
+import { buildPaletteGroups, relativeTime } from './paletteItems.js';
 
 let API_BASE = '';
 let deps = {};
@@ -13,6 +14,7 @@ let selectedIndex = -1;
 let rows = [];             // flat, selectable rows in render order
 let messageResults = [];   // raw /api/search hits for the current query
 let messageQuery = '';     // query the message hits belong to
+let prevFocus = null;      // element focused before the palette opened
 
 const MESSAGE_MIN_CHARS = 3;
 
@@ -34,8 +36,8 @@ const PALETTE_ACTIONS = [
   { id: 'open_compare', label: 'Open Compare' },
   { id: 'open_theme', label: 'Open Theme' },
   { id: 'open_browser', label: 'Open Browser' },
-  { id: 'council', label: 'Ask the Council', dispatch: true },
-  { id: 'briefing', label: "Today's briefing", dispatch: true },
+  { id: 'council', label: 'Ask the Council', hint: 'Coming soon', dispatch: true },
+  { id: 'briefing', label: "Today's briefing", hint: 'Coming soon', dispatch: true },
 ];
 
 function el(id) { return document.getElementById(id); }
@@ -44,21 +46,12 @@ var escapeHtml = uiModule.esc;
 
 // ── Palette context ──────────────────────────────────────────────────
 
-// Mirrors welcomeState._isListableSession so the palette lists exactly what
-// the sidebar does (that helper is not exported).
-function _isListableSession(s) {
-  if (!s || s.archived) return false;
-  if (s.folder === 'Assistant') return false;
-  const name = (s.name || '').trim();
-  if (name === 'Nobody' || name === 'Incognito') return false;
-  return true;
-}
-
 function collectSessions() {
   const get = deps.getSessions || (sessionModule && sessionModule.getSessions);
   let list = [];
   try { list = (typeof get === 'function' ? get() : []) || []; } catch (_) { list = []; }
-  return list.filter(_isListableSession);
+  // Same rule as the sidebar and the welcome screen — empty chats included.
+  return list.filter(isListableSession);
 }
 
 function collectModels() {
@@ -102,27 +95,17 @@ function highlightMatch(text, query) {
   return escaped.replace(regex, '<mark class="search-highlight">$1</mark>');
 }
 
-function formatTimestamp(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = now - d;
-  if (diff < 86400000) {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  if (diff < 604800000) {
-    return d.toLocaleDateString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+function groupHeaderHTML(label) {
+  return `<div class="palette-group search-group-header" role="presentation">${escapeHtml(label)}</div>`;
 }
 
-function groupHeaderHTML(label) {
-  return `<div class="palette-group search-group-header">${escapeHtml(label)}</div>`;
+function moreRowHTML(count) {
+  return `<div class="palette-more" role="presentation">+${Number(count)} more</div>`;
 }
 
 function paletteRowHTML(row, index) {
   const hint = row.hint ? `<div class="palette-row-hint">${escapeHtml(row.hint)}</div>` : '';
-  return `<div class="palette-row" data-row-index="${index}">
+  return `<div class="palette-row" role="option" id="palette-row-${index}" aria-selected="false" data-row-index="${index}">
     <div class="palette-row-label">${escapeHtml(row.label)}</div>
     ${hint}
   </div>`;
@@ -130,10 +113,10 @@ function paletteRowHTML(row, index) {
 
 function messageRowHTML(item, index, query) {
   const roleLabel = item.role === 'user' ? 'You' : 'AI';
-  return `<div class="palette-row search-result-item" data-row-index="${index}">
+  return `<div class="palette-row search-result-item" role="option" id="palette-row-${index}" aria-selected="false" data-row-index="${index}">
     <div class="search-result-role">${roleLabel}</div>
     <div class="search-result-snippet">${highlightMatch(item.content_snippet, query)}</div>
-    <div class="search-result-time">${formatTimestamp(item.timestamp)}</div>
+    <div class="search-result-time">${escapeHtml(relativeTime(item.timestamp))}</div>
   </div>`;
 }
 
@@ -141,18 +124,19 @@ function render(query) {
   const container = el('search-results');
   if (!container) return;
 
-  const items = buildPaletteItems(query, paletteContext());
+  // Keep the highlight on whatever row the user was on, if it survived.
+  const prev = selectedIndex >= 0 ? rows[selectedIndex] : null;
   rows = [];
   let html = '';
-  let group = null;
 
-  for (const item of items) {
-    if (item.group !== group) {
-      group = item.group;
-      html += groupHeaderHTML(group);
+  for (const { group, items, total } of buildPaletteGroups(query, paletteContext())) {
+    if (!items.length) continue;
+    html += groupHeaderHTML(group);
+    for (const item of items) {
+      html += paletteRowHTML(item, rows.length);
+      rows.push(item);
     }
-    html += paletteRowHTML(item, rows.length);
-    rows.push(item);
+    if (query && total > items.length) html += moreRowHTML(total - items.length);
   }
 
   if (query.length >= MESSAGE_MIN_CHARS && messageQuery === query && messageResults.length) {
@@ -163,20 +147,28 @@ function render(query) {
     }
   }
 
-  if (!rows.length) {
-    html = query ? '<div class="search-empty">No results found</div>' : '';
-  }
+  if (!rows.length) html = query ? '<div class="search-empty">No results found</div>' : '';
 
   container.innerHTML = html;
-  selectedIndex = rows.length ? 0 : -1;
+  const kept = prev ? rows.findIndex(r => r.kind === prev.kind && r.id === prev.id) : -1;
+  selectedIndex = rows.length ? (kept >= 0 ? kept : 0) : -1;
   updateSelection();
 }
 
 function updateSelection() {
   const container = el('search-results');
+  const input = el('search-input');
   if (!container) return;
   const nodes = container.querySelectorAll('.palette-row');
-  nodes.forEach((node, i) => node.classList.toggle('active', i === selectedIndex));
+  nodes.forEach((node, i) => {
+    const on = i === selectedIndex;
+    node.classList.toggle('active', on);
+    node.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+  if (input) {
+    if (selectedIndex >= 0) input.setAttribute('aria-activedescendant', 'palette-row-' + selectedIndex);
+    else input.removeAttribute('aria-activedescendant');
+  }
   if (selectedIndex >= 0 && nodes[selectedIndex]) {
     nodes[selectedIndex].scrollIntoView({ block: 'nearest' });
   }
@@ -188,6 +180,26 @@ function navigateToSession(sessionId) {
   closeSearch();
   const select = deps.selectSession || (sessionModule && sessionModule.selectSession);
   if (typeof select === 'function') select(sessionId);
+}
+
+function runAction(action) {
+  if (action.dispatch) {
+    const ev = new CustomEvent('apollo:palette-action', { detail: { id: action.id }, cancelable: true });
+    window.dispatchEvent(ev);
+    // Nothing claimed it yet — say so rather than looking broken.
+    if (!ev.defaultPrevented && uiModule && uiModule.showToast) uiModule.showToast('Not available yet');
+    return;
+  }
+  if (action.id === 'settings' && typeof deps.openSettings === 'function') {
+    deps.openSettings();                       // open Settings, not toggle-window
+    return;
+  }
+  if (action.id === 'open_browser') {
+    const btn = el('tool-browser-btn');        // not a keybind action
+    if (btn) btn.click();
+    return;
+  }
+  if (typeof deps.runAction === 'function') deps.runAction(action.id);
 }
 
 function activateRow(row) {
@@ -205,11 +217,7 @@ function activateRow(row) {
   if (row.kind === 'action') {
     const action = PALETTE_ACTIONS.find(a => a.id === row.id);
     closeSearch();
-    if (action && action.dispatch) {
-      window.dispatchEvent(new CustomEvent('apollo:palette-action', { detail: { id: row.id } }));
-      return;
-    }
-    if (typeof deps.runAction === 'function') deps.runAction(row.id);
+    if (action) runAction(action);
   }
 }
 
@@ -218,6 +226,7 @@ function activateRow(row) {
 export function openSearch() {
   const overlay = el('search-overlay');
   if (!overlay) return;
+  prevFocus = document.activeElement;
   overlay.classList.remove('hidden');
   const input = el('search-input');
   if (input) {
@@ -229,6 +238,18 @@ export function openSearch() {
   messageResults = [];
   messageQuery = '';
   render('');
+
+  // Models are only cached once the sidebar has listed them. Warm them up
+  // without blocking the palette, then fill the group in when they land.
+  if (typeof deps.refreshModels === 'function' && collectModels().length === 0) {
+    Promise.resolve()
+      .then(() => deps.refreshModels())
+      .then(() => {
+        const box = el('search-input');
+        if (isOpen() && box) render(box.value.trim());
+      })
+      .catch(() => {});
+  }
 }
 
 export function closeSearch() {
@@ -237,11 +258,16 @@ export function closeSearch() {
   overlay.classList.add('hidden');
   const results = el('search-results');
   if (results) results.innerHTML = '';
+  const input = el('search-input');
+  if (input) input.removeAttribute('aria-activedescendant');
   if (debounceTimer) { clearTimeout(debounceTimer); debounceTimer = null; }
   selectedIndex = -1;
   rows = [];
   messageResults = [];
   messageQuery = '';
+  const restore = prevFocus;
+  prevFocus = null;
+  if (restore && restore.focus) { try { restore.focus(); } catch (_) {} }
 }
 
 export function isOpen() {
@@ -303,8 +329,9 @@ function handleInput(e) {
 /**
  * @param {string} apiBase
  * @param {Object} [injected] - {getSessions, selectSession, getCachedItems,
- *   isChatCapable, createDirectChat, runAction}. Optional: without it the
- *   palette still lists sessions and message hits via the sessions module.
+ *   isChatCapable, createDirectChat, refreshModels, runAction, openSettings}.
+ *   Optional: without it the palette still lists sessions and message hits
+ *   via the sessions module.
  */
 export function init(apiBase, injected) {
   API_BASE = apiBase || '';
@@ -335,11 +362,18 @@ export function init(apiBase, injected) {
     });
   }
 
-  // Close on overlay click (not popup click)
   const overlay = el('search-overlay');
   if (overlay) {
+    // Close on overlay click (not popup click)
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) closeSearch();
+    });
+    // Trap Tab: the input is the dialog's only focusable stop.
+    overlay.addEventListener('keydown', (e) => {
+      if (e.key !== 'Tab' || !isOpen()) return;
+      e.preventDefault();
+      const box = el('search-input');
+      if (box) box.focus();
     });
   }
 }

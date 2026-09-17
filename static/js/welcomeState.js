@@ -40,7 +40,7 @@ function _escapeHtml(s) {
 // module-level closure (not exported), so the incognito-id half of that
 // filter can't be reused here — the name-based Nobody/Incognito check
 // (also part of the same sidebar rule) approximates it.
-function _isListableSession(s) {
+export function isListableSession(s) {
   if (!s || s.archived) return false;
   if (s.folder === 'Assistant') return false;
   const name = (s.name || '').trim();
@@ -49,18 +49,19 @@ function _isListableSession(s) {
   return true;
 }
 
-function _sessionSortKey(s) {
+/** Sort key for "most recently active" ordering. */
+export function sessionSortKey(s) {
   return s.last_message_at || s.updated_at || s.created_at || '';
 }
 
 /** Listable (sidebar-consistent), most-recently-active sessions first. */
 export function pickRecentSessions(sessions, n = 4) {
   return (sessions || [])
-    .filter(_isListableSession)
+    .filter(isListableSession)
     .slice()
     .sort((a, b) => {
-      const ak = _sessionSortKey(a);
-      const bk = _sessionSortKey(b);
+      const ak = sessionSortKey(a);
+      const bk = sessionSortKey(b);
       if (ak === bk) return 0;
       return ak < bk ? 1 : -1;
     })

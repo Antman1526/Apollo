@@ -2711,11 +2711,12 @@
   </div>
 
   <!-- Search overlay (Ctrl+K command palette) -->
-  <div class="search-overlay hidden" id="search-overlay">
+  <div class="search-overlay hidden" id="search-overlay" role="dialog" aria-modal="true" aria-label="Command palette">
     <div class="search-popup">
-      <input type="text" id="search-input" placeholder="Search chats, jump to a tool, switch model…" autocomplete="off" />
-      <div class="search-results" id="search-results"></div>
-      <div class="palette-hint"><kbd>↑↓</kbd> navigate <kbd>↵</kbd> open <kbd>esc</kbd> close</div>
+      <input type="text" id="search-input" placeholder="Search chats, jump to a tool, switch model…" autocomplete="off"
+             role="combobox" aria-expanded="true" aria-autocomplete="list" aria-haspopup="listbox" aria-controls="search-results" />
+      <div class="search-results" id="search-results" role="listbox" aria-label="Results"></div>
+      <div class="palette-hint"><kbd aria-hidden="true">↑↓</kbd> navigate <kbd aria-hidden="true">↵</kbd> open <kbd aria-hidden="true">esc</kbd> close</div>
     </div>
   </div>
 

@@ -3586,6 +3586,7 @@ function startApolloApp() {
       getSessions: sessionModule.getSessions, selectSession: sessionModule.selectSession,
       createDirectChat: sessionModule.createDirectChat, runAction: runShortcutAction,
       getCachedItems: modelsModule.getCachedItems, isChatCapable: modelsModule.isChatCapable,
+      refreshModels: modelsModule.refreshModels, openSettings: () => settingsModule.open(),
     });
   }
 

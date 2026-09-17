@@ -176,10 +176,6 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       cursor: pointer;
       transition: background var(--dur-fast);
     }
-    .search-result-item:hover,
-    .search-result-item.selected {
-      background: color-mix(in srgb, var(--red) 10%, transparent);
-    }
     .search-result-role {
       font-size: 10px;
       font-weight: 600;
@@ -263,6 +259,11 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       font-size: 10px;
       color: var(--color-muted);
       white-space: nowrap;
+    }
+    .palette-more {
+      padding: var(--space-1) var(--space-3) var(--space-2);
+      font-size: 10px;
+      color: var(--color-muted);
     }
     .palette-hint {
       display: flex;
@@ -1396,6 +1397,9 @@ pre { background: var(--code-bg, var(--hl-bg, #282c34)) !important; }
       background: rgba(91, 141, 239, 0.1);
     }
     @media (max-width: 520px) {
+      /* Command palette: sit higher and stay inside the visual viewport. */
+      .search-overlay { padding-top: 6vh; }
+      .search-popup { max-height: 70dvh; }
       .compare-toggle-label { display: none; }
       /* Tab text labels are hidden on mobile, so spell out the active type next
          to "Type:" with its icon. */

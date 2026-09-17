@@ -1,18 +1,12 @@
-// Command-palette item model — pure helpers, no DOM, no imports.
+// Command-palette item model — pure helpers, no DOM.
 // Consumed by search-chat.js (the Ctrl+K palette) and unit-tested directly.
+// Session listability/ordering is owned by welcomeState.js so the palette,
+// the welcome screen and the sidebar agree on what counts as a chat.
+
+import { isListableSession, sessionSortKey } from './welcomeState.js';
 
 export const PALETTE_GROUPS = ['Actions', 'Sessions', 'Models'];
 export const GROUP_CAP = 8;
-
-/** Minimal HTML escaper so callers can build rows without pulling in ui.js. */
-export function escapeHtml(value) {
-  return String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
 
 // Characters that start a new "word" for the word-start bonus below.
 const WORD_BREAK = /[\s\-_/.:@,()[\]]/;
@@ -47,8 +41,13 @@ export function fuzzyScore(query, text) {
   return score;
 }
 
-function sessionSortKey(s) {
-  return s.last_message_at || s.updated_at || s.created_at || '';
+/**
+ * Scattered subsequence hits ("brl" inside "borrow checker") are noise, not
+ * matches. Require roughly one word-start or contiguous hit per typed
+ * character before a row is allowed to show up at all.
+ */
+export function scoreFloor(query) {
+  return String(query ?? '').length * 4;
 }
 
 /** "3m ago" / "5h ago" / "Yesterday" / "Mar 4" — empty when there is no date. */
@@ -81,7 +80,7 @@ function actionItems(actions) {
 
 function sessionItems(sessions) {
   return (sessions || [])
-    .filter(s => s && s.id)
+    .filter(isListableSession)
     .slice()
     .sort((a, b) => {
       const ak = sessionSortKey(a);
@@ -109,38 +108,49 @@ function modelItems(models) {
 }
 
 function rankGroup(list, query) {
-  if (!query) return list.slice(0, GROUP_CAP).map(item => ({ ...item, score: 1 }));
+  if (!query) return { items: list.slice(0, GROUP_CAP).map(i => ({ ...i, score: 1 })), total: list.length };
+  const floor = scoreFloor(query);
   const scored = [];
   for (const item of list) {
-    const direct = fuzzyScore(query, item.label);
-    // Hints (endpoint name, relative time) match at half weight so a model's
-    // provider is searchable without letting it outrank a name match.
-    const viaHint = item.hint ? fuzzyScore(query, item.label + ' ' + item.hint) / 2 : 0;
-    const score = Math.max(direct, viaHint);
-    if (score > 0) scored.push({ ...item, score });
+    // Only a model's hint (its endpoint) is searchable — "2h ago" on a chat
+    // row is not something anyone types, and matching it invents hits.
+    const viaHint = (item.kind === 'model' && item.hint) ? fuzzyScore(query, item.hint) / 2 : 0;
+    const score = Math.max(fuzzyScore(query, item.label), viaHint);
+    if (score >= floor && score > 0) scored.push({ ...item, score });
   }
   scored.sort((a, b) => b.score - a.score);
-  return scored.slice(0, GROUP_CAP);
+  return { items: scored.slice(0, GROUP_CAP), total: scored.length };
 }
 
 /**
- * Build the palette rows for a query.
+ * Build the palette groups for a query, in display order.
+ * `total` is the number of matches before the per-group cap, so callers can
+ * render a "+N more" affordance.
+ * @returns {Array<{group:string, items:Array, total:number}>}
+ */
+export function buildPaletteGroups(query, ctx = {}) {
+  const q = String(query ?? '').trim();
+  const source = {
+    Actions: actionItems(ctx.actions),
+    Sessions: sessionItems(ctx.sessions),
+    Models: modelItems(ctx.models),
+  };
+  return PALETTE_GROUPS.map(group => ({ group, ...rankGroup(source[group], q) }));
+}
+
+/**
+ * Flat list of palette rows for a query.
  * @param {string} query
  * @param {{actions?: Array, sessions?: Array, models?: Array}} ctx
  * @returns {Array<{group:string,id:string,label:string,hint:string,score:number,kind:string}>}
  */
 export function buildPaletteItems(query, ctx = {}) {
-  const q = String(query ?? '').trim();
-  const byGroup = {
-    Actions: actionItems(ctx.actions),
-    Sessions: sessionItems(ctx.sessions),
-    Models: modelItems(ctx.models),
-  };
   const out = [];
-  for (const group of PALETTE_GROUPS) {
-    out.push(...rankGroup(byGroup[group], q));
-  }
+  for (const g of buildPaletteGroups(query, ctx)) out.push(...g.items);
   return out;
 }
 
-export default { buildPaletteItems, fuzzyScore, escapeHtml, relativeTime, PALETTE_GROUPS, GROUP_CAP };
+export default {
+  buildPaletteItems, buildPaletteGroups, fuzzyScore, scoreFloor,
+  relativeTime, PALETTE_GROUPS, GROUP_CAP,
+};
