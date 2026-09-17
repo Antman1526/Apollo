@@ -99,8 +99,9 @@ function groupHeaderHTML(label) {
   return `<div class="palette-group search-group-header" role="presentation">${escapeHtml(label)}</div>`;
 }
 
-function moreRowHTML(count) {
-  return `<div class="palette-more" role="presentation">+${Number(count)} more</div>`;
+function moreRowHTML(count, hintToType) {
+  const tail = hintToType ? ' \u00b7 type to filter' : '';
+  return `<div class="palette-more" role="presentation">+${Number(count)} more${tail}</div>`;
 }
 
 function paletteRowHTML(row, index) {
@@ -136,7 +137,7 @@ function render(query) {
       html += paletteRowHTML(item, rows.length);
       rows.push(item);
     }
-    if (query && total > items.length) html += moreRowHTML(total - items.length);
+    if (total > items.length) html += moreRowHTML(total - items.length, !query);
   }
 
   if (query.length >= MESSAGE_MIN_CHARS && messageQuery === query && messageResults.length) {
