@@ -2547,6 +2547,7 @@ function initializeEventListeners() {
     'sidebar-settings-btn':'#user-bar-settings',
     'chat-meta':           '.chat-meta-overlay',
     'welcome-text':        '.welcome-name, .welcome-sub, #welcome-tip',
+    'agent-floor':         '.chat-floor',
     'incognito-btn':       '.incognito-btn',
     'web-toggle-btn':      '#web-toggle-btn',
     'doc-toggle-btn':      '#overflow-doc-btn',
