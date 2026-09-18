@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field
 
+from services.localmodels import mlx
 from services.localmodels.gguf_meta import classify_architecture, read_architecture
 
 # Quant regex ported from routes/cookbook_helpers.py (_cached_model_scan_script).
@@ -35,6 +36,14 @@ class LocalModel:
     # it. llama-server needs it via --mmproj or the model rejects images with
     # "image input is not supported".
     mmproj: str | None = field(default=None)
+    # "llama.cpp" serves a GGUF file; "mlx" serves an MLX model directory
+    # (path is the directory) through mlx_lm.server.
+    backend: str = field(default="llama.cpp")
+    # Tool-call support known at scan time (MLX: from the chat template).
+    # None = unknown until launch.
+    tools: bool | None = field(default=None)
+    # mlx_lm tool parser to force via tool_parser_type at launch (MLX only).
+    mlx_parser: str | None = field(default=None)
 
 
 def _quant(name: str) -> str:
@@ -107,6 +116,10 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
         for root, subdirs, files in os.walk(base, followlinks=False):
             # Prune cache/blob dirs in place so os.walk never descends into them.
             subdirs[:] = [d for d in subdirs if d.lower() not in _SKIP_DIRS]
+            if mlx.is_mlx_dir(root, files):
+                subdirs[:] = []  # a model folder's subdirs are not models
+                _add_mlx(out, root, base)
+                continue
             for fn in sorted(files):
                 if not fn.lower().endswith(".gguf"):
                     continue
@@ -144,7 +157,34 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                     arch=arch,
                     mmproj=_find_projector(root, files, model_name),
                 )
+    mlx_models = [m for m in out.values() if m.backend == "mlx" and m.kind == "chat"]
+    if mlx_models:
+        parsers = mlx.tool_parsers([m.path for m in mlx_models])
+        for m in mlx_models:
+            parser = parsers.get(m.path)
+            m.tools = None if parser is None else bool(parser[0])
+            m.mlx_parser = parser[0] if parser and parser[1] else None
     return list(out.values())
+
+
+def _add_mlx(out: dict[str, LocalModel], root: str, base: str) -> None:
+    path = os.path.realpath(root)
+    mid = _model_id(path)
+    if mid in out:
+        return
+    arch = mlx.model_type(path)
+    kind = "chat" if arch and arch in mlx.supported_types() else "unsupported"
+    out[mid] = LocalModel(
+        id=mid,
+        name=os.path.basename(path),
+        path=path,
+        quant=_quant(os.path.basename(path)),
+        kind=kind,
+        size_bytes=mlx.dir_size(path),
+        directory=base,
+        arch=arch,
+        backend="mlx",
+    )
 
 
 def discover_piper_voices(dirs: list[str]) -> list[dict]:

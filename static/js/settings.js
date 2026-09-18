@@ -289,7 +289,14 @@ function _fmtBytes(bytes) {
   return (bytes / 1e3).toFixed(0) + ' KB';
 }
 
-function _renderLocalModelDirs(dirs) {
+function _dirStatusLabel(status) {
+  if (!status) return null;
+  if (status.state === 'unmounted') return { text: 'not mounted', color: 'var(--warning, #d29922)' };
+  if (status.state === 'missing') return { text: 'does not exist', color: 'var(--danger, #f85149)' };
+  return { text: status.models + ' model' + (status.models === 1 ? '' : 's'), color: '' };
+}
+
+function _renderLocalModelDirs(dirs, statuses) {
   var container = el('set-localModelDirs');
   if (!container) return;
   container.innerHTML = '';
@@ -306,6 +313,10 @@ function _renderLocalModelDirs(dirs) {
     var span = document.createElement('span');
     span.style.cssText = 'flex:1;font-size:12px;font-family:monospace;word-break:break-all;opacity:0.85;';
     span.textContent = dir;
+    var label = _dirStatusLabel((statuses || []).filter(function(st) { return st.path === dir; })[0]);
+    var tag = document.createElement('span');
+    tag.style.cssText = 'flex-shrink:0;font-size:11px;opacity:0.7;' + (label && label.color ? 'color:' + label.color + ';' : '');
+    tag.textContent = label ? label.text : '';
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'admin-btn-sm';
@@ -316,6 +327,7 @@ function _renderLocalModelDirs(dirs) {
       _putLocalModelDirs(newDirs);
     });
     row.appendChild(span);
+    row.appendChild(tag);
     row.appendChild(btn);
     container.appendChild(row);
   });
@@ -444,7 +456,7 @@ export function refreshLocalModels() {
   fetch('/api/local-models', { credentials: 'same-origin' })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      _renderLocalModelDirs(data.dirs || []);
+      _renderLocalModelDirs(data.dirs || [], data.dir_status || []);
       _renderLocalModelsList(data.models || []);
     })
     .catch(function(e) {

@@ -466,6 +466,14 @@ SORT_KEYS = {
 }
 
 
+def _mlx_runtime_available() -> bool:
+    try:
+        from services.localmodels.mlx import find_mlx_runtime
+        return find_mlx_runtime() is not None
+    except Exception:
+        return False
+
+
 def rank_models(system, use_case=None, limit=50, search=None, sort="score", quant=None, target_context=None):
     """Rank all models against detected hardware. Returns sorted list of fit results."""
     models = get_models()
@@ -529,12 +537,15 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
     gpu_family = (system.get("gpu_family") or "").lower()
     consumer_amd = system_backend == "rocm" and gpu_family == "rdna"
 
+    mlx_ok = apple_silicon and _mlx_runtime_available()
+
     for m in models:
         native_q = _native_quant(m)
 
-        # MLX needs the mlx_lm runtime, which Apollo does not generate serve
-        # commands for. Hide it on every backend, including Metal.
-        if native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower():
+        # MLX runs through mlx_lm.server on Apple Silicon (services/localmodels).
+        # Anywhere else, or without mlx_lm installed, it is not servable.
+        is_mlx = native_q.startswith("mlx-") or "mlx" in (m.get("name") or "").lower()
+        if is_mlx and not mlx_ok:
             continue
 
         # ROCm support for vLLM/SGLang quantized safetensors is too brittle to
@@ -557,7 +568,8 @@ def rank_models(system, use_case=None, limit=50, search=None, sort="score", quan
         # servable path, so a model needs a real GGUF to be recommended.
         # Otherwise the Cookbook rates vLLM-only AWQ/GPTQ builds "GOOD" on a
         # Radeon that can't actually serve them.
-        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")):
+        if (apple_silicon or consumer_amd) and not (m.get("is_gguf") or m.get("gguf_sources")) \
+                and not (is_mlx and mlx_ok):
             continue
 
         # Format filter: AWQ tab -> only AWQ models, FP4 tab -> FP4-family models, etc.

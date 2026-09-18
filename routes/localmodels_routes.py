@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import logging
+import os
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
@@ -36,6 +37,38 @@ class BinaryBody(BaseModel):
     path: str
 
 
+def _dir_status(raw: str, catalog) -> dict:
+    """Per-directory state for Settings, so an unplugged drive reads as
+    "not mounted" rather than looking configured-and-empty."""
+    path = os.path.realpath(os.path.expanduser(raw))
+    if os.path.isdir(path):
+        count = sum(1 for m in catalog if m.directory == path)
+        return {"path": raw, "state": "ok", "models": count}
+    parts = path.split(os.sep)
+    volume = os.sep.join(parts[:3]) if len(parts) > 2 and parts[1] == "Volumes" else ""
+    if volume and not os.path.isdir(volume):
+        return {"path": raw, "state": "unmounted", "models": 0}
+    return {"path": raw, "state": "missing", "models": 0}
+
+
+def _launch_error(error: Exception) -> dict:
+    """Headline + log tail for a failed launch.
+
+    llama-server already names the cause (e.g. "unknown model architecture:
+    'k2-horizon'"); a fixed "could not be started" hid it. Admin-only route,
+    so the tail's absolute paths are not a new disclosure.
+    """
+    text = str(error).strip()
+    if not text:
+        return {"error": "Model could not be started"}
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    headline = next(
+        (ln for ln in reversed(lines) if "error loading model" in ln.lower()),
+        lines[0],
+    )
+    return {"error": headline[:300], "detail": text[-1500:]}
+
+
 def setup_localmodels_routes() -> APIRouter:
     router = APIRouter(prefix="/api/local-models", tags=["local-models"])
 
@@ -46,8 +79,10 @@ def setup_localmodels_routes() -> APIRouter:
         status = server.status()
         catalog = scan_dirs(get_local_model_dirs())
         running_ids = set(status.keys())
+        dirs = get_local_model_dirs()
         return {
-            "dirs": get_local_model_dirs(),
+            "dirs": dirs,
+            "dir_status": [_dir_status(d, catalog) for d in dirs],
             "models": [
                 {**asdict(m), "running": m.id in running_ids}
                 for m in catalog
@@ -110,7 +145,9 @@ def setup_localmodels_routes() -> APIRouter:
                 outcome="critical",
                 context={"model_id": model_id},
             )
-            return JSONResponse({"ok": False, "error": "Model could not be started"}, status_code=400)
+            return JSONResponse(
+                {"ok": False, **_launch_error(error)}, status_code=400
+            )
 
     @router.post("/{model_id}/stop")
     def stop(request: Request, model_id: str):

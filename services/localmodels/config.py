@@ -7,6 +7,7 @@ from src.settings import load_settings, save_settings
 
 ENV_VAR = "APOLLO_MODELS_DIRS"
 BINARY_ENV_VAR = "APOLLO_LLAMA_SERVER"
+MLX_PYTHON_ENV_VAR = "APOLLO_MLX_PYTHON"
 
 
 def _default_dirs() -> list[str]:
@@ -76,6 +77,20 @@ def get_llama_server_path() -> str:
     return ""
 
 
+# Architectures stock llama.cpp cannot load, mapped to the setting that names a
+# fork build which can. k2-horizon GGUFs need MBZUAI-IFM's llama.cpp fork.
+ARCH_BINARY_SETTINGS = {"k2-horizon": "llama_server_k2_path"}
+
+
+def get_arch_llama_server_path(arch: str) -> str:
+    """Fork llama-server configured for `arch`, or "" to use the default binary."""
+    key = ARCH_BINARY_SETTINGS.get((arch or "").lower())
+    if not key:
+        return ""
+    path = (load_settings().get(key) or "").strip()
+    return os.path.expanduser(path) if path else ""
+
+
 def set_llama_server_path(path: str) -> str:
     """Persist the llama-server binary path; "" clears it (back to auto-detect).
 
@@ -89,3 +104,11 @@ def set_llama_server_path(path: str) -> str:
     settings["llama_server_path"] = p
     save_settings(settings)
     return p
+
+
+def get_mlx_python_path() -> str:
+    """Python with mlx_lm installed: settings → env → "" (look for mlx_lm.server on PATH)."""
+    path = (load_settings().get("mlx_python_path") or "").strip()
+    if not path:
+        path = os.getenv(MLX_PYTHON_ENV_VAR, "").strip()
+    return os.path.expanduser(path) if path else ""

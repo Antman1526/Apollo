@@ -42,7 +42,7 @@ def captured(monkeypatch):
     monkeypatch.setattr(
         LocalModelServer, "_wait_health", lambda self, *a, **k: None, raising=False)
     monkeypatch.setattr(
-        LocalModelServer, "find_binary", lambda self: "/usr/bin/true", raising=False)
+        LocalModelServer, "find_binary", lambda self, arch="": "/usr/bin/true", raising=False)
     return seen
 
 
