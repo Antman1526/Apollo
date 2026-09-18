@@ -51,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # Core imports
 from core.constants import (
-    BASE_DIR, STATIC_DIR, SESSIONS_FILE,
+    APP_VERSION, BASE_DIR, STATIC_DIR, SESSIONS_FILE,
     REQUEST_TIMEOUT, OPENAI_API_KEY,
 )
 from core.database import SessionLocal, ApiToken
@@ -80,7 +80,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="AI Chat Application",
     description="Comprehensive AI chat with memory, research, and multi-modal capabilities",
-    version="1.0.0",
+    version=APP_VERSION,
 )
 
 # ========= CORS =========
@@ -405,7 +405,9 @@ else:
     logger.info("Auth middleware disabled (set AUTH_ENABLED=true to enable)")
 
 # ========= STATIC FILES =========
-os.makedirs(STATIC_DIR, exist_ok=True)
+# STATIC_DIR is read-only bundle content for packaged desktop builds. Keep the
+# mount absolute so an old writable profile (or a stale static symlink) cannot
+# mask assets from the current application bundle.
 
 
 class _RevalidatingStatic(StaticFiles):
@@ -424,7 +426,7 @@ class _RevalidatingStatic(StaticFiles):
         return resp
 
 
-app.mount("/static", _RevalidatingStatic(directory="static"), name="static")
+app.mount("/static", _RevalidatingStatic(directory=STATIC_DIR), name="static")
 
 # ========= GENERATED IMAGES =========
 @app.get("/api/generated-image/{filename}")
@@ -961,10 +963,10 @@ def _serve_html_with_nonce(request: Request, file_path: str) -> HTMLResponse:
 
 @app.get("/")
 async def serve_index(request: Request):
-    static_path = abs_join(BASE_DIR, "static/index.html")
+    static_path = abs_join(STATIC_DIR, "index.html")
     if os.path.exists(static_path):
         return _serve_html_with_nonce(request, static_path)
-    root_path = abs_join(BASE_DIR, "index.html")
+    root_path = abs_join(STATIC_DIR, "../index.html")
     if os.path.exists(root_path):
         return _serve_html_with_nonce(request, root_path)
     raise HTTPException(404, "index.html not found")
@@ -1008,11 +1010,11 @@ async def serve_library(request: Request):
 @app.get("/backgrounds")
 async def serve_backgrounds(request: Request):
     """Sandbox page for prototyping background effects. No auth required."""
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/backgrounds.html"))
+    return _serve_html_with_nonce(request, abs_join(STATIC_DIR, "backgrounds.html"))
 
 @app.get("/login")
 async def serve_login(request: Request):
-    return _serve_html_with_nonce(request, abs_join(BASE_DIR, "static/login.html"))
+    return _serve_html_with_nonce(request, abs_join(STATIC_DIR, "login.html"))
 
 @app.get("/api/version")
 async def get_version():

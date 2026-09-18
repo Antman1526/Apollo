@@ -4,7 +4,7 @@ import os
 
 from src.runtime_paths import data_path, data_root, repo_root
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.1.0-rc.1"
 
 # Base paths
 BASE_DIR = str(repo_root()) + os.sep
