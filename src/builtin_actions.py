@@ -122,7 +122,13 @@ async def action_auto_distill_sessions(owner: str, **kwargs) -> Tuple[str, bool]
         try:
             from services.memory.memory_vector import MemoryVectorStore
             memory_vector = MemoryVectorStore(DATA_DIR)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "auto_distill_memory_vector_unavailable",
+                error,
+                outcome="degraded",
+            )
             memory_vector = None  # distill_and_store degrades gracefully
 
         distilled = 0

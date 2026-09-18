@@ -19,6 +19,8 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+from src.observability import report_exception
+
 logger = logging.getLogger(__name__)
 
 PROVIDERS = {
@@ -243,9 +245,10 @@ def start_gguf_download(repo_id: str, file_path: str, dest_dir: str,
                 lifecycle.rescan()
             except Exception:
                 logger.debug("post-download rescan failed", exc_info=True)
-        except Exception as e:
+        except Exception as error:
             dl.status = "error"
-            dl.error = str(e)
+            dl.error = str(error)
+            report_exception(logger, "model_hub_download_failed", error, outcome="degraded")
             try:
                 if os.path.exists(tmp):
                     os.remove(tmp)

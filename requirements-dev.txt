@@ -8,8 +8,9 @@ aiofiles==25.1.0
     # via crawl4ai
 aiohappyeyeballs==2.7.1
     # via aiohttp
-aiohttp==3.14.1
+aiohttp==3.14.3
     # via
+    #   -r requirements.in
     #   crawl4ai
     #   kubernetes
     #   unclecode-litellm
@@ -96,7 +97,7 @@ crawl4ai==0.9.2
     # via -r requirements.in
 croniter==6.2.4
     # via -r requirements.in
-cryptography==49.0.0
+cryptography==50.0.1
     # via
     #   -r requirements.in
     #   pyjwt
@@ -152,8 +153,10 @@ h11==0.16.0
     #   httpcore2
     #   urllib3-future
     #   uvicorn
-h2==4.3.0
-    # via httpx
+h2==4.4.1
+    # via
+    #   -r requirements.in
+    #   httpx
 hf-xet==1.5.2
     # via huggingface-hub
 hpack==4.2.0
@@ -258,8 +261,10 @@ networkx==3.6.1
     # via alphashape
 niquests==3.20.1
     # via caldav
-nltk==3.10.0
-    # via crawl4ai
+nltk==3.10.3
+    # via
+    #   -r requirements.in
+    #   crawl4ai
 numpy==2.5.1
     # via
     #   -r requirements.in
@@ -386,13 +391,15 @@ pygments==2.20.0
     #   rich
 pyjwt==2.13.0
     # via mcp
-pyopenssl==26.3.0
-    # via crawl4ai
+pyopenssl==26.4.0
+    # via
+    #   -r requirements.in
+    #   crawl4ai
 pyotp==2.10.0
     # via -r requirements.in
 pyparsing==3.3.2
     # via pip-requirements-parser
-pypdf==6.14.2
+pypdf==6.19.0
     # via -r requirements.in
 pypika==0.51.1
     # via chromadb
@@ -498,8 +505,10 @@ snowballstemmer==2.2.0
     # via crawl4ai
 sortedcontainers==2.4.0
     # via cyclonedx-python-lib
-soupsieve==2.8.4
-    # via beautifulsoup4
+soupsieve==2.9.2
+    # via
+    #   -r requirements.in
+    #   beautifulsoup4
 sqlalchemy==2.0.51
     # via -r requirements.in
 sse-starlette==3.4.5
