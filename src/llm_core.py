@@ -3,12 +3,14 @@ import httpx
 import asyncio
 import time
 import json
+import uuid
 import logging
 import hashlib
 import threading
 from fastapi import HTTPException
 from typing import Optional, Dict, List
 from src.model_context import get_context_length, DEFAULT_CONTEXT
+from src.harmony import HarmonyStream, could_become_harmony, looks_like_harmony, parse_harmony
 from src.observability import report_exception
 from urllib.parse import urlparse
 
@@ -297,6 +299,20 @@ def _host_match(url: str, *domains: str) -> bool:
     if not host:
         return False
     return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def _message_text(msg: dict) -> str:
+    """Answer text of a non-streamed OpenAI-style message.
+
+    Falls back to the reasoning field when content is empty (thinking models
+    that hit the token limit), and unwraps gpt-oss harmony markup that a
+    runtime without a harmony parser (mlx_lm) passed through as content.
+    """
+    content = msg.get("content") or ""
+    if looks_like_harmony(content):
+        content, thinking, _ = parse_harmony(content)
+        return content or thinking
+    return content or msg.get("reasoning_content") or msg.get("reasoning") or ""
 
 
 def materialize_local_url(url: str, model: str) -> str:
@@ -881,8 +897,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         elif provider == "ollama":
             response = _parse_ollama_response(data)
         else:
-            msg = data["choices"][0]["message"]
-            response = msg.get("content") or msg.get("reasoning_content") or ""
+            response = _message_text(data["choices"][0]["message"])
         _set_cached_response(cache_key, response)
         return response
     except Exception:
@@ -1022,8 +1037,7 @@ async def llm_call_async(
                 elif provider == "ollama":
                     response = _parse_ollama_response(data)
                 else:
-                    msg = data["choices"][0]["message"]
-                    response = msg.get("content") or msg.get("reasoning_content") or ""
+                    response = _message_text(data["choices"][0]["message"])
                 _set_cached_response(cache_key, response)
                 return response
             except Exception:
@@ -1281,6 +1295,22 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     # can detect thinking-in-progress (some models output </think> but no <think>)
     _thinking_model = _supports_thinking(model)
     _first_content_sent = False
+    # gpt-oss harmony markup arriving as plain content (mlx_lm has no harmony
+    # parser). Undecided until the first content shows whether it is harmony.
+    _hm = {"parser": None, "probe": "", "decided": False}
+
+    def _finish_harmony() -> list:
+        """Flush the harmony parser at end of stream; its tool calls join _tc_acc."""
+        parser = _hm["parser"]
+        if parser is None:
+            probe, _hm["probe"] = _hm["probe"], ""
+            return [("content", probe)] if probe else []
+        events = parser.finish()
+        for tc in parser.tool_calls:
+            idx = max(_tc_acc, default=-1) + 1
+            _tc_acc[idx] = {"id": f"call_{uuid.uuid4().hex[:12]}", "name": tc["name"],
+                            "arguments": tc["arguments"]}
+        return events
 
     def _emit_tool_calls():
         """Build the tool_calls event string if any were accumulated."""
@@ -1306,6 +1336,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                 if line.startswith("data: "):
                     data = line[6:].strip()
                     if data == "[DONE]":
+                        for _kind, _text in _finish_harmony():
+                            yield f'data: {json.dumps({"delta": _text, **({"thinking": True} if _kind == "thinking" else {})})}\n\n'
                         tc_event = _emit_tool_calls()
                         if tc_event:
                             yield tc_event
@@ -1343,6 +1375,24 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                         if reasoning:
                                             yield f'data: {json.dumps({"delta": reasoning, "thinking": True})}\n\n'
                                         content = delta.get("content") or ""
+                                        if content and not _hm["decided"]:
+                                            _hm["probe"] += content
+                                            if looks_like_harmony(_hm["probe"]):
+                                                _hm["parser"], _hm["decided"] = HarmonyStream(), True
+                                                content, _hm["probe"] = _hm["probe"], ""
+                                            elif could_become_harmony(_hm["probe"]):
+                                                content = ""  # still a prefix of a marker; wait
+                                            else:
+                                                _hm["decided"] = True
+                                                content, _hm["probe"] = _hm["probe"], ""
+                                        if content and _hm["parser"] is not None:
+                                            for _kind, _text in _hm["parser"].feed(content):
+                                                if _kind == "thinking":
+                                                    yield f'data: {json.dumps({"delta": _text, "thinking": True})}\n\n'
+                                                else:
+                                                    _first_content_sent = True
+                                                    yield f'data: {json.dumps({"delta": _text})}\n\n'
+                                            content = ""
                                         if content:
                                             # Some thinking backends start normal content with a
                                             # stray closing tag. Repair only that shape; do not
@@ -1407,6 +1457,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                         continue
 
             # End of stream (no explicit [DONE] received)
+            for _kind, _text in _finish_harmony():
+                yield f'data: {json.dumps({"delta": _text, **({"thinking": True} if _kind == "thinking" else {})})}\n\n'
             tc_event = _emit_tool_calls()
             if tc_event:
                 yield tc_event

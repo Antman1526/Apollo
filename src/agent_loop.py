@@ -1420,6 +1420,33 @@ def _empty_response_fallback(
     return _error_msg, f'data: {json.dumps({"delta": _error_msg})}\n\n'
 
 
+# Tool-call syntaxes a model may write as plain text (Qwen/Hermes XML,
+# Mistral, LFM/pythonic, Gemma 4).
+_TOOL_MARKUP_RE = re.compile(r"<tool_call>|<function=|\[TOOL_CALLS\]|<\|tool_call")
+
+
+def _answer_from_reasoning(reasoning: str) -> str:
+    """Last paragraph of a reasoning stream, used when no answer text came."""
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", reasoning or "") if p.strip()]
+    return paragraphs[-1] if paragraphs else ""
+
+
+def _round_is_stuck(sig: str, recent_sigs, real_text: str,
+                    prompt_mode: bool = False) -> bool:
+    """Whether a tool round made no progress (before `sig` is recorded).
+
+    Circling = repeating a recent call with nothing written. In prompt
+    (fenced-block) tool mode, re-issuing the previous round's exact call is
+    also circling even with text: models like Hermes-3 and Mistral-7B restate
+    the answer AND echo the same ```python fence each round, which otherwise
+    only the 15-call runaway backstop stopped. Native tool calls are left
+    alone so a narrated poll of the same status call is not cut short.
+    """
+    if sig in recent_sigs and not real_text:
+        return True
+    return prompt_mode and bool(recent_sigs) and recent_sigs[-1] == sig
+
+
 async def stream_agent_loop(
     endpoint_url: str,
     model: str,
@@ -1582,8 +1609,22 @@ async def stream_agent_loop(
     _model_no_tools = any(kw in _model_lc for kw in (
         "deepseek-r1",
     ))
+    # Apollo-managed llama.cpp models: ask the model's chat template. The
+    # model is launched here rather than on the first LLM call a moment
+    # later; ensure_running reuses it, so this adds no extra load.
+    _local_tool_caps: Optional[bool] = None
+    if _endpoint_supports is None and endpoint_url.startswith("local://llama.cpp"):
+        try:
+            from services.localmodels.server_manager import get_server
+            _srv = get_server()
+            await asyncio.to_thread(_srv.ensure_running, model)
+            _local_tool_caps = _srv.supports_tool_calls(model)
+        except Exception as _e:
+            logger.debug(f"local tool-caps probe failed: {_e}")
     if _endpoint_supports is True:
         _is_api_model = True
+    elif _local_tool_caps is not None:
+        _is_api_model = _local_tool_caps
     elif _endpoint_supports is False or _model_no_tools:
         _is_api_model = False
     else:
@@ -2038,6 +2079,30 @@ async def stream_agent_loop(
                     # never re-verify an unchanged state in a loop.
                     _effectful_used = False
                     continue
+            # A thinking model that never closes its reasoning block (seen with
+            # Qwen3.x on MLX and llama.cpp after a tool result) streams its
+            # whole reply as reasoning, leaving an empty answer bubble. Its
+            # last paragraph is the answer, so surface that.
+            # If that paragraph is a tool call written inside the reasoning
+            # (the runtime only parses calls outside it), run one tool-free
+            # round asking for the answer instead of showing raw markup.
+            if not _force_answer and not _THINK_RE.sub("", cleaned_round).strip():
+                _salvaged = _answer_from_reasoning(round_reasoning)
+                if _salvaged and not _TOOL_MARKUP_RE.search(_salvaged):
+                    logger.info(f"[agent] round {round_num}: answer was only in reasoning; surfacing its last paragraph")
+                    yield f'data: {json.dumps({"delta": _salvaged})}\n\n'
+                    full_response += _salvaged
+                    round_texts[-1] = _salvaged
+                elif round_reasoning.strip() and round_num < max_rounds:
+                    logger.info(f"[agent] round {round_num}: no answer text; forcing a tool-free answer round")
+                    _force_answer = True
+                    messages.append({
+                        "role": "system",
+                        "content": ("Tools are done for this turn. Write your final answer "
+                                    "for the user now from the results above."),
+                    })
+                    yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                    continue
             break  # no tools — done
 
         # ── Loop-breaker (Terminus-style stall detector) ──────────────
@@ -2052,20 +2117,18 @@ async def stream_agent_loop(
         # tool-free round so the model declares done or declares blocked,
         # mirroring Terminus's explicit-completion handshake.
         _sig = "|".join(sorted(f"{b.tool_type}:{(b.content or '').strip()[:120]}" for b in tool_blocks))
-        _is_repeat = _sig in _recent_call_sigs
-        _recent_call_sigs.append(_sig)
-        for _b in tool_blocks:
-            _tool_type_counts[_b.tool_type] += 1
         # "Real" answer text = round text minus <think> blocks. Empty-think
         # rounds (just "<think>\n\n</think>" + a tool call) must not read as
         # progress, so strip think before checking.
         _real_text = _THINK_RE.sub("", cleaned_round).strip()
-        # Circling = repeating a recent call with nothing written. Any
-        # progress (a NEW distinct call, or actual answer text) resets it.
-        if _is_repeat and not _real_text:
+        if _round_is_stuck(_sig, _recent_call_sigs, _real_text,
+                           prompt_mode=not _is_api_model):
             _stuck_rounds += 1
         else:
             _stuck_rounds = 0
+        _recent_call_sigs.append(_sig)
+        for _b in tool_blocks:
+            _tool_type_counts[_b.tool_type] += 1
         _runaway = next((t for t, n in _tool_type_counts.items() if n >= 15), None)
         if _stuck_rounds >= 4 or _runaway:
             reason = (f"calling {_runaway} over and over" if _runaway
