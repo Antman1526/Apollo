@@ -10,7 +10,7 @@ README = Path(__file__).resolve().parent.parent / "README.md"
 
 # Distinctive bits of the banner (box-drawing rule + the kaomoji version line).
 _RULE = "─" * 10
-_BANNER_LINE = "Apollo vers. 1.0"
+_BANNER_LINE = "Apollo vers. 1.1.0-rc.1"
 
 
 def _fenced_segments(text: str):

@@ -55,7 +55,7 @@ def _bundle_root() -> Path:
 def _apollo_home() -> Path:
     env = os.environ.get("APOLLO_HOME")
     if env:
-        return Path(env).expanduser()
+        return Path(env).expanduser().resolve()
     resolver = platform_data_root
     if resolver is None:
         from src.runtime_paths import platform_data_root as resolver

@@ -71,6 +71,11 @@ def test_macos_launcher_prefix_resolves_isolated_profile_paths(tmp_path):
             home / "Apollo Preview",
             home / "Apollo Preview" / "data",
         ),
+        (
+            {"APOLLO_HOME": "Apollo Preview Profile"},
+            cwd / "Apollo Preview Profile",
+            cwd / "Apollo Preview Profile" / "data",
+        ),
         ({"APOLLO_DATA_DIR": "relative data"}, default_state, cwd / "relative data"),
         ({"DATA_DIR": "legacy data"}, default_state, cwd / "legacy data"),
         (
@@ -163,6 +168,25 @@ def test_apollo_home_uses_platform_data_root_and_explicit_home_override(tmp_path
 
     monkeypatch.setenv("APOLLO_HOME", str(tmp_path / "custom-home"))
     assert boot._apollo_home() == tmp_path / "custom-home"
+
+
+def test_relative_apollo_home_resolves_before_boot_chdir(tmp_path, monkeypatch):
+    boot = _load_boot_module()
+    cwd = tmp_path / "Original CWD"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("APOLLO_HOME", "Apollo Preview Profile")
+    monkeypatch.delenv("APOLLO_DATA_DIR", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+
+    home = boot._apollo_home()
+    data_root = boot._data_root(home)
+    home.mkdir()
+    monkeypatch.chdir(home)
+
+    assert home == (cwd / "Apollo Preview Profile").resolve()
+    assert data_root == home / "data"
+    assert data_root / "app.db" == home / "data" / "app.db"
 
 
 def test_data_root_preserves_explicit_overrides(tmp_path, monkeypatch):
