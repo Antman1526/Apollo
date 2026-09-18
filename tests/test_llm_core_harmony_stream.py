@@ -113,3 +113,10 @@ def test_non_streaming_message_text_unwraps_harmony():
     assert llm_core._message_text(msg) == "PONG"
     assert llm_core._message_text({"content": "", "reasoning": "only reasoning"}) == "only reasoning"
     assert llm_core._message_text({"content": "plain"}) == "plain"
+
+
+def test_finish_reason_is_forwarded_as_an_event(monkeypatch):
+    line = "data: " + json.dumps({"choices": [{"delta": {"content": "x"}, "finish_reason": "length"}]})
+    events = _run([line, "data: [DONE]"], monkeypatch, model="qwen3-8b")
+    assert {"type": "finish_reason", "reason": "length"} in events
+    assert _text(events) == "x"

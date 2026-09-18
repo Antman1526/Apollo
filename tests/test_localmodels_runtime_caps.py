@@ -185,3 +185,10 @@ def test_dir_status_distinguishes_unmounted_from_missing(tmp_path):
     assert _dir_status("/Volumes/NoSuchDrive/AI_Models", []) == {
         "path": "/Volumes/NoSuchDrive/AI_Models", "state": "unmounted", "models": 0}
     assert _dir_status(str(tmp_path / "gone"), [])["state"] == "missing"
+
+
+def test_token_limit_note_names_the_budget():
+    from src.agent_loop import _token_limit_note
+    assert "2048-token" in _token_limit_note(2048, True)
+    assert "still thinking" in _token_limit_note(2048, True)
+    assert "before writing" in _token_limit_note(512, False)

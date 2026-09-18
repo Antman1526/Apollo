@@ -1367,6 +1367,11 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                                             _usage_data["prefill_tps"] = round(_tm["prompt_per_second"], 2)
                                     yield f'data: {json.dumps({"type": "usage", "data": _usage_data})}\n\n'
                                 elif "choices" in j:
+                                    _fr = j["choices"][0].get("finish_reason")
+                                    if _fr:
+                                        # Lets the agent loop tell "empty answer" from
+                                        # "ran out of tokens while still thinking".
+                                        yield f'data: {json.dumps({"type": "finish_reason", "reason": _fr})}\n\n'
                                     delta = j["choices"][0].get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content

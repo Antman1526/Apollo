@@ -1425,6 +1425,12 @@ def _empty_response_fallback(
 _TOOL_MARKUP_RE = re.compile(r"<tool_call>|<function=|\[TOOL_CALLS\]|<\|tool_call")
 
 
+def _token_limit_note(max_tokens: int, was_thinking: bool) -> str:
+    what = "still thinking" if was_thinking else "before writing an answer"
+    return (f"*The model hit its {max_tokens}-token output limit {what}. "
+            "Raise the max tokens in Settings, or ask for a shorter answer.*")
+
+
 def _answer_from_reasoning(reasoning: str) -> str:
     """Last paragraph of a reasoning stream, used when no answer text came."""
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", reasoning or "") if p.strip()]
@@ -1733,6 +1739,7 @@ async def stream_agent_loop(
     for round_num in range(1, max_rounds + 1):
         round_response = ""
         round_reasoning = ""  # reasoning_content deltas (DeepSeek-thinking, vLLM --reasoning-parser)
+        _round_finish = ""    # upstream finish_reason ("length" = hit max_tokens)
         native_tool_calls = []  # populated if model uses function calling
         # Reset doc streaming state per round
         _doc_acc = ""
@@ -1861,6 +1868,8 @@ async def stream_agent_loop(
                                 if len(decoded) > _doc_last_len:
                                     _doc_last_len = len(decoded)
                                     yield f'data: {json.dumps({"type": "doc_stream_delta", "content": decoded})}\n\n'
+                    elif data.get("type") == "finish_reason":
+                        _round_finish = data.get("reason") or ""
                     elif data.get("type") == "tool_calls":
                         native_tool_calls = data.get("calls", [])
                         logger.info(f"Agent round {round_num}: received {len(native_tool_calls)} native tool call(s)")
@@ -2086,6 +2095,16 @@ async def stream_agent_loop(
             # If that paragraph is a tool call written inside the reasoning
             # (the runtime only parses calls outside it), run one tool-free
             # round asking for the answer instead of showing raw markup.
+            if (not _force_answer and _round_finish == "length"
+                    and not _THINK_RE.sub("", cleaned_round).strip()):
+                # Thinking models can spend the whole budget reasoning; the
+                # cut-off thought is not an answer, so say what happened
+                # instead of showing an empty bubble (or a half sentence).
+                _note = _token_limit_note(max_tokens, bool(round_reasoning.strip()))
+                yield f'data: {json.dumps({"delta": _note})}\n\n'
+                full_response += _note
+                round_texts[-1] = _note
+                break
             if not _force_answer and not _THINK_RE.sub("", cleaned_round).strip():
                 _salvaged = _answer_from_reasoning(round_reasoning)
                 if _salvaged and not _TOOL_MARKUP_RE.search(_salvaged):
