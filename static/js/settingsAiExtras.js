@@ -261,3 +261,50 @@ function _initGgufPull(el) {
   query.addEventListener('keydown', function(e) { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
   pollDownloads();
 }
+
+function _dirStatusLabel(status) {
+  if (!status) return null;
+  if (status.state === 'unmounted') return { text: 'not mounted', color: 'var(--warning, #d29922)' };
+  if (status.state === 'missing') return { text: 'does not exist', color: 'var(--danger, #f85149)' };
+  return { text: status.models + ' model' + (status.models === 1 ? '' : 's'), color: '' };
+}
+
+/** Scan-directory rows for Settings → AI → Local Models, each with its
+ * state from GET /api/local-models `dir_status` (N models / not mounted /
+ * does not exist). `onRemove(newDirs)` persists a removal. */
+export function renderLocalModelDirs(el, dirs, statuses, onRemove) {
+  var container = el('set-localModelDirs');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!dirs || dirs.length === 0) {
+    var empty = document.createElement('div');
+    empty.style.cssText = 'font-size:11px;opacity:0.45;';
+    empty.textContent = 'No directories configured.';
+    container.appendChild(empty);
+    return;
+  }
+  dirs.forEach(function(dir) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    var span = document.createElement('span');
+    span.style.cssText = 'flex:1;font-size:12px;font-family:monospace;word-break:break-all;opacity:0.85;';
+    span.textContent = dir;
+    var label = _dirStatusLabel((statuses || []).filter(function(st) { return st.path === dir; })[0]);
+    var tag = document.createElement('span');
+    tag.style.cssText = 'flex-shrink:0;font-size:11px;opacity:0.7;' + (label && label.color ? 'color:' + label.color + ';' : '');
+    tag.textContent = label ? label.text : '';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'admin-btn-sm';
+    btn.textContent = 'Remove';
+    btn.style.cssText = 'flex-shrink:0;';
+    btn.addEventListener('click', function() {
+      var newDirs = dirs.filter(function(d) { return d !== dir; });
+      onRemove(newDirs);
+    });
+    row.appendChild(span);
+    row.appendChild(tag);
+    row.appendChild(btn);
+    container.appendChild(row);
+  });
+}

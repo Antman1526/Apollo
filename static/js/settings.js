@@ -9,7 +9,7 @@ import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 import { wireSystemStatusActions } from './systemStatusActions.js';
-import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling } from './settingsAiExtras.js';
+import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling, renderLocalModelDirs } from './settingsAiExtras.js';
 import { initEcosystemHub } from './ecosystemHub.js';
 import { endpointLabel, selectableModels } from './settings/models.js';
 
@@ -289,50 +289,6 @@ function _fmtBytes(bytes) {
   return (bytes / 1e3).toFixed(0) + ' KB';
 }
 
-function _dirStatusLabel(status) {
-  if (!status) return null;
-  if (status.state === 'unmounted') return { text: 'not mounted', color: 'var(--warning, #d29922)' };
-  if (status.state === 'missing') return { text: 'does not exist', color: 'var(--danger, #f85149)' };
-  return { text: status.models + ' model' + (status.models === 1 ? '' : 's'), color: '' };
-}
-
-function _renderLocalModelDirs(dirs, statuses) {
-  var container = el('set-localModelDirs');
-  if (!container) return;
-  container.innerHTML = '';
-  if (!dirs || dirs.length === 0) {
-    var empty = document.createElement('div');
-    empty.style.cssText = 'font-size:11px;opacity:0.45;';
-    empty.textContent = 'No directories configured.';
-    container.appendChild(empty);
-    return;
-  }
-  dirs.forEach(function(dir) {
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:6px;';
-    var span = document.createElement('span');
-    span.style.cssText = 'flex:1;font-size:12px;font-family:monospace;word-break:break-all;opacity:0.85;';
-    span.textContent = dir;
-    var label = _dirStatusLabel((statuses || []).filter(function(st) { return st.path === dir; })[0]);
-    var tag = document.createElement('span');
-    tag.style.cssText = 'flex-shrink:0;font-size:11px;opacity:0.7;' + (label && label.color ? 'color:' + label.color + ';' : '');
-    tag.textContent = label ? label.text : '';
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'admin-btn-sm';
-    btn.textContent = 'Remove';
-    btn.style.cssText = 'flex-shrink:0;';
-    btn.addEventListener('click', function() {
-      var newDirs = dirs.filter(function(d) { return d !== dir; });
-      _putLocalModelDirs(newDirs);
-    });
-    row.appendChild(span);
-    row.appendChild(tag);
-    row.appendChild(btn);
-    container.appendChild(row);
-  });
-}
-
 function _renderLocalModelsList(models) {
   var container = el('set-localModelsList');
   if (!container) return;
@@ -436,7 +392,7 @@ function _putLocalModelDirs(dirs) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dirs: dirs })
   }).then(function(r) { return r.json(); }).then(function(data) {
-    _renderLocalModelDirs(data.dirs || dirs);
+    renderLocalModelDirs(el, data.dirs || dirs, [], _putLocalModelDirs);
   }).catch(function(e) {
     if (errEl) errEl.textContent = 'Failed to update directories: ' + e.message;
   });
@@ -456,7 +412,7 @@ export function refreshLocalModels() {
   fetch('/api/local-models', { credentials: 'same-origin' })
     .then(function(r) { return r.json(); })
     .then(function(data) {
-      _renderLocalModelDirs(data.dirs || [], data.dir_status || []);
+      renderLocalModelDirs(el, data.dirs || [], data.dir_status || [], _putLocalModelDirs);
       _renderLocalModelsList(data.models || []);
     })
     .catch(function(e) {
