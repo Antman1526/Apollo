@@ -11,22 +11,6 @@ Apollo.app + Apollo.dmg.
 import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
-# Temporary Windows diagnostic for a stalled native dependency import. Keep
-# the isolated call behavior unchanged; this only reports the package being
-# imported when explicitly enabled by the build environment.
-if os.name == "nt" and os.environ.get("APOLLO_DIAG_DLL_IMPORTS") == "1":
-    from PyInstaller import isolated
-
-    _apollo_original_isolated_call = isolated.Python.call
-
-    def _apollo_diagnostic_isolated_call(self, function, *args, **kwargs):
-        if function.__name__ == "import_library":
-            package = args[0] if args else kwargs.get("package", "<unknown>")
-            print(f"[apollo-dll-import] {package}", flush=True)
-        return _apollo_original_isolated_call(self, function, *args, **kwargs)
-
-    isolated.Python.call = _apollo_diagnostic_isolated_call
-
 REPO = os.path.abspath(os.getcwd())
 # Use the native architecture of the build host. An explicit override remains
 # available for PyInstaller-supported cross-builds.

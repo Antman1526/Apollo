@@ -41,7 +41,11 @@ Verify the downloaded package against its matching `.sha256` file before
 opening it. The build smoke starts the actual frozen executable with a fresh
 temporary profile and checks `/api/health`, `/api/ready`, the root page, and a
 static JavaScript module. It also places stale files in that profile to ensure
-the current bundle assets win across upgrades.
+the current bundle assets win across upgrades. The frozen-child checks execute
+Python with `-I -c`, import SQLite and PDF support, and verify that output and
+non-zero error exits are preserved; exercise the persistent JSON-line Python
+session across requests; and reject hostile `CWD`/`PYTHONPATH` imports and
+invalid child arguments.
 
 These bundles are implementation and packaging evidence. They do not certify
 Developer ID signing, notarization, Windows signing, physical-device

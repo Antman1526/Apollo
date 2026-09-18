@@ -86,8 +86,6 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: Build Windows bundle
         shell: pwsh
-        env:
-          APOLLO_DIAG_DLL_IMPORTS: "1"
         timeout-minutes: 10
         run: .\scripts\build-windows-bundle.ps1 -Python python -Version $env:APOLLO_VERSION
       - name: Smoke packaged server
