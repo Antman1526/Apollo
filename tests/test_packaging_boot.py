@@ -7,9 +7,91 @@ import ast
 import io
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
+
+
+def _mac_launcher_prefix():
+    source = (Path(__file__).parents[1] / "build-macos-bundle.sh").read_text(
+        encoding="utf-8"
+    )
+    heredoc = source.split(
+        'cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<\'LAUNCHER\'\n', 1
+    )[1].split("\nLAUNCHER\n", 1)[0]
+    return heredoc.split("\nnotify() {", 1)[0]
+
+
+def _run_mac_launcher_prefix(tmp_path, env_overrides):
+    home = tmp_path / "User Home"
+    cwd = tmp_path / "Working Directory"
+    launcher_dir = tmp_path / "Apollo Preview.app" / "Contents" / "MacOS"
+    launcher_dir.mkdir(parents=True, exist_ok=True)
+    (launcher_dir.parent / "Resources" / "apollo").mkdir(parents=True, exist_ok=True)
+    cwd.mkdir(exist_ok=True)
+
+    launcher = launcher_dir / "Apollo"
+    probe = """
+printf 'state=%s\\ndata=%s\\ndatabase=%s\\n' \\
+  "${APOLLO_STATE_DIR}" "${APOLLO_DATA_DIR_VALUE}" "${DATABASE_URL}"
+"""
+    launcher.write_text(
+        _mac_launcher_prefix().replace("__PORT__", "7860")
+        + probe,
+        encoding="utf-8",
+    )
+    launcher.chmod(0o755)
+
+    env = os.environ.copy()
+    for key in ("APOLLO_HOME", "APOLLO_DATA_DIR", "DATA_DIR", "DATABASE_URL"):
+        env.pop(key, None)
+    env.update({"HOME": str(home), **env_overrides})
+    result = subprocess.run(
+        ["/bin/bash", str(launcher)],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return dict(line.split("=", 1) for line in result.stdout.splitlines())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="macOS shell launcher regression")
+def test_macos_launcher_prefix_resolves_isolated_profile_paths(tmp_path):
+    home = tmp_path / "User Home"
+    cwd = tmp_path / "Working Directory"
+    default_state = home / "Library" / "Application Support" / "Apollo"
+    cases = (
+        ({}, default_state, default_state / "data"),
+        (
+            {"APOLLO_HOME": "~/Apollo Preview"},
+            home / "Apollo Preview",
+            home / "Apollo Preview" / "data",
+        ),
+        (
+            {"APOLLO_HOME": "Apollo Preview Profile"},
+            cwd / "Apollo Preview Profile",
+            cwd / "Apollo Preview Profile" / "data",
+        ),
+        ({"APOLLO_DATA_DIR": "relative data"}, default_state, cwd / "relative data"),
+        ({"DATA_DIR": "legacy data"}, default_state, cwd / "legacy data"),
+        (
+            {"APOLLO_DATA_DIR": "apollo data", "DATA_DIR": "legacy data"},
+            default_state,
+            cwd / "apollo data",
+        ),
+    )
+
+    for env_overrides, expected_state, expected_data in cases:
+        values = _run_mac_launcher_prefix(tmp_path, env_overrides)
+        assert values == {
+            "state": str(expected_state),
+            "data": str(expected_data),
+            "database": f"sqlite:///{expected_data}/app.db",
+        }
 
 
 def _load_boot_module():
@@ -86,6 +168,25 @@ def test_apollo_home_uses_platform_data_root_and_explicit_home_override(tmp_path
 
     monkeypatch.setenv("APOLLO_HOME", str(tmp_path / "custom-home"))
     assert boot._apollo_home() == tmp_path / "custom-home"
+
+
+def test_relative_apollo_home_resolves_before_boot_chdir(tmp_path, monkeypatch):
+    boot = _load_boot_module()
+    cwd = tmp_path / "Original CWD"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("APOLLO_HOME", "Apollo Preview Profile")
+    monkeypatch.delenv("APOLLO_DATA_DIR", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
+
+    home = boot._apollo_home()
+    data_root = boot._data_root(home)
+    home.mkdir()
+    monkeypatch.chdir(home)
+
+    assert home == (cwd / "Apollo Preview Profile").resolve()
+    assert data_root == home / "data"
+    assert data_root / "app.db" == home / "data" / "app.db"
 
 
 def test_data_root_preserves_explicit_overrides(tmp_path, monkeypatch):

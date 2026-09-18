@@ -6,11 +6,22 @@
 
 ```
 ───────────────────────────────────────────────
- ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Apollo vers. 1.0
+ ⊹ ࣪ ˖ ૮( ˶ᵔ ᵕ ᵔ˶ )っ  Apollo vers. 1.1.0-rc.1
 ───────────────────────────────────────────────
 ```
 
 ![Apollo](docs/apollo.jpg)
+
+## Desktop preview (v1.1.0-rc.1)
+
+Download the self-contained limited preview for your desktop:
+
+- [Apple Silicon DMG](https://github.com/Antman1526/Apollo/releases/download/v1.1.0-rc.1/Apollo-1.1.0-rc.1.dmg)
+- [Windows x64 portable ZIP](https://github.com/Antman1526/Apollo/releases/download/v1.1.0-rc.1/Apollo-1.1.0-rc.1-windows-x64.zip)
+
+Python and Chromium are included. Review the [desktop installation guide](docs/desktop-installation.md)
+and [v1.1.0-rc.1 release notes](https://github.com/Antman1526/Apollo/releases/tag/v1.1.0-rc.1)
+for the limited-preview dependency advisories and signing/notarization limits.
 
 **Apollo is a self-hosted, local-first AI workspace** for chatting with local or
 remote language models while keeping the workspace, model configuration, and
@@ -363,6 +374,11 @@ not expose the port directly to the public internet.
 Apollo ships **two** macOS build scripts that produce a double-clickable `Apollo.app` and a
 drag-to-Applications `Apollo.dmg`. Pick one:
 
+**Desktop preview (recommended):** download the [Apple Silicon DMG](https://github.com/Antman1526/Apollo/releases/download/v1.1.0-rc.1/Apollo-1.1.0-rc.1.dmg).
+It is self-contained, includes Python and Chromium, and opens its own UI.
+
+**Source build options:**
+
 ```bash
 # 1. Launcher build — small, drives THIS repo's venv (Python not bundled).
 #    Best for developers who keep the repo; Cookbook keeps direct Metal-GPU access.
@@ -386,7 +402,10 @@ readiness probe before opening the UI; it needs a working `./venv` with the app 
 
 ### Native Windows
 
-**No-git path** — grab the prebuilt source zip from the
+**Desktop preview (recommended):** download the [Windows x64 portable ZIP](https://github.com/Antman1526/Apollo/releases/download/v1.1.0-rc.1/Apollo-1.1.0-rc.1-windows-x64.zip).
+It is self-contained, includes Python and Chromium, and opens its own UI.
+
+**Source options — no-git path:** grab the prebuilt source zip from the
 [`windows-latest` release](https://github.com/Antman1526/Apollo/releases/tag/windows-latest)
 (built by `scripts/build-windows-zip.sh` from tracked files only, so secrets
 can't leak in by construction):
@@ -398,7 +417,7 @@ cd Apollo-Windows\Apollo-Windows
 powershell -ExecutionPolicy Bypass -File .\launch-windows.ps1
 ```
 
-**Or the one-command launcher from a clone** (creates the venv, installs deps,
+**Source option — one-command launcher from a clone** (creates the venv, installs deps,
 runs setup, starts the server; safe to re-run):
 
 ```powershell
@@ -411,7 +430,7 @@ Either way, the launcher **detects missing prerequisites** (Python 3.11+, Git
 for Windows, llama.cpp) **and offers to install each via winget** — always
 behind an explicit `[Y/n]` prompt, never silently.
 
-Or do it by hand:
+**Source option — manual setup:**
 
 ```powershell
 py -3.11 -m venv venv
@@ -430,8 +449,9 @@ Local GPU *serving* of vLLM/SGLang needs Linux/WSL2; for a local model on Window
 [Ollama](https://ollama.com/download) is the easiest path — point Apollo at
 `http://localhost:11434/v1` in Settings.
 
-Open `http://localhost:7000`, log in with the generated admin password,
-and configure everything else inside **Settings**.
+For source setup, open `http://localhost:7000`, log in with the generated admin
+password, and configure everything else inside **Settings**. The portable preview
+opens its own UI and does not use this manual localhost login step.
 
 For running **local GGUF models** on Windows via llama.cpp — scan directories,
 the `llama-server` binary setting, and troubleshooting — see

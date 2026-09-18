@@ -133,8 +133,30 @@ URL="http://127.0.0.1:${PORT}"
 HERE="$(cd "$(dirname "$0")" && pwd)"                 # Contents/MacOS
 RES="$(cd "$HERE/../Resources" && pwd)"               # Contents/Resources
 SERVER="$RES/apollo/apollo"                           # PyInstaller exe
-APOLLO_STATE_DIR="${APOLLO_HOME:-$HOME/Library/Application Support/Apollo}"
-APOLLO_DATA_DIR_VALUE="${APOLLO_DATA_DIR:-${DATA_DIR:-$APOLLO_STATE_DIR/data}}"
+# Match the frozen shim's Path.expanduser()/resolve() contract before using a
+# profile override in shell-owned paths (especially DATABASE_URL). Without
+# this, APOLLO_HOME=~/Apollo-preview or a relative DATA_DIR reaches SQLite as
+# a literal relative path while the Python shim resolves DATA_DIR absolutely,
+# splitting the profile across two locations.
+resolve_user_path() {
+  local value="$1"
+  case "$value" in
+    "~") value="$HOME" ;;
+    "~/"*) value="$HOME/${value#\~/}" ;;
+    /*) ;;
+    *) value="$PWD/$value" ;;
+  esac
+  printf '%s\n' "$value"
+}
+APOLLO_HOME_VALUE="${APOLLO_HOME:-$HOME/Library/Application Support/Apollo}"
+APOLLO_STATE_DIR="$(resolve_user_path "$APOLLO_HOME_VALUE")"
+if [ -n "${APOLLO_DATA_DIR:-}" ]; then
+  APOLLO_DATA_DIR_VALUE="$(resolve_user_path "$APOLLO_DATA_DIR")"
+elif [ -n "${DATA_DIR:-}" ]; then
+  APOLLO_DATA_DIR_VALUE="$(resolve_user_path "$DATA_DIR")"
+else
+  APOLLO_DATA_DIR_VALUE="$APOLLO_STATE_DIR/data"
+fi
 LOG="$APOLLO_STATE_DIR/apollo-app.log"
 
 export APOLLO_PORT="$PORT"
