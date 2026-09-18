@@ -54,8 +54,11 @@ jobs:
             --binary "$RUNNER_TEMP/apollo-dmg/Apollo.app/Contents/Resources/apollo/apollo"
       - name: Write checksums and source metadata
         run: |
-          shasum -a 256 "dist/Apollo-${APOLLO_VERSION}.dmg" > "dist/Apollo-${APOLLO_VERSION}.dmg.sha256"
-          git rev-parse HEAD > "dist/Apollo-${APOLLO_VERSION}.source.txt"
+          (
+            cd dist
+            shasum -a 256 "Apollo-${APOLLO_VERSION}.dmg" > "Apollo-${APOLLO_VERSION}.dmg.sha256"
+            git -C .. rev-parse HEAD > "Apollo-${APOLLO_VERSION}.source.txt"
+          )
       - uses: actions/upload-artifact@v4
         with:
           name: Apollo-${{ env.APOLLO_VERSION }}-macos-arm64
@@ -83,6 +86,9 @@ jobs:
           python -m pip install -r requirements-dev.txt
       - name: Build Windows bundle
         shell: pwsh
+        env:
+          APOLLO_DIAG_DLL_IMPORTS: "1"
+        timeout-minutes: 10
         run: .\scripts\build-windows-bundle.ps1 -Python python -Version $env:APOLLO_VERSION
       - name: Smoke packaged server
         shell: pwsh

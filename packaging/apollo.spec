@@ -11,6 +11,22 @@ Apollo.app + Apollo.dmg.
 import os
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
+# Temporary Windows diagnostic for a stalled native dependency import. Keep
+# the isolated call behavior unchanged; this only reports the package being
+# imported when explicitly enabled by the build environment.
+if os.name == "nt" and os.environ.get("APOLLO_DIAG_DLL_IMPORTS") == "1":
+    from PyInstaller import isolated
+
+    _apollo_original_isolated_call = isolated.Python.call
+
+    def _apollo_diagnostic_isolated_call(self, function, *args, **kwargs):
+        if function.__name__ == "import_library":
+            package = args[0] if args else kwargs.get("package", "<unknown>")
+            print(f"[apollo-dll-import] {package}", flush=True)
+        return _apollo_original_isolated_call(self, function, *args, **kwargs)
+
+    isolated.Python.call = _apollo_diagnostic_isolated_call
+
 REPO = os.path.abspath(os.getcwd())
 # Use the native architecture of the build host. An explicit override remains
 # available for PyInstaller-supported cross-builds.
@@ -88,6 +104,9 @@ datas += tree("config")
 # `sys.executable mcp_servers/<x>.py` over stdio) — collect_submodules alone
 # embeds them as bytecode with no file on disk, so ship the tree too.
 datas += tree("mcp_servers")
+# The persistent python_session manager re-execs this exact JSON-line worker
+# through the frozen executable. It must remain a real file for runpy.run_path.
+datas.append((os.path.join(REPO, "scripts", "apollo_kernel_worker.py"), "scripts"))
 # Seed data is opt-in. A developer checkout may contain personal settings or
 # memory even when those files are ignored by Git; never collect them by
 # default. A release builder can provide a deliberate, reviewed seed directory

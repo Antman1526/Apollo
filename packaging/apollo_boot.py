@@ -34,7 +34,10 @@ import time
 import webbrowser
 from pathlib import Path
 
-from src.runtime_paths import platform_data_root
+# Keep child paths free of application imports until their explicit isolation
+# has been applied. Source-mode tests can still monkeypatch this seam; normal
+# execution resolves it lazily when the server path actually needs it.
+platform_data_root = None
 
 
 def _bundle_root() -> Path:
@@ -53,7 +56,10 @@ def _apollo_home() -> Path:
     env = os.environ.get("APOLLO_HOME")
     if env:
         return Path(env).expanduser()
-    return platform_data_root(env=os.environ)
+    resolver = platform_data_root
+    if resolver is None:
+        from src.runtime_paths import platform_data_root as resolver
+    return resolver(env=os.environ)
 
 
 def _data_root(home: Path) -> Path:
@@ -137,23 +143,157 @@ def _configure_runtime_paths(home: Path) -> None:
         os.environ["APOLLO_DATA_DIR"] = str(home / "data")
 
 
-def _bundled_script_argument() -> Path | None:
-    """Resolve a frozen child-script argument without relying on CWD."""
-    if len(sys.argv) <= 1 or not sys.argv[1].endswith(".py"):
+def _bundled_script_argument(argument: str | None = None) -> Path | None:
+    """Resolve a child-script argument without relying on CWD.
+
+    A frozen executable must never turn an arbitrary path supplied by the
+    caller into executable Python. Its script mode is limited to files that
+    PyInstaller shipped below ``_MEIPASS``; source-mode tests retain the
+    historical relative-path fallback.
+    """
+    if argument is None:
+        if len(sys.argv) <= 1:
+            return None
+        argument = sys.argv[1]
+    if not argument.endswith(".py"):
         return None
-    argument = Path(sys.argv[1])
-    if not argument.is_absolute() and getattr(sys, "_MEIPASS", None):
+    argument_path = Path(argument)
+    if getattr(sys, "frozen", False) or getattr(sys, "_MEIPASS", None):
         # A frozen child must use the script shipped with this bundle even if
         # the launcher's CWD happens to contain an older checkout copy.
-        candidates = [_bundle_root() / argument, argument]
+        bundle = _bundle_root().resolve()
+        candidate = (bundle / argument_path).resolve()
+        try:
+            candidate.relative_to(bundle)
+        except ValueError:
+            return None
+        candidates = [candidate]
     else:
-        candidates = [argument]
-        if not argument.is_absolute():
-            candidates.append(_bundle_root() / argument)
+        candidates = [argument_path]
+        if not argument_path.is_absolute():
+            candidates.append(_bundle_root() / argument_path)
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
     return None
+
+
+def _child_invocation() -> tuple[str, str | Path, tuple[str, ...] | None] | None:
+    """Parse the child forms supported by the frozen executable.
+
+    ``-I -c CODE`` is the one-shot Python tool shape, while
+    ``-I scripts/apollo_kernel_worker.py`` is the persistent-session shape.
+    The existing ``mcp_servers/<name>.py [args...]`` form remains supported.
+    Any other arguments are rejected before the server is imported.
+    """
+    args = sys.argv[1:]
+    if not args:
+        return None
+
+    if args[0] == "-I":
+        if len(args) == 3 and args[1] == "-c":
+            return ("code", args[2], None)
+        if len(args) == 2 and args[1] != "-c":
+            worker = _bundled_script_argument(args[1])
+            expected = (_bundle_root() / "scripts" / "apollo_kernel_worker.py").resolve()
+            if worker is not None and worker.resolve() == expected:
+                return ("worker", worker, None)
+        raise SystemExit("apollo: unsupported child arguments after -I")
+
+    script = _bundled_script_argument(args[0])
+    if script is not None:
+        return ("script", script, tuple(args[1:]))
+    raise SystemExit("apollo: unsupported child arguments")
+
+
+def _configure_isolated_child() -> None:
+    """Retain ``python -I`` import hygiene for frozen child processes."""
+    if not getattr(sys, "frozen", False):
+        return
+    # PyInstaller supplies the embedded import machinery; the bundle root is
+    # the only filesystem path needed by shipped script files. In particular,
+    # do not expose CWD, PYTHONPATH, or a user's site directory to child code.
+    pythonpath_entries: set[Path] = set()
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if entry:
+            try:
+                pythonpath_entries.add(Path(entry).expanduser().resolve())
+            except (OSError, RuntimeError, TypeError):
+                continue
+    os.environ.pop("PYTHONPATH", None)
+    os.environ.pop("PYTHONUSERBASE", None)
+    os.environ["PYTHONNOUSERSITE"] = "1"
+    bundle_root = _bundle_root().resolve()
+    cwd = Path.cwd().resolve()
+    user_sites: set[Path] = set()
+    try:
+        import site
+
+        site.ENABLE_USER_SITE = False
+        candidates = site.getusersitepackages()
+        if isinstance(candidates, str):
+            candidates = [candidates]
+        for candidate in candidates:
+            try:
+                user_sites.add(Path(candidate).expanduser().resolve())
+            except (OSError, RuntimeError, TypeError):
+                continue
+    except Exception:
+        pass
+
+    # Keep PyInstaller's embedded zip/native directories and bundled eggs, but
+    # discard CWD/PYTHONPATH/user-site entries and anything outside the bundle.
+    # Canonicalized paths make symlink escapes and duplicate spellings harmless.
+    trusted: list[str] = []
+    seen: set[str] = set()
+    for entry in list(sys.path):
+        if not entry:
+            continue
+        try:
+            resolved = Path(entry).expanduser().resolve()
+        except (OSError, RuntimeError, TypeError):
+            continue
+        if (
+            resolved == cwd
+            or resolved in pythonpath_entries
+            or any(
+                resolved == user_site or user_site in resolved.parents
+                for user_site in user_sites
+            )
+        ):
+            continue
+        try:
+            resolved.relative_to(bundle_root)
+        except ValueError:
+            continue
+        normalized = str(resolved)
+        if normalized not in seen:
+            seen.add(normalized)
+            trusted.append(normalized)
+    if str(bundle_root) not in seen:
+        trusted.append(str(bundle_root))
+    sys.path[:] = trusted
+
+
+def _run_child(invocation: tuple[str, str | Path, tuple[str, ...] | None]) -> None:
+    """Execute a parsed child invocation and preserve its exit semantics."""
+    mode, payload, extra = invocation
+    _configure_isolated_child()
+    if mode == "code":
+        # Match ``python -c``'s argv contract. Exceptions and SystemExit are
+        # intentionally allowed to propagate so the caller receives the same
+        # non-zero status as the unfrozen subprocess.
+        sys.argv = ["-c"]
+        exec(compile(str(payload), "<string>", "exec"), {
+            "__name__": "__main__",
+            "__builtins__": __builtins__,
+        })
+        return
+
+    import runpy
+
+    sys.argv = [str(payload), *(extra or ())]
+    runpy.run_path(str(payload), run_name="__main__")
 
 
 def _is_loopback(host: str) -> bool:
@@ -213,18 +353,13 @@ def _patch_constants(
 def main() -> None:
     multiprocessing.freeze_support()
 
-    # Script re-exec mode: ``apollo <script>.py [args...]`` runs a bundled
-    # Python script inside the frozen environment instead of booting the
-    # server. src/builtin_mcp.py spawns its stdio MCP servers as
-    # ``sys.executable mcp_servers/<x>.py`` — in the frozen app
-    # sys.executable IS this binary, so without this branch every such spawn
-    # would try to start a second Apollo server (and die on the bind).
-    script_path = _bundled_script_argument()
-    if script_path is not None:
-        import runpy
-
-        sys.argv = [str(script_path), *sys.argv[2:]]
-        runpy.run_path(str(script_path), run_name="__main__")
+    # Child mode must be decided before any server setup/import. The one-shot
+    # and persistent Python tools use ``-I`` forms; built-in MCP servers use a
+    # shipped script path directly. Unknown child arguments must not fall
+    # through into a second uvicorn startup.
+    child = _child_invocation()
+    if child is not None:
+        _run_child(child)
         return
 
     bundle = _bundle_root()

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import importlib.util
 import ast
+import io
+import json
 import os
 from pathlib import Path
+
+import pytest
 
 
 def _load_boot_module():
@@ -42,6 +46,7 @@ def test_configure_bundled_playwright_preserves_operator_override(tmp_path, monk
 def test_configure_runtime_paths_uses_writable_home(tmp_path, monkeypatch):
     boot = _load_boot_module()
     monkeypatch.delenv("APOLLO_DATA_DIR", raising=False)
+    monkeypatch.delenv("DATA_DIR", raising=False)
 
     boot._configure_runtime_paths(tmp_path)
 
@@ -119,6 +124,127 @@ def test_bundled_script_argument_resolves_relative_child_from_bundle(tmp_path, m
     monkeypatch.setattr(boot.sys, "argv", ["apollo", "mcp_servers/memory_server.py"])
 
     assert boot._bundled_script_argument() == script.resolve()
+
+
+def test_child_invocation_accepts_isolated_code_and_shipped_worker(tmp_path, monkeypatch):
+    boot = _load_boot_module()
+    worker = tmp_path / "scripts" / "apollo_kernel_worker.py"
+    worker.parent.mkdir()
+    worker.write_text("", encoding="utf-8")
+    monkeypatch.setattr(boot, "_bundle_root", lambda: tmp_path)
+    monkeypatch.setattr(boot.sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    monkeypatch.setattr(boot.sys, "argv", ["apollo", "-I", "-c", "print('ok')"])
+    assert boot._child_invocation() == ("code", "print('ok')", None)
+
+    monkeypatch.setattr(
+        boot.sys,
+        "argv",
+        ["apollo", "-I", "scripts/apollo_kernel_worker.py"],
+    )
+    assert boot._child_invocation() == ("worker", worker.resolve(), None)
+
+    mcp = tmp_path / "mcp_servers" / "memory_server.py"
+    mcp.parent.mkdir()
+    mcp.write_text("", encoding="utf-8")
+    monkeypatch.setattr(boot.sys, "argv", ["apollo", "mcp_servers/memory_server.py", "--stdio"])
+    assert boot._child_invocation() == ("script", mcp.resolve(), ("--stdio",))
+
+
+def test_child_code_preserves_error_exit_status(monkeypatch, capsys):
+    boot = _load_boot_module()
+    monkeypatch.setattr(boot.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(boot.sys, "_MEIPASS", "/tmp/apollo-bundle", raising=False)
+    monkeypatch.setattr(boot.sys, "path", list(boot.sys.path))
+
+    with pytest.raises(SystemExit) as error:
+        boot._run_child(("code", "print('child-ok'); raise SystemExit(7)", None))
+
+    assert error.value.code == 7
+    assert capsys.readouterr().out.strip() == "child-ok"
+
+
+def test_isolated_child_keeps_only_bundle_import_paths(tmp_path, monkeypatch):
+    boot = _load_boot_module()
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    base_library = bundle / "base_library.zip"
+    base_library.write_bytes(b"zip")
+    native = bundle / "lib-dynload"
+    native.mkdir()
+    bundled_egg = bundle / "packages" / "apollo.egg"
+    bundled_egg.parent.mkdir()
+    bundled_egg.write_bytes(b"egg")
+    relative_native = bundle / "relative-native"
+    relative_native.mkdir()
+    pythonpath_bundle = bundle / "pythonpath-injected"
+    pythonpath_bundle.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+
+    monkeypatch.setattr(boot.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(boot.sys, "_MEIPASS", str(bundle), raising=False)
+    monkeypatch.setattr(
+        boot.sys,
+        "path",
+        [
+            str(outside),
+            "",
+            str(base_library),
+            str(native),
+            str(bundled_egg),
+            "../bundle/relative-native",
+            str(bundle),
+            str(native),
+            str(cwd),
+            ".",
+            str(pythonpath_bundle),
+        ],
+    )
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("PYTHONPATH", str(pythonpath_bundle))
+    monkeypatch.setenv("PYTHONUSERBASE", str(outside / "user-site"))
+
+    boot._configure_isolated_child()
+
+    assert boot.sys.path == [
+        str(base_library.resolve()),
+        str(native.resolve()),
+        str(bundled_egg.resolve()),
+        str(relative_native.resolve()),
+        str(bundle.resolve()),
+    ]
+    assert "PYTHONPATH" not in boot.os.environ
+    assert "PYTHONUSERBASE" not in boot.os.environ
+    assert boot.os.environ["PYTHONNOUSERSITE"] == "1"
+
+
+def test_worker_child_keeps_json_state_between_requests(tmp_path, monkeypatch, capsys):
+    boot = _load_boot_module()
+    worker = Path(__file__).parents[1] / "scripts" / "apollo_kernel_worker.py"
+    monkeypatch.setattr(boot.sys, "argv", ["apollo", "-I", str(worker)])
+    monkeypatch.setattr(boot.sys, "stdin", io.StringIO(
+        json.dumps({"code": "value = 41"}) + "\n"
+        + json.dumps({"code": "print(value + 1)"}) + "\n"
+        + json.dumps({"cmd": "shutdown"}) + "\n"
+    ))
+
+    invocation = ("worker", worker, None)
+    boot._run_child(invocation)
+
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert lines[0]["error"] is None
+    assert lines[1]["stdout"] == "42\n"
+
+
+def test_unknown_child_args_are_rejected_without_server_start(monkeypatch):
+    boot = _load_boot_module()
+    monkeypatch.setattr(boot.sys, "argv", ["apollo", "--not-a-child"])
+
+    with pytest.raises(SystemExit, match="unsupported child arguments"):
+        boot._child_invocation()
 
 
 def test_auth_free_mode_is_limited_to_loopback_hosts():
