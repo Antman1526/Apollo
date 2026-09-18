@@ -382,7 +382,13 @@ class EmbeddedBrowserSession:
         Returns (None, None) when the element can't be located quickly."""
         try:
             box = await page.locator(selector).first.bounding_box(timeout=LOCATE_TIMEOUT_MS)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "embedded_browser_locator_center_failed",
+                error,
+                outcome="best_effort",
+            )
             return None, None
         if not box:
             return None, None

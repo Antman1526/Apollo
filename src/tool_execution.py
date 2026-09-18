@@ -757,7 +757,13 @@ async def execute_tool_block(
         try:
             from src.settings import get_setting
             _autonomy = str(get_setting("agent_autonomy", "auto") or "auto")
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "tool_autonomy_setting_read_failed",
+                error,
+                outcome="best_effort",
+            )
             _autonomy = "auto"
         if _autonomy == "observe":
             desc = f"{tool}: BLOCKED (observe mode)"
@@ -789,7 +795,13 @@ async def execute_tool_block(
             ledger_path = _resolve_tool_path(raw_path)
             from services.activity_ledger import capture_before
             before = await asyncio.to_thread(capture_before, ledger_path)
-        except Exception:
+        except Exception as error:
+            report_exception(
+                logger,
+                "tool_write_snapshot_capture_failed",
+                error,
+                outcome="best_effort",
+            )
             before = None  # unresolvable path — inner call will surface the error
 
     t0 = time.monotonic()

@@ -60,6 +60,12 @@ def main() -> int:
     parser.add_argument("--python", default=sys.executable)
     args = parser.parse_args()
     root = args.root.resolve()
+    python = args.python
+    python_path = Path(args.python).expanduser()
+    if not python_path.is_absolute() and python_path.exists():
+        # Compilation runs from a temporary directory; preserve a caller's
+        # relative interpreter path before changing cwd.
+        python = str((Path.cwd() / python_path).absolute())
 
     with tempfile.TemporaryDirectory(prefix="apollo-lock-check-") as temporary:
         temp_dir = Path(temporary)
@@ -72,8 +78,13 @@ def main() -> int:
                 print(f"Missing dependency input or lock: {source_name}, {lock_name}", file=sys.stderr)
                 return 1
             generated = temp_dir / lock_name
+            # Seed pip-compile with the committed lock. Without this, a fresh
+            # empty output lets the resolver upgrade the entire graph during
+            # every check, hiding whether an input changed only its intended
+            # package floors.
+            shutil.copy2(committed, generated)
             try:
-                compile_lock(args.python, source, generated, temp_dir)
+                compile_lock(python, source, generated, temp_dir)
             except subprocess.CalledProcessError as error:
                 print(f"Could not compile {source_name}: exit {error.returncode}", file=sys.stderr)
                 return error.returncode or 1

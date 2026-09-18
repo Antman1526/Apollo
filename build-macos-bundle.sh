@@ -9,17 +9,30 @@
 #
 # Produces:
 #   dist/Apollo.app   — double-click: starts the bundled server, opens the UI.
-#   dist/Apollo.dmg   — drag-to-Applications disk image.
+#   dist/Apollo-<version>.dmg   — drag-to-Applications disk image.
 #
 # Requirements to BUILD (not to run): a working venv at ./venv with the app's
 # deps + pyinstaller installed. Override the port with APOLLO_PORT.
-set -e
+set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_NAME="Apollo"
 PORT="${APOLLO_PORT:-7860}"
+VERSION="${APOLLO_VERSION:-1.1.0-rc.1}"
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+  echo "  ✗ APOLLO_VERSION must look like 1.2.3 or 1.2.3-rc.1" >&2
+  exit 1
+fi
+SOURCE_VERSION="$(sed -n 's/^APP_VERSION = "\(.*\)"$/\1/p' "$REPO_DIR/src/constants.py")"
+if [ "$VERSION" != "$SOURCE_VERSION" ]; then
+  echo "  ✗ APOLLO_VERSION ($VERSION) does not match src/constants.py ($SOURCE_VERSION)" >&2
+  exit 1
+fi
+PLIST_VERSION="${VERSION%%-*}"
+PLIST_VERSION="${PLIST_VERSION%%+*}"
 DIST="$REPO_DIR/dist"
 APP="$DIST/$APP_NAME.app"
+DMG="$DIST/$APP_NAME-$VERSION.dmg"
 VENV="$REPO_DIR/venv"
 ONEDIR="$DIST/apollo"          # PyInstaller COLLECT output (name=apollo)
 EXE_NAME="apollo"              # PyInstaller EXE name
@@ -28,6 +41,12 @@ PLAYWRIGHT_BROWSERS="$REPO_DIR/packaging/playwright-browsers"
 echo "Building self-contained $APP_NAME.app"
 echo "  repo:  $REPO_DIR"
 echo "  port:  $PORT"
+echo "  version: $VERSION"
+
+if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+  echo "  ✗ macOS bundle builds require an Apple-Silicon macOS runner" >&2
+  exit 1
+fi
 
 # ── 1. Ensure pyinstaller is available in the venv ──
 if [ ! -x "$VENV/bin/pyinstaller" ]; then
@@ -44,7 +63,7 @@ if ! find "$PLAYWRIGHT_BROWSERS" -type f \( -name headless_shell -o -name chrome
   PLAYWRIGHT_BROWSERS_PATH="$PLAYWRIGHT_BROWSERS" "$VENV/bin/python" -m playwright install chromium
 fi
 
-# ── 2. PyInstaller onedir build (arm64) ──
+# ── 2. PyInstaller onedir build (native host architecture) ──
 echo "  pyinstaller: building onedir (this takes a few minutes)…"
 rm -rf "$REPO_DIR/build" "$ONEDIR"
 # python -m instead of the console script: entry-point shebangs cannot hold a
@@ -93,8 +112,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleName</key>            <string>$APP_NAME</string>
     <key>CFBundleDisplayName</key>     <string>$APP_NAME</string>
     <key>CFBundleIdentifier</key>      <string>com.apollo.bundle</string>
-    <key>CFBundleVersion</key>         <string>1.0</string>
-    <key>CFBundleShortVersionString</key><string>1.0</string>
+    <key>CFBundleVersion</key>         <string>$PLIST_VERSION</string>
+    <key>CFBundleShortVersionString</key><string>$PLIST_VERSION</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleExecutable</key>      <string>$APP_NAME</string>
     <key>CFBundleIconFile</key>        <string>apollo</string>
@@ -109,20 +128,23 @@ PLIST
 cat > "$APP/Contents/MacOS/$APP_NAME.tmpl" <<'LAUNCHER'
 #!/bin/bash
 # Apollo.app — self-contained. Starts the bundled server and opens the UI.
-PORT="__PORT__"
+PORT="${APOLLO_PORT:-__PORT__}"
 URL="http://127.0.0.1:${PORT}"
 HERE="$(cd "$(dirname "$0")" && pwd)"                 # Contents/MacOS
 RES="$(cd "$HERE/../Resources" && pwd)"               # Contents/Resources
 SERVER="$RES/apollo/apollo"                           # PyInstaller exe
-HOME_DIR="$HOME/Library/Application Support/Apollo"
-LOG="$HOME_DIR/apollo-app.log"
+APOLLO_STATE_DIR="${APOLLO_HOME:-$HOME/Library/Application Support/Apollo}"
+APOLLO_DATA_DIR_VALUE="${APOLLO_DATA_DIR:-${DATA_DIR:-$APOLLO_STATE_DIR/data}}"
+LOG="$APOLLO_STATE_DIR/apollo-app.log"
 
 export APOLLO_PORT="$PORT"
+export APOLLO_HOST="127.0.0.1"
+export APOLLO_OPEN_BROWSER="false"
 # Pin the app's own SQLite DB so a stray DATABASE_URL in the GUI/login
 # environment (e.g. a dev machine's prisma/postgres var) isn't inherited — the
 # boot shim uses setdefault(), so an unset-or-correct value here is required or
 # the frozen app crashes with NoSuchModuleError.
-export DATABASE_URL="sqlite:///$HOME_DIR/data/app.db"
+export DATABASE_URL="sqlite:///$APOLLO_DATA_DIR_VALUE/app.db"
 # The desktop bundle serves 127.0.0.1 only — a login screen on a single-user
 # local app is pure friction, so auth is off unless the user opts back in
 # (export AUTH_ENABLED=true before launch, e.g. when reverse-proxying).
@@ -154,7 +176,7 @@ open_ui() {
   /usr/bin/open "$URL"
 }
 
-mkdir -p "$HOME_DIR"
+mkdir -p "$APOLLO_STATE_DIR"
 
 # Already running? Just open the UI.
 if /usr/bin/curl -s -o /dev/null --max-time 2 "$URL"; then
@@ -194,25 +216,27 @@ sed -e "s|__PORT__|$PORT|g" \
 rm -f "$APP/Contents/MacOS/$APP_NAME.tmpl"
 chmod +x "$APP/Contents/MacOS/$APP_NAME"
 
-# Ad-hoc codesign so Gatekeeper allows launch on the build machine.
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || \
-  echo "  codesign:    (skipped — ad-hoc signing failed)"
+# Ad-hoc codesign keeps the local bundle launchable. A configured identity can
+# be supplied by the release environment; any signing failure fails the build.
+CODESIGN_IDENTITY="${APOLLO_CODESIGN_IDENTITY:--}"
+codesign --force --deep --sign "$CODESIGN_IDENTITY" "$APP" >/dev/null
+codesign --verify --deep --strict "$APP"
+echo "  codesign:    verified ($CODESIGN_IDENTITY)"
 
 touch "$APP"
 echo "  app:         $(du -sh "$APP" | cut -f1)  $APP"
 
 # ── .dmg (drag-to-Applications) ──
-echo "Packaging dist/$APP_NAME.dmg"
+echo "Packaging $DMG"
 STAGE="$(mktemp -d)/dmg"
 mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
-rm -f "$DIST/$APP_NAME.dmg"
-hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DIST/$APP_NAME.dmg" >/dev/null
+hdiutil create -volname "$APP_NAME $VERSION" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGE"
-echo "  dmg:         $(du -sh "$DIST/$APP_NAME.dmg" | cut -f1)  $DIST/$APP_NAME.dmg"
+echo "  dmg:         $(du -sh "$DMG" | cut -f1)  $DMG"
 
 echo ""
 echo "Done:"
 echo "  $APP"
-echo "  $DIST/$APP_NAME.dmg"
+echo "  $DMG"

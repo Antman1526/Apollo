@@ -9,9 +9,12 @@ Produces dist/apollo/ (onedir). build-macos-bundle.sh wraps that into
 Apollo.app + Apollo.dmg.
 """
 import os
-from PyInstaller.utils.hooks import collect_all, collect_submodules, collect_data_files
+from PyInstaller.utils.hooks import collect_all, collect_submodules
 
 REPO = os.path.abspath(os.getcwd())
+# Use the native architecture of the build host. An explicit override remains
+# available for PyInstaller-supported cross-builds.
+TARGET_ARCH = os.environ.get("APOLLO_TARGET_ARCH") or None
 
 # ── Native/data-heavy deps that PyInstaller's static analysis misses ──
 datas, binaries, hiddenimports = [], [], []
@@ -85,12 +88,20 @@ datas += tree("config")
 # `sys.executable mcp_servers/<x>.py` over stdio) — collect_submodules alone
 # embeds them as bytecode with no file on disk, so ship the tree too.
 datas += tree("mcp_servers")
-# Seed data (small JSON only — skip large caches/DBs; boot shim copies these).
-for name in ("presets.json", "features.json", "settings.json",
-             "memory.json", "user_prefs.json"):
-    p = os.path.join(REPO, "data", name)
-    if os.path.isfile(p):
-        datas.append((p, "data"))
+# The persistent python_session manager re-execs this exact JSON-line worker
+# through the frozen executable. It must remain a real file for runpy.run_path.
+datas.append((os.path.join(REPO, "scripts", "apollo_kernel_worker.py"), "scripts"))
+# Seed data is opt-in. A developer checkout may contain personal settings or
+# memory even when those files are ignored by Git; never collect them by
+# default. A release builder can provide a deliberate, reviewed seed directory
+# with APOLLO_SEED_DIR when a non-personal seed is required.
+SEED_DIR = os.environ.get("APOLLO_SEED_DIR")
+if SEED_DIR:
+    seed_root = os.path.abspath(SEED_DIR)
+    for name in ("presets.json", "features.json", "settings.json", "memory.json", "user_prefs.json"):
+        p = os.path.join(seed_root, name)
+        if os.path.isfile(p):
+            datas.append((p, "data"))
 
 block_cipher = None
 
@@ -123,7 +134,7 @@ exe = EXE(
     upx=False,
     console=True,
     disable_windowed_traceback=False,
-    target_arch="arm64",
+    target_arch=TARGET_ARCH,
     codesign_identity=None,
     entitlements_file=None,
 )

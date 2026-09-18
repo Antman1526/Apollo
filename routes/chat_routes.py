@@ -931,7 +931,13 @@ def setup_chat_routes(
                 try:
                     from services.model_router import route_chat
                     _routed_light = route_chat(message or "", owner=_user)
-                except Exception:
+                except Exception as error:
+                    report_exception(
+                        logger,
+                        "chat_stream_mixture_routing_failed",
+                        error,
+                        outcome="best_effort",
+                    )
                     _routed_light = None
 
             # Send model name early so the frontend can show it during streaming

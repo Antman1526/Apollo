@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 from src.subproc_env import build_agent_env
+from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,10 @@ class PythonSessionManager:
         try:
             kernel.proc.kill()
             await asyncio.wait_for(kernel.proc.wait(), timeout=5)
-        except Exception:
-            pass  # best-effort — process may already be gone
+        except Exception as error:
+            # Best-effort cleanup — process may already be gone. Keep the
+            # session response stable while recording only failure type.
+            report_exception(logger, "python_session_kernel_kill_failed", error, outcome="best_effort")
 
     async def run(
         self, session_id: str, code: str, timeout: float = DEFAULT_EXEC_TIMEOUT_S
