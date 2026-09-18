@@ -15,7 +15,7 @@ BASELINES = {
     "cookbookRunning.js": 3218, "cookbookServe.js": 2086, "document.js": 9453,
     "documentLibrary.js": 3365, "emailLibrary.js": 5217, "gallery.js": 2835,
     "galleryEditor.js": 3798, "modalManager.js": 1550, "notes.js": 5011,
-    "sessions.js": 3135, "settings.js": 5043, "skills.js": 2038,
+    "sessions.js": 3135, "settings.js": 5005, "skills.js": 2038,
     "slashCommands.js": 5940, "tasks.js": 2709, "theme.js": 2160,
 }
 MAX_NEW_MODULE_LINES = 1500

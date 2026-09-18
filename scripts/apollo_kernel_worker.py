@@ -11,6 +11,7 @@ approach, without pulling in ipykernel/jupyter_client as new dependencies).
 Not meant to be run by a human — spawned by services/python_kernel.py with a
 minimal env (src.subproc_env.build_agent_env), one process per chat session.
 """
+import ast
 import contextlib
 import io
 import json
@@ -26,10 +27,18 @@ def _run_one(code: str) -> dict:
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             # exec, not eval: sessions run statements (imports, assignments,
-            # loops), not just expressions. compile() first so a syntax
-            # error reports cleanly instead of surfacing as exec()'s own.
-            compiled = compile(code, "<session>", "exec")
-            exec(compiled, _NAMESPACE)
+            # loops), not just expressions. A trailing bare expression is
+            # evaluated and echoed like a notebook cell, since models send
+            # `df.head()` / `x * 2` and expect the value back. ast.parse
+            # first so a syntax error reports cleanly instead of surfacing
+            # as exec()'s own.
+            tree = ast.parse(code, "<session>")
+            last = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
+            exec(compile(tree, "<session>", "exec"), _NAMESPACE)
+            if last is not None:
+                value = eval(compile(ast.Expression(last.value), "<session>", "eval"), _NAMESPACE)
+                if value is not None:
+                    print(repr(value))
     except BaseException:
         # BaseException (not Exception): a stray SystemExit/KeyboardInterrupt
         # from user code must not kill the worker — it's caught and reported

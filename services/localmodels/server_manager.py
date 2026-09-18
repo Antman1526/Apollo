@@ -1,6 +1,7 @@
 """Launch and track local llama-server processes (single warm chat model)."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shutil
@@ -15,7 +16,8 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from services.localmodels.scanner import LocalModel, scan_dirs
-from services.localmodels.config import get_llama_server_path
+from services.localmodels.config import get_arch_llama_server_path, get_llama_server_path
+from services.localmodels.mlx import find_mlx_runtime
 from src.observability import report_exception
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,7 @@ def _bin_candidates() -> list[str]:
 
 
 _BIN_CANDIDATES = _bin_candidates()
+_FAILED_LAUNCH_TTL = 30.0  # seconds a failed launch is replayed, not retried
 
 
 @dataclass
@@ -83,9 +86,21 @@ class LocalModelServer:
         self._chat: Optional[_Proc] = None
         self._embed: Optional[_Proc] = None
         self._catalog: dict[str, LocalModel] = {}
+        # model path -> whether its chat template handles OpenAI tool calls,
+        # as reported by llama-server's /props after a launch.
+        self._tool_caps: dict[str, bool] = {}
+        # model id -> (monotonic time, error) of the last failed launch, so a
+        # caller retrying right away (agent loop, then the LLM call) fails
+        # fast instead of waiting out a multi-minute load a second time.
+        self._failed: dict[str, tuple[float, Exception]] = {}
 
     # -- discovery --------------------------------------------------------
-    def find_binary(self) -> Optional[str]:
+    def find_binary(self, arch: str = "") -> Optional[str]:
+        # Architectures stock llama.cpp can't load run on a configured fork
+        # build (e.g. k2-horizon); fall through to the default when unset.
+        fork = get_arch_llama_server_path(arch)
+        if fork and os.path.isfile(fork):
+            return fork
         # An explicitly configured path (Settings → AI or APOLLO_LLAMA_SERVER)
         # wins outright — and if it's set but wrong we return None rather than
         # silently auto-detecting a different binary than the one asked for.
@@ -158,15 +173,42 @@ class LocalModelServer:
             # fastembed, so the embedding slot has no implicit caller yet.
             slot = self._embed if m.kind == "embedding" else self._chat
             if slot and slot.model_id == m.id and slot.proc.poll() is None:
+                if (m.kind != "embedding" and m.backend != "mlx"
+                        and m.path not in self._tool_caps):
+                    caps = _probe_tool_calls(slot.base_url)
+                    if caps is not None:
+                        self._tool_caps[m.path] = caps
                 return slot.base_url
+            failed = self._failed.get(m.id)
+            if failed and time.monotonic() - failed[0] < _FAILED_LAUNCH_TTL:
+                raise failed[1]
             if slot:
                 self._stop_proc(slot)
-            proc = self._launch(m)
+            try:
+                proc = self._launch(m)
+            except Exception as error:
+                self._failed[m.id] = (time.monotonic(), error)
+                raise
+            self._failed.pop(m.id, None)
             if m.kind == "embedding":
                 self._embed = proc
             else:
                 self._chat = proc
+                caps = m.tools if m.backend == "mlx" else _probe_tool_calls(proc.base_url)
+                if caps is not None:
+                    self._tool_caps[m.path] = caps
             return proc.base_url
+
+    def supports_tool_calls(self, ref: str) -> Optional[bool]:
+        """Whether a launched model's template emits native tool calls.
+
+        None until the model has been launched once in this process.
+        """
+        m = self._resolve(ref)
+        if m is None:
+            return None
+        with self._lock:
+            return self._tool_caps.get(m.path)
 
     def _serving_context(self, m: LocalModel) -> int:
         """Context window to launch llama-server with.
@@ -199,43 +241,27 @@ class LocalModelServer:
         return cap
 
     def _launch(self, m: LocalModel) -> _Proc:
-        binary = self.find_binary()
-        if not binary:
-            configured = get_llama_server_path()
-            if configured:
-                raise RuntimeError(
-                    f"Configured llama-server path does not exist: {configured}. "
-                    "Fix it in Settings → AI → Local Models (or unset "
-                    "APOLLO_LLAMA_SERVER to auto-detect)."
-                )
-            hint = (
-                "winget install llama.cpp (or download a release build), then set "
-                "the binary path in Settings → AI → Local Models"
-                if os.name == "nt"
-                else "e.g. `brew install llama.cpp`, or build it via the Cookbook"
-            )
-            raise RuntimeError(f"llama-server not found. Install llama.cpp ({hint}).")
         port = _free_port(self._host)
-        cmd = [
-            binary, "--model", m.path,
-            "--host", self._host, "--port", str(port),
-            "-c", str(self._serving_context(m)),
-        ]
-        if m.kind == "embedding":
-            cmd.append("--embedding")
+        if m.backend == "mlx":
+            cmd, cwd = self._mlx_command(m, port)
+        else:
+            cmd, cwd = self._llama_command(m, port), None
         log_path = os.path.join(tempfile.gettempdir(), f"apollo-llama-{port}.log")
         logf = open(log_path, "w")
-        logger.info("Starting llama-server: %s", " ".join(cmd))
+        logger.info("Starting local model server: %s", " ".join(cmd))
         try:
-            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, text=True)
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT,
+                                    text=True, cwd=cwd)
         finally:
             # The child owns its own copy of the descriptor; keeping the
             # parent's open leaks one fd per model launch.
             logf.close()
         base_url = f"http://{self._host}:{port}"
         try:
-            self._wait_health(base_url, proc, log_path,
-                              timeout=self._health_timeout_for(m))
+            timeout = self._health_timeout_for(m)
+            self._wait_health(base_url, proc, log_path, timeout=timeout)
+            if m.backend == "mlx":
+                _wait_mlx_loaded(base_url, m.name, log_path, timeout)
         except Exception as error:
             report_exception(
                 logger,
@@ -257,6 +283,69 @@ class LocalModelServer:
             raise
         return _Proc(m.id, m.name, m.kind, port, proc, base_url, log_path)
 
+    def _mlx_command(self, m: LocalModel, port: int) -> tuple[list[str], str]:
+        """mlx_lm.server command plus the working directory to run it in.
+
+        mlx_lm.server loads whatever the request's `model` field names, and
+        Apollo sends the catalog name. Serving from a directory where that
+        name is a symlink to the model folder makes both resolve to the same
+        weights — no second load, and never a Hugging Face download attempt.
+        """
+        runtime = find_mlx_runtime()
+        if not runtime:
+            raise RuntimeError(
+                "mlx_lm not found. Install it (`pip install mlx-lm` in a Python "
+                "3.10+ environment), then set mlx_python_path in Settings or "
+                "APOLLO_MLX_PYTHON to that environment's python."
+            )
+        cwd = os.path.join(tempfile.gettempdir(), "apollo-mlx", m.id)
+        os.makedirs(cwd, exist_ok=True)
+        link = os.path.join(cwd, m.name)
+        parser = getattr(m, "mlx_parser", None)
+        if parser:
+            _write_overlay(m.path, link, parser)
+        elif os.path.realpath(link) != m.path:
+            if os.path.islink(link):
+                os.remove(link)
+            elif os.path.isdir(link):
+                shutil.rmtree(link)  # a previous launch's overlay
+            os.symlink(m.path, link)
+        return runtime + ["--model", m.name, "--host", self._host,
+                          "--port", str(port)], cwd
+
+    def _llama_command(self, m: LocalModel, port: int) -> list[str]:
+        binary = self.find_binary(m.arch)
+        if not binary:
+            configured = get_llama_server_path()
+            if configured:
+                raise RuntimeError(
+                    f"Configured llama-server path does not exist: {configured}. "
+                    "Fix it in Settings → AI → Local Models (or unset "
+                    "APOLLO_LLAMA_SERVER to auto-detect)."
+                )
+            hint = (
+                "winget install llama.cpp (or download a release build), then set "
+                "the binary path in Settings → AI → Local Models"
+                if os.name == "nt"
+                else "e.g. `brew install llama.cpp`, or build it via the Cookbook"
+            )
+            raise RuntimeError(f"llama-server not found. Install llama.cpp ({hint}).")
+        cmd = [
+            binary, "--model", m.path,
+            "--host", self._host, "--port", str(port),
+            "-c", str(self._serving_context(m)),
+        ]
+        if m.kind == "embedding":
+            cmd.append("--embedding")
+        # A vision model needs its projector or llama-server loads fine and then
+        # rejects every image with "image input is not supported". Guard on the
+        # file still existing: a catalog entry can outlive the file, and a bad
+        # --mmproj path fails the whole launch rather than just losing vision.
+        mmproj = getattr(m, "mmproj", None)
+        if mmproj and os.path.isfile(mmproj):
+            cmd += ["--mmproj", mmproj]
+        return cmd
+
     def _health_timeout_for(self, m: LocalModel) -> float:
         """Big GGUFs (external drives, MoE models) plus large -c values take
         far longer than the base timeout to load. Measured live: a 8.4GB 14B
@@ -272,8 +361,8 @@ class LocalModelServer:
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 raise RuntimeError(
-                    f"llama-server exited early (code {proc.returncode}):\n"
-                    f"{_tail(log_path)}"
+                    f"llama-server exited early (code {proc.returncode}); "
+                    f"full log: {log_path}\n{_tail(log_path)}"
                 )
             try:
                 with urllib.request.urlopen(url, timeout=2) as r:
@@ -281,7 +370,9 @@ class LocalModelServer:
                         return
             except (urllib.error.URLError, OSError, TimeoutError):
                 time.sleep(0.5)
-        raise TimeoutError("llama-server did not become healthy in time")
+        raise TimeoutError(
+            f"llama-server did not become healthy in time; full log: {log_path}"
+        )
 
     def _stop_proc(self, slot: _Proc) -> None:
         try:
@@ -326,6 +417,74 @@ class LocalModelServer:
                         "running": slot.proc.poll() is None, "base_url": slot.base_url,
                     }
             return out
+
+
+def _write_overlay(model_dir: str, overlay: str, parser: str) -> None:
+    """Rebuild `overlay` as a folder of symlinks into `model_dir`, with a
+    tokenizer_config.json copy that names the tool parser mlx_lm should use.
+    The user's model files are never modified."""
+    if os.path.realpath(overlay) == os.path.realpath(model_dir) and not os.path.islink(overlay):
+        raise RuntimeError(f"refusing to rebuild overlay over the model folder itself: {model_dir}")
+    if os.path.islink(overlay):
+        os.remove(overlay)
+    elif os.path.isdir(overlay):
+        shutil.rmtree(overlay)
+    os.makedirs(overlay)
+    for entry in os.listdir(model_dir):
+        if entry != "tokenizer_config.json":
+            os.symlink(os.path.join(model_dir, entry), os.path.join(overlay, entry))
+    cfg_path = os.path.join(model_dir, "tokenizer_config.json")
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError):
+        cfg = {}
+    cfg["tool_parser_type"] = parser
+    with open(os.path.join(overlay, "tokenizer_config.json"), "w", encoding="utf-8") as f:
+        json.dump(cfg, f)
+
+
+def _wait_mlx_loaded(base_url: str, name: str, log_path: str, timeout: float) -> None:
+    """Block until mlx_lm.server has the weights in memory.
+
+    Its /health answers "ok" before the model loads, so readiness is a
+    one-token completion; a load failure (e.g. unsupported model_type) comes
+    back as an error here instead of on the user's first message.
+    """
+    body = json.dumps({"model": name, "max_tokens": 1,
+                       "messages": [{"role": "user", "content": "hi"}]}).encode()
+    req = urllib.request.Request(base_url + "/v1/chat/completions", body,
+                                 {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            if r.status == 200:
+                return
+            status = r.status
+    except urllib.error.HTTPError as e:
+        status = e.code
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        status = repr(e)
+    raise RuntimeError(
+        f"mlx_lm.server could not load the model ({status}); full log: "
+        f"{log_path}\n{_tail(log_path)}"
+    )
+
+
+def _probe_tool_calls(base_url: str) -> Optional[bool]:
+    """Read chat_template_caps.supports_tool_calls from llama-server /props.
+
+    Name heuristics get this wrong both ways: Hermes-3, Mistral-7B and
+    Phi-3.5 GGUFs ship templates without tool support (they answer tool
+    schemas in prose), while fine-tunes like "Qwopus" support tools but don't
+    match any keyword. The template's own capabilities are authoritative.
+    """
+    try:
+        with urllib.request.urlopen(base_url + "/props", timeout=5) as r:
+            caps = json.loads(r.read()).get("chat_template_caps") or {}
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+        return None
+    value = caps.get("supports_tool_calls")
+    return value if isinstance(value, bool) else None
 
 
 def _tail(path: str, n: int = 2000) -> str:

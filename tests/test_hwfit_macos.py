@@ -5,6 +5,8 @@ guarantee that non-macOS (Linux/Windows) detection is unchanged.
 """
 
 from services.hwfit import hardware
+from unittest.mock import patch
+
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
 
@@ -35,13 +37,21 @@ def _fake_sysctl(brand="Apple M2 Pro", memsize_gb=32, wired_mb=None):
     return run
 
 
-def test_mlx_models_hidden_on_metal():
-    """MLX-quantized models can't be served by llama.cpp or Ollama (the only
-    Metal-capable engines Apollo generates), so they must never be recommended
-    on Apple Silicon — even though the catalog tags them as Apple-only."""
-    results = rank_models(_metal_system(), limit=900)
+def test_mlx_models_hidden_on_metal_without_mlx_lm():
+    """MLX models are served through mlx_lm.server (services/localmodels); with
+    no mlx_lm runtime installed they cannot run, so they must not be recommended
+    even though the catalog tags them as Apple-only."""
+    with patch("services.hwfit.fit._mlx_runtime_available", return_value=False):
+        results = rank_models(_metal_system(), limit=900)
     mlx = [m for m in results if str(m.get("quant", "")).startswith("mlx-")]
     assert mlx == [], f"MLX models surfaced but cannot be served: {[m['name'] for m in mlx]}"
+
+
+def test_mlx_models_offered_on_metal_with_mlx_lm():
+    with patch("services.hwfit.fit._mlx_runtime_available", return_value=True):
+        results = rank_models(_metal_system(ram_gb=128.0, vram_gb=96.0), limit=900)
+    mlx = [m for m in results if str(m.get("quant", "")).startswith("mlx-")]
+    assert mlx, "catalog has MLX models but none were recommended with mlx_lm present"
 
 
 def _cuda_system():

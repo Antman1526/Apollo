@@ -90,6 +90,7 @@ first/primary read site.
 | `OLLAMA_BASE_URL` / `OLLAMA_URL` | unset | Either name accepted (first-match) as an Ollama base URL override. | `app.py:1033-1034` |
 | `APOLLO_MODELS_DIRS` | unset | `,` or `os.pathsep`-separated directories scanned for on-disk GGUF chat/embedding models. Only consulted when the `local_model_dirs` setting is empty (settings → env → built-in per-platform defaults). | `services/localmodels/config.py:8,42` |
 | `APOLLO_LLAMA_SERVER` | unset | Path to the `llama-server` binary. Only consulted when the `llama_server_path` setting is empty (settings → env → auto-detect ""). This key is **not** listed in `DEFAULT_SETTINGS` — it's read/written directly as a raw dict key by `get_llama_server_path`/`set_llama_server_path`. | `services/localmodels/config.py:9,73` |
+| `APOLLO_MLX_PYTHON` | unset | Python interpreter with `mlx_lm` installed, used to run `mlx_lm.server` for MLX model folders (Apple Silicon). Only consulted when the `mlx_python_path` setting is empty (settings → env → `mlx_lm.server` on PATH). | `services/localmodels/config.py`, `services/localmodels/mlx.py` |
 | `APOLLO_LLAMA_CONTEXT` | `"16384"` | `int(...)`; context-length cap fed into `max(..., self._context)` when sizing the llama-server process. | `services/localmodels/server_manager.py:182` |
 | `APOLLO_LOCAL_MODEL_ID` | `""` | Fallback source for the browser-use verifier's model id when `APOLLO_BROWSER_USE_MODEL`/`PAPERCLIP_MODEL_NAME` are unset. | `services/paperclip/browser_use_verifier.py:129` |
 | `APOLLO_LOCAL_MODEL_IT` | unset | Test-only opt-in gate (`!= "1"` → skip) for an integration test that needs a real local model server running. | `tests/test_localmodels_integration.py:6` |
@@ -324,6 +325,13 @@ Two keys the task brief calls out by name are handled specially:
   `None` (not `""`) — callers use `.get("llama_server_path") or ""`.
   Resolution order: settings key → `APOLLO_LLAMA_SERVER` env → `""`
   (auto-detect).
+- `llama_server_k2_path` (raw key, not in `DEFAULT_SETTINGS`): a fork build
+  of `llama-server` used only for GGUFs whose `general.architecture` stock
+  llama.cpp rejects (`k2-horizon` → MBZUAI-IFM's fork). Missing file → the
+  default binary is used. See `ARCH_BINARY_SETTINGS` in
+  `services/localmodels/config.py`.
+- `mlx_python_path` (raw key): see `APOLLO_MLX_PYTHON` above. Parser verdicts
+  for MLX models are cached in `<data>/mlx_parsers.json`.
 
 ### 3.1 Per-user setting overrides
 

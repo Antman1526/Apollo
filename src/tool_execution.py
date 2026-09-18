@@ -7,6 +7,7 @@ Routes tool blocks to MCP servers or native implementations.
 Extracted from agent_tools.py.
 """
 
+import ast
 import asyncio
 import collections
 import json
@@ -213,6 +214,33 @@ PROGRESS_TAIL_LINES = 12
 def get_mcp_manager():
     from src import agent_tools
     return agent_tools.get_mcp_manager()
+
+
+def echo_last_expression(code: str) -> str:
+    """REPL-style echo: print the value of a trailing bare expression.
+
+    Models trained on notebooks send `48271 * 9973` and expect the value
+    back; as a script that prints nothing, and the agent gets "(no output)"
+    and retries. Only a top-level trailing expression is rewritten, a None
+    value stays silent (so `print(...)` last is not echoed twice), and code
+    that does not parse is left for the interpreter to report.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return code
+    if not tree.body or not isinstance(tree.body[-1], ast.Expr):
+        return code
+    last = tree.body[-1]
+    expr = ast.get_source_segment(code, last.value)
+    if expr is None:
+        return code
+    # Cut at the expression's own offset, not its line: `x = 1; x` keeps the
+    # assignment that shares the line.
+    lines = code.splitlines(keepends=True)
+    start = len("".join(lines[:last.lineno - 1])) + last.col_offset
+    return (code[:start] + "__apollo_last__ = (" + expr + ")\n"
+            "if __apollo_last__ is not None:\n    print(repr(__apollo_last__))\n")
 
 
 def _truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -529,7 +557,7 @@ async def _direct_fallback(
             proc = await asyncio.create_subprocess_exec(
                 # Use the running interpreter — there is no `python3.exe` on
                 # Windows, which made the agent's `python` tool fail there.
-                (sys.executable or "python"), "-I", "-c", content,
+                (sys.executable or "python"), "-I", "-c", echo_last_expression(content),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=_subproc_env,

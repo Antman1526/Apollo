@@ -193,3 +193,20 @@ def test_python_session_blocked_for_non_admin(monkeypatch):
 def test_python_session_in_mutating_tools_for_autonomy_dial():
     import src.tool_execution as te
     assert "python_session" in te._MUTATING_TOOLS
+
+
+def test_trailing_expression_is_echoed_like_a_notebook():
+    async def go():
+        m = PythonSessionManager()
+        try:
+            await m.run("s1", "x = 21")
+            r1 = await m.run("s1", "x * 2")
+            r2 = await m.run("s1", "print('p'); None")
+            r3 = await m.run("s1", "y = x")
+            return r1, r2, r3
+        finally:
+            await m.stop_all()
+    r1, r2, r3 = _run(go())
+    assert r1 == {"output": "42", "exit_code": 0}
+    assert r2["output"] == "p"
+    assert r3["output"] in ("", "(no output)") and r3["exit_code"] == 0

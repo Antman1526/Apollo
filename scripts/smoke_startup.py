@@ -29,8 +29,17 @@ def _get(url: str) -> tuple[int, bytes]:
 
 
 def _failure_message(process: subprocess.Popen[str]) -> str:
-    output = process.stdout.read() if process.stdout else ""
-    tail = output[-4000:].replace("\x1b", "")
+    # communicate() (not stdout.read()) drains the pipe and reaps the process
+    # together, bounded by a timeout — a plain read() blocks until EOF, which
+    # never comes if the boot deadline fired while the server was still
+    # alive and healthy (slow but not stuck), hanging this forever.
+    process.terminate()
+    try:
+        output, _ = process.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        output, _ = process.communicate(timeout=10)
+    tail = (output or "")[-4000:].replace("\x1b", "")
     return f"Apollo startup failed (exit={process.poll()}). Log tail:\n{tail}"
 
 

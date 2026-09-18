@@ -170,3 +170,35 @@ when a local model is actually used.
 - Pairing `mmproj` projectors with multimodal base models.
 - STT/TTS integration (separate spec).
 - Optional GPU offload flags (`-ngl`) auto-tuned via hwfit profiles.
+
+
+## 2026-09-18 update — MLX, fork runtimes, launch errors
+
+Verified on an M4 Max against a library of 20 GGUFs and 34 MLX folders.
+
+- **MLX folders** (`config.json` + `*.safetensors`, MLX-quantized or named
+  `*mlx*`) are discovered beside GGUFs (`services/localmodels/mlx.py`) and
+  served through `mlx_lm.server` with the same `LocalModelServer` lifecycle.
+  Runtime: `mlx_python_path` / `APOLLO_MLX_PYTHON` → `mlx_lm.server` on PATH.
+  `model_type`s the installed `mlx_lm` cannot load are `kind="unsupported"`;
+  the list is read from the package files, never by importing `mlx_lm`.
+- **Tool calls for MLX** follow `mlx_lm`'s own parser inference (run once per
+  folder in the runtime python, cached in `<data>/mlx_parsers.json`). A
+  template that uses one of `mlx_lm`'s parsers' exact markers but is missed
+  by its inference (LFM2.5 → `pythonic`) gets `tool_parser_type` injected via
+  an overlay folder of symlinks under the temp dir; the user's files are never
+  modified. gpt-oss (harmony markup) is parsed by Apollo itself
+  (`src/harmony.py`). A parser without an end marker (`mistral`) is treated
+  as no parser: mlx_lm 0.31 returns an empty message for it.
+- **Readiness**: `mlx_lm.server` answers `/health` before loading weights, so
+  a one-token completion is the readiness check.
+- **Per-architecture runtime**: `llama_server_k2_path` serves `k2-horizon`
+  GGUFs with MBZUAI-IFM's llama.cpp fork (`ARCH_BINARY_SETTINGS`).
+- **Launch errors**: `POST /api/local-models/{id}/start` returns llama.cpp's
+  headline line, the log tail and the log path instead of a fixed string.
+- **Tool mode** for `local://llama.cpp` models comes from the running model
+  (`/props` `chat_template_caps.supports_tool_calls`, or the MLX parser
+  verdict), not from a name heuristic.
+- **Settings** shows each scan directory as `N models` / `not mounted`
+  (`/Volumes/...` root absent) / `does not exist`.
+- **Not done**: MLX vision (needs `mlx-vlm`); MLX embedding models.
