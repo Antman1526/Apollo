@@ -404,6 +404,14 @@ def _format_upstream_error(status: int, body: bytes | str, url: str) -> str:
         j = json.loads(body) if body else {}
         if isinstance(j, dict):
             err = j.get("error") or j
+            if isinstance(err, dict) and err.get("type") == "exceed_context_size_error":
+                # llama.cpp: the request is bigger than the window it was
+                # started with. Say which numbers and how to fix it.
+                need, have = err.get("n_prompt_tokens"), err.get("n_ctx")
+                if isinstance(need, int) and isinstance(have, int):
+                    return (f"This request is {need:,} tokens, but the model is loaded with a "
+                            f"{have:,}-token context window. Start a new chat or shorten the "
+                            "message, or raise Settings → AI → Local Models → Context size.")
             if isinstance(err, dict):
                 detail = (err.get("message") or err.get("detail") or "").strip()
             elif isinstance(err, str):

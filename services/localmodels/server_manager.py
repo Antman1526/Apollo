@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from services.localmodels.scanner import LocalModel, scan_dirs
-from services.localmodels.config import get_arch_llama_server_path, get_llama_server_path
+from services.localmodels.config import get_arch_llama_server_path, get_llama_server_path, get_local_context
 from services.localmodels.mlx import find_mlx_runtime
 from src.observability import report_exception
 
@@ -62,6 +62,9 @@ class _Proc:
     proc: subprocess.Popen
     base_url: str
     log_path: str = ""
+    # Context window the server actually runs with (llama.cpp /props), which
+    # is what prompt budgeting must respect. 0 = not known.
+    n_ctx: int = 0
 
 
 def _free_port(host: str) -> int:
@@ -197,6 +200,8 @@ class LocalModelServer:
                 self._embed = proc
             else:
                 self._chat = proc
+                if m.backend != "mlx":
+                    proc.n_ctx = _probe_n_ctx(proc.base_url) or self._serving_context(m)
                 caps = m.tools if m.backend == "mlx" else _probe_tool_calls(proc.base_url)
                 if caps is not None:
                     self._tool_caps[m.path] = caps
@@ -231,19 +236,18 @@ class LocalModelServer:
         return bool(m.mmproj and os.path.isfile(m.mmproj))
 
     def _serving_context(self, m: LocalModel) -> int:
-        """Context window to launch llama-server with.
+        """Context window to launch llama-server with (0 = auto).
 
-        Apollo's prompt packer budgets against the model's KNOWN window, so a
-        fixed small -c rejects long chats with HTTP 400 ("request exceeds the
-        available context size"). Serve min(known window, cap) instead — the
-        cap (APOLLO_LLAMA_CONTEXT, default 16384) keeps the KV cache bounded;
-        the configured default stays the floor.
+        The configured window (Settings → AI → Local Models, else
+        APOLLO_LLAMA_CONTEXT, else 16384) bounds the KV cache, but never beyond
+        the model's own window. Auto (0) passes -c 0 and lets llama.cpp's
+        --fit choose the largest window that fits in free memory; the real
+        value is read back from /props after launch (see served_context).
         """
-        cap = self._context
-        try:
-            cap = max(int(os.getenv("APOLLO_LLAMA_CONTEXT", "16384")), self._context)
-        except ValueError:
-            cap = max(16384, self._context)
+        cap = get_local_context()
+        if cap == 0:
+            return 0
+        cap = max(cap, self._context)
         try:
             from src.model_context import _lookup_known
             known = _lookup_known(m.name or m.id)
@@ -259,6 +263,22 @@ class LocalModelServer:
         if known:
             return max(self._context, min(known, cap))
         return cap
+
+    def served_context(self, ref: str) -> Optional[int]:
+        """Context window prompts for this model must fit in, or None.
+
+        The running server's own n_ctx when it's up; otherwise the window it
+        will be launched with. None for MLX (mlx_lm has no fixed window), for
+        auto before the first launch, and for models that aren't ours.
+        """
+        m = self._resolve(ref)
+        if m is None or m.backend == "mlx":
+            return None
+        with self._lock:
+            slot = self._chat
+            if slot and slot.model_id == m.id and slot.proc.poll() is None and slot.n_ctx:
+                return slot.n_ctx
+        return self._serving_context(m) or None
 
     def _launch(self, m: LocalModel) -> _Proc:
         port = _free_port(self._host)
@@ -493,6 +513,17 @@ def _wait_mlx_loaded(base_url: str, name: str, log_path: str, timeout: float) ->
         f"mlx_lm.server could not load the model ({status}); full log: "
         f"{log_path}\n{_tail(log_path)}"
     )
+
+
+def _probe_n_ctx(base_url: str) -> Optional[int]:
+    """The context window a running llama-server actually allocated."""
+    try:
+        with urllib.request.urlopen(base_url + "/props", timeout=5) as r:
+            props = json.loads(r.read())
+    except (urllib.error.URLError, OSError, TimeoutError, ValueError):
+        return None
+    n = (props.get("default_generation_settings") or {}).get("n_ctx")
+    return n if isinstance(n, int) and n > 0 else None
 
 
 def _probe_tool_calls(base_url: str) -> Optional[bool]:

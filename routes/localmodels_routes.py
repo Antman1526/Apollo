@@ -19,8 +19,10 @@ from services.localmodels import lifecycle
 from services.localmodels.scanner import scan_dirs, discover_piper_voices
 from services.localmodels.config import (
     get_llama_server_path,
+    get_local_context,
     get_local_model_dirs,
     set_llama_server_path,
+    set_local_context,
     set_local_model_dirs,
 )
 from services.localmodels.server_manager import get_server
@@ -35,6 +37,10 @@ class DirsBody(BaseModel):
 
 class BinaryBody(BaseModel):
     path: str
+
+
+class ContextBody(BaseModel):
+    context: int
 
 
 def _dir_status(raw: str, catalog) -> dict:
@@ -130,6 +136,26 @@ def setup_localmodels_routes() -> APIRouter:
             "path": path,
             "resolved": get_server().find_binary() or "",
         }
+
+    @router.get("/context")
+    def get_context(request: Request):
+        """Context window local llama.cpp models run with (0 = auto)."""
+        require_admin(request)
+        return {"context": get_local_context()}
+
+    @router.put("/context")
+    def put_context(request: Request, body: ContextBody):
+        require_admin(request)
+        try:
+            context = set_local_context(body.context)
+        except ValueError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+        # A running server keeps the window it started with; stop it so the
+        # next message relaunches the model with the new size.
+        server = get_server()
+        restarted = [info["name"] for mid, info in server.status().items()
+                     if info.get("kind") == "chat" and server.stop(mid)]
+        return {"ok": True, "context": context, "restarted": restarted}
 
     @router.post("/{model_id}/start")
     def start(request: Request, model_id: str):

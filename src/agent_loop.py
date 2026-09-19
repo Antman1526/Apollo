@@ -1680,6 +1680,10 @@ async def stream_agent_loop(
                 reserve_tokens=reserve_tokens,
             )
             after_trim_tokens = estimate_tokens(trimmed_messages)
+            from src.context_compactor import context_notice, current_message_shortened
+            if current_message_shortened(messages, trimmed_messages):
+                _ctx_notice = context_notice(effective_budget, endpoint_url)
+                yield f'data: {json.dumps({"type": "context_notice", "message": _ctx_notice})}\n\n'
             if after_trim_tokens < before_trim_tokens:
                 logger.info(
                     "[agent] soft-trimmed context: %s -> %s tokens (budget=%s, reserve=%s)",

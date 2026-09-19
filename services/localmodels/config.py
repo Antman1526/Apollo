@@ -112,3 +112,35 @@ def get_mlx_python_path() -> str:
     if not path:
         path = os.getenv(MLX_PYTHON_ENV_VAR, "").strip()
     return os.path.expanduser(path) if path else ""
+
+
+CONTEXT_ENV_VAR = "APOLLO_LLAMA_CONTEXT"
+DEFAULT_LOCAL_CONTEXT = 16384
+# 0 = auto: llama.cpp's --fit picks the largest window that fits in memory.
+_CONTEXT_MIN, _CONTEXT_MAX = 2048, 1048576
+
+
+def get_local_context() -> int:
+    """Context window llama-server is launched with: settings → env → 16384.
+
+    0 means auto (let llama.cpp size it to the machine's free memory).
+    """
+    value = load_settings().get("local_model_context")
+    if value is None or value == "":
+        value = os.getenv(CONTEXT_ENV_VAR, "").strip() or DEFAULT_LOCAL_CONTEXT
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_LOCAL_CONTEXT
+    return n if n == 0 or _CONTEXT_MIN <= n <= _CONTEXT_MAX else DEFAULT_LOCAL_CONTEXT
+
+
+def set_local_context(n: int) -> int:
+    """Persist the local context window; 0 = auto. Raises ValueError if out of range."""
+    n = int(n)
+    if n != 0 and not _CONTEXT_MIN <= n <= _CONTEXT_MAX:
+        raise ValueError(f"context must be 0 (auto) or {_CONTEXT_MIN}-{_CONTEXT_MAX} tokens")
+    settings = load_settings()
+    settings["local_model_context"] = n
+    save_settings(settings)
+    return n

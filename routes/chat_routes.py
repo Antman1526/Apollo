@@ -903,6 +903,10 @@ def setup_chat_routes(
             # Auto-compact notification
             if ctx.was_compacted:
                 yield f"data: {json.dumps({'type': 'compacted', 'context_length': ctx.context_length})}\n\n"
+            if ctx.message_truncated:
+                from src.context_compactor import context_notice
+                _notice = context_notice(ctx.context_length, getattr(sess, "endpoint_url", "") or "")
+                yield f"data: {json.dumps({'type': 'context_notice', 'message': _notice})}\n\n"
 
             full_response = ""
             last_metrics = None
