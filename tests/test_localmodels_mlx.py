@@ -108,7 +108,11 @@ def test_mlx_command_serves_catalog_name_via_symlink(tmp_path):
         # Idempotent on relaunch.
         srv._mlx_command(_mlx_model(model_dir), 9124)
     assert cmd == ["/py", "-m", "mlx_lm.server", "--model", "Qwen-MLX",
-                   "--host", "127.0.0.1", "--port", "9123"]
+                   "--host", "127.0.0.1", "--port", "9123",
+                   # Without it mlx_lm caps a request that sets no max_tokens
+                   # (plain chat) at 512 and thinking models answer nothing.
+                   "--max-tokens", str(server_manager.MLX_DEFAULT_MAX_TOKENS)]
+    assert server_manager.MLX_DEFAULT_MAX_TOKENS > 512
     assert os.path.realpath(os.path.join(cwd, "Qwen-MLX")) == str(model_dir)
 
 
