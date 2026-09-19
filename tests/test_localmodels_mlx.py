@@ -177,3 +177,56 @@ def test_parser_cache_prunes_old_versions_and_missing_folders(tmp_path):
     mlx._prune_parser_cache("v1")
     assert list(mlx._PARSER_CACHE) == [f"v1|/py|{keep}|1.0"]
     mlx._PARSER_CACHE.clear()
+
+
+def _fake_venv(root, name=".mlx_lm_venv", with_mlx=True):
+    bin_dir = root / name / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / "python").write_text("")
+    if with_mlx:
+        pkg = root / name / "lib" / "python3.14" / "site-packages" / "mlx_lm"
+        pkg.mkdir(parents=True)
+        (pkg / "server.py").write_text("")
+    return str(bin_dir / "python")
+
+
+def _no_configured_or_path_runtime(monkeypatch):
+    monkeypatch.setattr(mlx, "get_mlx_python_path", lambda: "")
+    monkeypatch.setattr(mlx.shutil, "which", lambda name: None)
+    monkeypatch.setattr(mlx, "_SERVER_CANDIDATES", ())
+
+
+def test_runtime_found_in_a_venv_inside_a_model_dir(tmp_path, monkeypatch):
+    _no_configured_or_path_runtime(monkeypatch)
+    python = _fake_venv(tmp_path)
+    monkeypatch.setattr(mlx, "get_local_model_dirs", lambda: [str(tmp_path)])
+    monkeypatch.setattr(mlx.os.path, "expanduser",
+                        lambda p: str(tmp_path / "home") if p == "~" else p)
+    assert mlx.find_mlx_runtime() == [python, "-m", "mlx_lm.server"]
+
+
+def test_venv_without_mlx_lm_is_ignored(tmp_path, monkeypatch):
+    _no_configured_or_path_runtime(monkeypatch)
+    _fake_venv(tmp_path, name=".venv", with_mlx=False)
+    monkeypatch.setattr(mlx, "get_local_model_dirs", lambda: [str(tmp_path)])
+    monkeypatch.setattr(mlx.os.path, "expanduser",
+                        lambda p: str(tmp_path / "home") if p == "~" else p)
+    assert mlx.find_mlx_runtime() is None
+
+
+def test_standard_install_location_found_without_path(tmp_path, monkeypatch):
+    _no_configured_or_path_runtime(monkeypatch)
+    server = tmp_path / "mlx_lm.server"
+    server.write_text("#!/bin/sh\n")
+    server.chmod(0o755)
+    monkeypatch.setattr(mlx, "_SERVER_CANDIDATES", (str(server),))
+    assert mlx.find_mlx_runtime() == [str(server)]
+
+
+def test_configured_path_still_wins_over_detection(tmp_path, monkeypatch):
+    configured = tmp_path / "configured-python"
+    configured.write_text("")
+    monkeypatch.setattr(mlx, "get_mlx_python_path", lambda: str(configured))
+    monkeypatch.setattr(mlx, "get_local_model_dirs", lambda: [str(tmp_path)])
+    _fake_venv(tmp_path)
+    assert mlx.find_mlx_runtime() == [str(configured), "-m", "mlx_lm.server"]
