@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,14 @@ def is_public_blocked_tool(tool_name: Optional[str]) -> bool:
 
 
 def owner_is_admin_or_single_user(owner: Optional[str]) -> bool:
-    """Return True for admins, or when auth is not configured yet."""
+    """Return True for admins, or when auth is off or not configured yet."""
+    # AUTH_ENABLED=false is single-user mode (the macOS launcher's default):
+    # require_admin() and require_user() already treat every request as the
+    # local operator. Honor it here too — checking only is_configured meant
+    # an install that ever created an admin account hid python, bash, memory,
+    # email, calendar and tasks from its only user's agent.
+    if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+        return True
     try:
         from core.auth import AuthManager
 
