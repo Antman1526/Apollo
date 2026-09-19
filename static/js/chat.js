@@ -1904,9 +1904,9 @@ import { floorToolStart, floorToolEnd, floorTurnEnd, cockpitEvent } from './chat
               } else if (json.type === 'memories_used') {
                 if (_isBg) continue;
                 holder._memoriesUsed = json.data;
-              } else if (json.type === 'compacted') {
+              } else if (json.type === 'compacted' || json.type === 'context_notice') {
                 if (!_isBg) {
-                  uiModule.showToast('Context compacted — older messages summarized');
+                  uiModule.showToast(json.message || 'Context compacted — older messages summarized');
                 }
               } else if (json.type === 'metrics') {
                 metrics = json.data; cockpitEvent(json, _isBg);

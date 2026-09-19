@@ -13,7 +13,7 @@ from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
-from src.context_compactor import maybe_compact, trim_for_context
+from src.context_compactor import current_message_shortened, maybe_compact, trim_for_context
 from src.auth_helpers import get_current_user
 from src.prompt_security import untrusted_context_message
 from src.observability import report_exception
@@ -64,6 +64,9 @@ class ChatContext:
     # The chat route emits a doc_update SSE event for each before streaming
     # begins, so the editor pane switches to the new doc immediately.
     auto_opened_docs: list = field(default_factory=list)
+    # The user's own latest message had to be shortened to fit the model's
+    # context window (see trim_for_context); the route tells them so.
+    message_truncated: bool = False
 
 
 # ── Helpers ────────────────────────────────────────────────────────────── #
@@ -548,7 +551,9 @@ async def build_chat_context(
     messages, context_length, was_compacted = await maybe_compact(
         sess, sess.endpoint_url, sess.model, messages, sess.headers,
     )
+    untrimmed = messages
     messages = trim_for_context(messages, context_length)
+    message_truncated = current_message_shortened(untrimmed, messages)
 
     return ChatContext(
         preface=preface,
@@ -558,6 +563,7 @@ async def build_chat_context(
         messages=messages,
         context_length=context_length,
         was_compacted=was_compacted,
+        message_truncated=message_truncated,
         user=user,
         uprefs=uprefs,
         preset=preset,

@@ -144,6 +144,25 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
     return out
 
 
+def current_message_shortened(before: List[Dict], after: List[Dict]) -> bool:
+    """True when trimming cut into the latest user/assistant turn itself."""
+    def last_turn(msgs):
+        for m in reversed(msgs or []):
+            if m.get("role") != "system" and not m.get("_protected"):
+                return m.get("content")
+        return None
+    return last_turn(before) != last_turn(after)
+
+
+def context_notice(context_length: int, endpoint_url: str = "") -> str:
+    """What to tell the user when their own message had to be shortened."""
+    fix = ("Raise Settings → AI → Local Models → Context size to keep all of it."
+           if (endpoint_url or "").startswith("local://")
+           else "Start a new chat or use a model with a larger context window.")
+    return (f"Your message was too long for this model's {context_length:,}-token context "
+            f"window, so Apollo kept its beginning and end. {fix}")
+
+
 def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
     """Trim system messages to fit within context_length.
 

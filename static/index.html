@@ -2011,6 +2011,19 @@
               </div>
               <div id="set-localModelBinMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);"></div>
             </div>
+            <!-- Context window for llama.cpp models -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Context size</div>
+              <select id="set-localModelContext" class="settings-select" style="width:100%;">
+                <option value="8192">8K tokens — least memory</option>
+                <option value="16384">16K tokens (default)</option>
+                <option value="32768">32K tokens</option>
+                <option value="65536">64K tokens</option>
+                <option value="131072">128K tokens — most memory</option>
+                <option value="0">Auto — largest that fits in memory</option>
+              </select>
+              <div id="set-localModelContextMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">How much conversation a local GGUF model can hold. Larger uses more memory; long chats are summarised to fit.</div>
+            </div>
             <!-- Pull from Hugging Face -->
             <div style="margin-bottom:12px;">
               <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Pull from Hugging Face</div>

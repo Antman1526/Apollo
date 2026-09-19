@@ -171,6 +171,21 @@ def get_context_length(endpoint_url: str, model: str) -> int:
     or context_window fields. Caches result per model ID.
     Falls back to DEFAULT_CONTEXT if unavailable.
     """
+    if isinstance(endpoint_url, str) and endpoint_url.startswith("local://llama.cpp"):
+        # Apollo launches these itself, so it knows the real window. The
+        # model's advertised window (often 128k+) is not what llama-server
+        # was started with, and budgeting against it skipped compaction and
+        # sent requests the server rejects as over its context size.
+        try:
+            from services.localmodels.server_manager import get_server
+            served = get_server().served_context(model)
+        except Exception as error:
+            report_exception(logger, "model_context_local_served_lookup_failed",
+                             error, outcome="best_effort")
+            served = None
+        if served:
+            return served
+        return _lookup_known(model) or DEFAULT_CONTEXT
     is_local = _is_local_endpoint(endpoint_url)
     if not is_local and model in _context_cache:
         return _context_cache[model]
