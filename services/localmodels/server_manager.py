@@ -210,6 +210,23 @@ class LocalModelServer:
         with self._lock:
             return self._tool_caps.get(m.path)
 
+    def supports_vision(self, ref: str) -> Optional[bool]:
+        """Whether a catalogued model accepts images, from what is served.
+
+        llama.cpp models do when their projector is present (it is passed as
+        --mmproj); MLX models don't, since mlx_lm serves text only. None when
+        the model isn't one of ours.
+        """
+        m = self._resolve(ref)
+        if m is None:
+            self.refresh_catalog()
+            m = self._resolve(ref)
+        if m is None:
+            return None
+        if m.backend == "mlx":
+            return False
+        return bool(m.mmproj and os.path.isfile(m.mmproj))
+
     def _serving_context(self, m: LocalModel) -> int:
         """Context window to launch llama-server with.
 
