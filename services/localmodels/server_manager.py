@@ -47,6 +47,9 @@ def _bin_candidates() -> list[str]:
 
 
 _BIN_CANDIDATES = _bin_candidates()
+# Output cap mlx_lm.server applies when a request sets none (its own default
+# is 512). Generation still stops at end-of-turn; this only bounds runaways.
+MLX_DEFAULT_MAX_TOKENS = 32768
 _FAILED_LAUNCH_TTL = 30.0  # seconds a failed launch is replayed, not retried
 
 
@@ -310,8 +313,13 @@ class LocalModelServer:
             elif os.path.isdir(link):
                 shutil.rmtree(link)  # a previous launch's overlay
             os.symlink(m.path, link)
+        # Chat mode sends no max_tokens on purpose (a fixed cap made reasoning
+        # models spend it all thinking). llama-server treats that as
+        # unlimited; mlx_lm.server falls back to 512, which cut Qwen-family
+        # MLX models off mid-thought with an empty reply. Match llama.cpp.
         return runtime + ["--model", m.name, "--host", self._host,
-                          "--port", str(port)], cwd
+                          "--port", str(port),
+                          "--max-tokens", str(MLX_DEFAULT_MAX_TOKENS)], cwd
 
     def _llama_command(self, m: LocalModel, port: int) -> list[str]:
         binary = self.find_binary(m.arch)
