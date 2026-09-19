@@ -161,6 +161,23 @@ def model_supports_vision(model_name: str, endpoint_url: str = "") -> bool:
     """Whether a model accepts images, using the endpoint's reported
     capability when available (LM Studio) and falling back to name-based
     detection otherwise."""
+    if endpoint_url and endpoint_url.startswith("local://llama.cpp"):
+        # Apollo serves these itself, so it knows: a llama.cpp model with a
+        # projector takes images, anything else doesn't. Names can't tell —
+        # "Dirk-Qwen3.8-27B" ships a projector but matches no keyword.
+        try:
+            from services.localmodels.server_manager import get_server
+            served = get_server().supports_vision(model_name or "")
+        except Exception as error:
+            report_exception(
+                logger,
+                "chat_local_vision_lookup_failed",
+                error,
+                outcome="best_effort",
+            )
+            served = None
+        if served is not None:
+            return served
     if endpoint_url:
         try:
             advertised = lmstudio_supports_vision(endpoint_url, model_name or "")
