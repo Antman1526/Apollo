@@ -57,10 +57,16 @@ hiddenimports += [
     "uvicorn.protocols.websockets.auto",
     "uvicorn.protocols.websockets.websockets_impl",
     "uvicorn.protocols.websockets.wsproto_impl",
-    # upload_handler imports python-magic inside a try — make it explicit so
-    # hooks-contrib's hook-magic.py collects libmagic + the magic database.
-    "magic",
 ]
+# upload_handler imports python-magic inside a try — make it explicit so
+# hooks-contrib's hook-magic.py collects libmagic + the magic database.
+# Not on Windows: upload_handler never imports it there (loading libmagic via
+# ctypes is a native fault or an indefinite hang), and PyInstaller imports
+# every collected package while looking for DLLs — `import magic` runs
+# mime_magic.load() at import time and hung the Windows build forever.
+IS_WINDOWS = os.name == "nt"
+if not IS_WINDOWS:
+    hiddenimports.append("magic")
 
 # The app imports routes/services/etc. dynamically at startup; pull whole trees.
 for pkg in ("routes", "services", "core", "src", "companion", "mcp_servers", "config"):
@@ -114,7 +120,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tests", "pytest", "_pytest"],
+    excludes=["tests", "pytest", "_pytest"] + (["magic"] if IS_WINDOWS else []),
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
