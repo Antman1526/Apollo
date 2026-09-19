@@ -69,11 +69,15 @@ def test_mlx_hidden_on_cuda_backend_unchanged():
 
 def test_only_gguf_models_recommended_on_metal():
     """llama.cpp and Ollama (the only Metal engines) need GGUF. Safetensors-only
-    repos — incl. vLLM-only AWQ/GPTQ/FP8 — can't be served on Metal, so every
-    model recommended on Apple Silicon must ship a servable GGUF."""
+    repos — incl. vLLM-only AWQ/GPTQ/FP8 — can't be served on Metal, so without
+    mlx_lm every model recommended on Apple Silicon must ship a servable GGUF.
+    (Pinned: the result must not depend on whether this machine has mlx_lm;
+    the with-runtime case is test_mlx_models_offered_on_metal_with_mlx_lm.)"""
     catalog = {m["name"]: m for m in get_models()}
+    with patch("services.hwfit.fit._mlx_runtime_available", return_value=False):
+        ranked = rank_models(_metal_system(), limit=900)
     unservable = [
-        r["name"] for r in rank_models(_metal_system(), limit=900)
+        r["name"] for r in ranked
         if not (catalog.get(r["name"], {}).get("is_gguf")
                 or catalog.get(r["name"], {}).get("gguf_sources"))
     ]

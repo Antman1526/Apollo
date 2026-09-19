@@ -7,6 +7,7 @@ llama.cpp with the same lifecycle (see server_manager).
 from __future__ import annotations
 
 import ast
+import glob
 import hashlib
 import json
 import logging
@@ -16,24 +17,59 @@ import subprocess
 from functools import lru_cache
 from typing import Optional
 
-from services.localmodels.config import get_mlx_python_path
+from services.localmodels.config import get_local_model_dirs, get_mlx_python_path
 
 logger = logging.getLogger(__name__)
 
 _SKIP_DIRS = {"cache", ".cache", "llama-cache", "ollama", ".ollama", "blobs", "tmp", ".git"}
 
 
+# Where `pipx install mlx-lm`, `uv tool install mlx-lm` and Homebrew put the
+# entry point. Checked explicitly: a macOS GUI app's PATH has none of them.
+_SERVER_CANDIDATES = (
+    "~/.local/bin/mlx_lm.server",
+    "/opt/homebrew/bin/mlx_lm.server",
+    "/usr/local/bin/mlx_lm.server",
+)
+# Virtualenv names people give an mlx_lm install, looked for inside each
+# configured model directory and in the home directory.
+_VENV_NAMES = (".mlx_lm_venv", "mlx_lm_venv", ".mlx-venv", ".mlx_venv", ".venv", "venv")
+
+
+def _venv_with_mlx_lm(root: str) -> Optional[str]:
+    """Python of a venv under `root` that has mlx_lm installed (no import)."""
+    for name in _VENV_NAMES:
+        python = os.path.join(root, name, "bin", "python")
+        if not os.path.isfile(python):
+            continue
+        if glob.glob(os.path.join(root, name, "lib", "python*", "site-packages", "mlx_lm", "server.py")):
+            return python
+    return None
+
+
 def find_mlx_runtime() -> Optional[list[str]]:
     """Command prefix that runs mlx_lm.server, or None when not installed.
 
-    Configured python (Settings / APOLLO_MLX_PYTHON) wins; otherwise an
-    `mlx_lm.server` entry point on PATH. Apple Silicon only.
+    Configured python (Settings / APOLLO_MLX_PYTHON) wins. Otherwise, so MLX
+    models work without setup: an `mlx_lm.server` entry point on PATH or in a
+    standard install location, then a venv with mlx_lm inside a configured
+    model directory or the home directory. Apple Silicon only.
     """
     python = get_mlx_python_path()
     if python:
         return [python, "-m", "mlx_lm.server"] if os.path.isfile(python) else None
     server = shutil.which("mlx_lm.server")
-    return [server] if server else None
+    if server:
+        return [server]
+    for cand in _SERVER_CANDIDATES:
+        path = os.path.expanduser(cand)
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return [path]
+    for root in [*get_local_model_dirs(), os.path.expanduser("~")]:
+        python = _venv_with_mlx_lm(os.path.expanduser(root))
+        if python:
+            return [python, "-m", "mlx_lm.server"]
+    return None
 
 
 def _runtime_python(runtime: tuple[str, ...]) -> Optional[str]:
