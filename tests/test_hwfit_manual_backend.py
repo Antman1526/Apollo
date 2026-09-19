@@ -7,6 +7,8 @@ notably that "metal" is honoured (Apple Silicon is GGUF-only via llama.cpp /
 Ollama) instead of being silently coerced to CUDA.
 """
 
+from unittest.mock import patch
+
 from routes.hwfit_routes import _apply_manual_hardware, _MANUAL_BACKENDS
 from services.hwfit.fit import rank_models
 from services.hwfit.models import get_models
@@ -77,8 +79,12 @@ def test_simulated_metal_box_only_recommends_gguf():
         manual_mode="gpu", manual_vram_gb="48", manual_backend="metal",
     )
     catalog = {m["name"]: m for m in get_models()}
+    # Pinned: MLX is also servable when this machine has mlx_lm installed;
+    # this test is about the GGUF rule, so it must not depend on that.
+    with patch("services.hwfit.fit._mlx_runtime_available", return_value=False):
+        ranked = rank_models(system, limit=900)
     unservable = [
-        r["name"] for r in rank_models(system, limit=900)
+        r["name"] for r in ranked
         if not (catalog.get(r["name"], {}).get("is_gguf")
                 or catalog.get(r["name"], {}).get("gguf_sources"))
     ]
