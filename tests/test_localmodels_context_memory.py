@@ -229,7 +229,7 @@ def test_compaction_summarises_in_bounded_chunks(monkeypatch):
 
     monkeypatch.setattr(context_compactor, "llm_call_async", fake_llm)
     monkeypatch.setattr(context_compactor, "get_context_length", lambda u, m: 4000)
-    monkeypatch.setattr(context_compactor, "resolve_endpoint", lambda role: (None, None, None))
+    monkeypatch.setattr(context_compactor, "resolve_endpoint", lambda role, **kw: (None, None, None))
     msgs = _long_chat()
     out, ctx, compacted = _run(context_compactor.maybe_compact(None, "local://llama.cpp", "Swift", msgs))
     assert compacted is True
@@ -247,7 +247,7 @@ def test_compaction_failure_keeps_the_conversation(monkeypatch):
 
     monkeypatch.setattr(context_compactor, "llm_call_async", boom)
     monkeypatch.setattr(context_compactor, "get_context_length", lambda u, m: 4000)
-    monkeypatch.setattr(context_compactor, "resolve_endpoint", lambda role: (None, None, None))
+    monkeypatch.setattr(context_compactor, "resolve_endpoint", lambda role, **kw: (None, None, None))
     msgs = _long_chat()
     out, ctx, compacted = _run(context_compactor.maybe_compact(None, "http://127.0.0.1:1/v1", "Swift", msgs))
     assert compacted is False

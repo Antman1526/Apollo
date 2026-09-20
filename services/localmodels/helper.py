@@ -51,3 +51,25 @@ def helper_name() -> Optional[str]:
     from services.localmodels.server_manager import get_server
     m = get_helper(get_server().catalog())
     return m.name if m else None
+
+
+_FAST_LANE_MARKER = "fast_lane_auto_enabled_v1"
+
+
+def enable_fast_lane_once() -> bool:
+    """Turn the Fast Lane on for installs that predate the helper model.
+
+    mixture_routing_enabled used to default to off and that value was written
+    to settings.json, so flipping the code default alone changes nothing for
+    an existing install. Runs once per install (marker key); a user who turns
+    it off afterwards keeps it off. Returns True when it changed the setting.
+    """
+    from src.settings import save_settings
+    settings = load_settings()
+    if settings.get(_FAST_LANE_MARKER):
+        return False
+    settings[_FAST_LANE_MARKER] = True
+    changed = not settings.get("mixture_routing_enabled", False)
+    settings["mixture_routing_enabled"] = True
+    save_settings(settings)
+    return changed

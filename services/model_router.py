@@ -51,7 +51,8 @@ def classify_message(message: str) -> str:
 
 
 def route_chat(
-    message: str, owner: Optional[str] = None
+    message: str, owner: Optional[str] = None,
+    session_url: Optional[str] = None, session_model: Optional[str] = None,
 ) -> Optional[Tuple[str, str, Dict]]:
     """(url, model, headers) for the light lane, or None to keep the default.
 
@@ -65,9 +66,13 @@ def route_chat(
         if classify_message(message) != "light":
             return None
         from src.endpoint_resolver import resolve_endpoint
-        url, model, headers = resolve_endpoint("light", owner=owner)
+        url, model, headers = resolve_endpoint(
+            "light", fallback_url=session_url, fallback_model=session_model, owner=owner,
+        )
         if not url or not model:
             return None
+        if url == session_url and model == session_model:
+            return None  # nothing lighter than the session model itself
         return url, model, headers or {}
     except Exception:
         logger.exception("mixture routing failed (falling back to default)")

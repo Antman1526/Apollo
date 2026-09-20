@@ -24,3 +24,9 @@ def startup_scan() -> None:
         rescan()
     except Exception as e:
         logger.warning("Local model startup scan failed: %s", e)
+    try:
+        from services.localmodels.helper import enable_fast_lane_once
+        if enable_fast_lane_once():
+            logger.info("Fast Lane routing enabled (helper model answers short messages)")
+    except Exception as e:
+        logger.warning("Fast Lane migration failed: %s", e)

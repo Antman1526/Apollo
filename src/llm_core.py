@@ -981,7 +981,7 @@ async def llm_call_async(
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     # Offload to a thread: for a local:// model this can block up to ~3 min on
     # first load (launch + health), and we must not stall the event loop.
-    _lease = _local_lease(url, model)
+    _lease_url = url  # the local:// sentinel, before materialize rewrites it
     url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
@@ -1043,7 +1043,8 @@ async def llm_call_async(
         try:
             note_model_activity(target_url, model)
             client = _get_http_client()
-            with _lease:
+            # A context manager from @contextmanager is single-use: one per attempt.
+            with _local_lease(_lease_url, model):
                 r = await client.post(target_url, headers=h, json=payload, timeout=call_timeout)
             duration = time.time() - start
             if not r.is_success:

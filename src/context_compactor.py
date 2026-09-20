@@ -350,7 +350,9 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility")
+    util_url, util_model, util_headers = resolve_endpoint(
+        "utility", fallback_url=endpoint_url, fallback_model=model, fallback_headers=headers,
+    )
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers

@@ -72,12 +72,20 @@ def test_helper_fills_utility_and_light_but_not_explicit_settings():
     with patch.object(endpoint_resolver, "_helper_endpoint", return_value=("local://llama.cpp/chat/completions", "Qwen3VL-8B", {})), \
          patch("src.settings.load_settings", return_value={"utility_endpoint_id": "", "light_endpoint_id": "", "default_endpoint_id": "", "task_endpoint_id": ""}), \
          patch("src.settings.get_user_setting", lambda k, o, d: d):
-        assert endpoint_resolver.resolve_endpoint("utility")[1] == "Qwen3VL-8B"
-        assert endpoint_resolver.resolve_endpoint("light")[1] == "Qwen3VL-8B"
-        # The helper beats a session-model fallback for these roles.
-        assert endpoint_resolver.resolve_endpoint("utility", "http://x", "big-model", {})[1] == "Qwen3VL-8B"
+        # A local session gets the helper for these roles...
+        assert endpoint_resolver.resolve_endpoint("utility", "local://llama.cpp/chat/completions", "Swift-27B", {})[1] == "Qwen3VL-8B"
+        assert endpoint_resolver.resolve_endpoint("light", "local://llama.cpp/chat/completions", "Swift-27B", {})[1] == "Qwen3VL-8B"
+        # ...a cloud session keeps its own model, a GGUF on disk notwithstanding.
+        assert endpoint_resolver.resolve_endpoint("utility", "https://api.openai.com/v1", "gpt-5", {})[1] == "gpt-5"
+        assert endpoint_resolver.resolve_endpoint("light", "https://api.openai.com/v1", "gpt-5", {})[1] == "gpt-5"
         # Other roles (task, research) are untouched by the helper.
-        assert endpoint_resolver.resolve_endpoint("task", "http://x", "big-model", {})[1] == "big-model"
+        assert endpoint_resolver.resolve_endpoint("task", "local://llama.cpp/chat/completions", "Swift-27B", {})[1] == "Swift-27B"
+    # No session given: only when the default chat model is local.
+    with patch.object(endpoint_resolver, "_helper_endpoint", return_value=("local://llama.cpp/chat/completions", "Qwen3VL-8B", {})), \
+         patch.object(endpoint_resolver, "_session_is_local", return_value=True), \
+         patch("src.settings.load_settings", return_value={"utility_endpoint_id": "", "default_endpoint_id": ""}), \
+         patch("src.settings.get_user_setting", lambda k, o, d: d):
+        assert endpoint_resolver.resolve_endpoint("utility")[1] == "Qwen3VL-8B"
     with patch.object(endpoint_resolver, "_helper_endpoint", return_value=None), \
          patch("src.settings.load_settings", return_value={"utility_endpoint_id": ""}), \
          patch("src.settings.get_user_setting", lambda k, o, d: d):
@@ -189,7 +197,7 @@ def test_compaction_backs_off_after_repeated_failures(monkeypatch):
 
     monkeypatch.setattr(context_compactor, "llm_call_async", boom)
     monkeypatch.setattr(context_compactor, "get_context_length", lambda u, m: 4000)
-    monkeypatch.setattr(context_compactor, "resolve_endpoint", lambda role: (None, None, None))
+    monkeypatch.setattr(context_compactor, "resolve_endpoint", lambda role, **kw: (None, None, None))
     msgs = [{"role": "system", "content": "sys"}] + [
         {"role": "user" if i % 2 == 0 else "assistant", "content": f"m{i} " + "x" * 1500} for i in range(40)]
     sess = _Session()
@@ -236,3 +244,59 @@ def test_helper_reasoning_idle_routes(monkeypatch):
     assert c.put("/api/local-models/reasoning", json={"value": -5}).status_code == 400
     assert c.put("/api/local-models/idle", json={"value": 10}).json()["value"] == 10
     assert c.get("/api/local-models/idle").json() == {"value": 10}
+
+
+def test_route_chat_never_routes_to_the_session_model_itself():
+    from services import model_router
+    with patch.object(model_router, "get_setting", lambda k, d=None: True), \
+         patch("src.endpoint_resolver.resolve_endpoint",
+               return_value=("local://llama.cpp/chat/completions", "Swift-27B", {})):
+        assert model_router.route_chat("thanks!", session_url="local://llama.cpp/chat/completions",
+                                       session_model="Swift-27B") is None
+    with patch.object(model_router, "get_setting", lambda k, d=None: True), \
+         patch("src.endpoint_resolver.resolve_endpoint",
+               return_value=("local://llama.cpp/chat/completions", "Qwen3VL-8B", {})):
+        assert model_router.route_chat("thanks!", session_url="local://llama.cpp/chat/completions",
+                                       session_model="Swift-27B")[1] == "Qwen3VL-8B"
+
+
+def test_llm_call_async_retries_take_a_fresh_lease_each_attempt(monkeypatch):
+    import httpx
+    leases = []
+
+    class _Resp:
+        status_code = 200
+        is_success = True
+        text = ""
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class _Client:
+        calls = 0
+
+        async def post(self, *a, **kw):
+            _Client.calls += 1
+            if _Client.calls == 1:
+                raise httpx.ReadTimeout("slow")
+            return _Resp()
+
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: _Client())
+    monkeypatch.setattr(llm_core, "materialize_local_url", lambda u, m: "http://127.0.0.1:9/v1/chat/completions")
+    import contextlib
+    monkeypatch.setattr(llm_core, "_local_lease", lambda u, m: (leases.append(u), contextlib.nullcontext())[1])
+    out = asyncio.run(llm_core.llm_call_async("local://llama.cpp/chat/completions", "Swift-27B",
+                                              [{"role": "user", "content": "hi"}], max_retries=3))
+    assert out == "ok" and _Client.calls == 2
+    assert leases == ["local://llama.cpp/chat/completions"] * 2  # one lease per attempt
+
+
+def test_fast_lane_is_enabled_once_for_older_installs():
+    saved = {"mixture_routing_enabled": False}
+    with patch.object(helper, "load_settings", lambda: dict(saved)), \
+         patch("src.settings.save_settings", saved.update):
+        assert helper.enable_fast_lane_once() is True
+        assert saved["mixture_routing_enabled"] is True
+        saved["mixture_routing_enabled"] = False  # the user turns it off again
+        assert helper.enable_fast_lane_once() is False  # not flipped back
+        assert saved["mixture_routing_enabled"] is False
