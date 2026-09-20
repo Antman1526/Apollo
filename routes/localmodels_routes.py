@@ -20,9 +20,11 @@ from services.localmodels.scanner import scan_dirs, discover_piper_voices
 from services.localmodels.config import (
     get_llama_server_path,
     get_local_context,
+    get_local_kv_cache,
     get_local_model_dirs,
     set_llama_server_path,
     set_local_context,
+    set_local_kv_cache,
     set_local_model_dirs,
 )
 from services.localmodels.server_manager import get_server
@@ -41,6 +43,17 @@ class BinaryBody(BaseModel):
 
 class ContextBody(BaseModel):
     context: int
+
+
+class KvCacheBody(BaseModel):
+    kv_cache: str
+
+
+def _restart_chat_models(server) -> list[str]:
+    """Stop running chat models so the next message relaunches them with new
+    launch settings; embedding models keep running. Returns the names."""
+    return [info["name"] for mid, info in server.status().items()
+            if info.get("kind") == "chat" and server.stop(mid)]
 
 
 def _dir_status(raw: str, catalog) -> dict:
@@ -152,10 +165,22 @@ def setup_localmodels_routes() -> APIRouter:
             return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
         # A running server keeps the window it started with; stop it so the
         # next message relaunches the model with the new size.
-        server = get_server()
-        restarted = [info["name"] for mid, info in server.status().items()
-                     if info.get("kind") == "chat" and server.stop(mid)]
-        return {"ok": True, "context": context, "restarted": restarted}
+        return {"ok": True, "context": context, "restarted": _restart_chat_models(get_server())}
+
+    @router.get("/kv-cache")
+    def get_kv_cache(request: Request):
+        """KV-cache precision llama.cpp chat models run with (q8_0 or f16)."""
+        require_admin(request)
+        return {"kv_cache": get_local_kv_cache()}
+
+    @router.put("/kv-cache")
+    def put_kv_cache(request: Request, body: KvCacheBody):
+        require_admin(request)
+        try:
+            value = set_local_kv_cache(body.kv_cache)
+        except ValueError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+        return {"ok": True, "kv_cache": value, "restarted": _restart_chat_models(get_server())}
 
     @router.post("/{model_id}/start")
     def start(request: Request, model_id: str):

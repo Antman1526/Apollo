@@ -27,58 +27,71 @@ export function refreshLlamaBinary(el) {
     .then(function(r) { return r.json(); })
     .then(function(d) { _renderLlamaBinary(el, d); })
     .catch(function() { /* section already surfaces load errors */ });
-  _refreshLocalContext(el);
+  _refreshLocalSelects(el);
 }
 
-// Context window llama.cpp models are launched with. Apollo budgets prompts
-// against it (long chats get summarised to fit), so a bigger window keeps more
-// of the conversation at the cost of memory. 0 = auto (llama.cpp --fit).
-function _refreshLocalContext(el) {
-  var sel = el('set-localModelContext');
-  if (!sel) return;
-  fetch('/api/local-models/context', { credentials: 'same-origin' })
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      var v = String(d.context);
-      var known = Array.prototype.some.call(sel.options, function(o) { return o.value === v; });
-      if (!known) {
-        var opt = document.createElement('option');
-        opt.value = v;
-        opt.textContent = Number(v).toLocaleString() + ' tokens (custom)';
-        sel.appendChild(opt);
-      }
-      sel.value = v;
-    })
-    .catch(function() { /* section already surfaces load errors */ });
-}
+// Launch settings for local llama.cpp models: the context window (Apollo
+// budgets prompts against it, capped at each model's own limit) and the KV
+// cache precision (8-bit halves the memory a window takes). Each is a select
+// backed by GET/PUT /api/local-models/<path>; saving restarts the running
+// chat model so it applies to the next message.
+var _LOCAL_SELECTS = [
+  { id: 'set-localModelContext', msg: 'set-localModelContextMsg', path: '/api/local-models/context', key: 'context', number: true },
+  { id: 'set-localModelKvCache', msg: 'set-localModelKvCacheMsg', path: '/api/local-models/kv-cache', key: 'kv_cache', number: false }
+];
 
-function _wireLocalContext(el) {
-  var sel = el('set-localModelContext');
-  var msg = el('set-localModelContextMsg');
-  if (!sel) return;
-  sel.addEventListener('change', function() {
-    fetch('/api/local-models/context', {
-      method: 'PUT',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ context: parseInt(sel.value, 10) })
-    }).then(function(r) { return r.json(); })
+function _refreshLocalSelects(el) {
+  _LOCAL_SELECTS.forEach(function(spec) {
+    var sel = el(spec.id);
+    if (!sel) return;
+    fetch(spec.path, { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
       .then(function(d) {
-        if (!msg) return;
-        if (d.ok === false) { msg.textContent = d.error || 'Could not save.'; msg.style.color = '#c0392b'; return; }
-        msg.style.color = '';
-        msg.textContent = 'Saved. ' + ((d.restarted && d.restarted.length)
-          ? d.restarted.join(', ') + ' will reload with the new size on your next message.'
-          : 'Applies the next time a model loads.');
+        var v = String(d[spec.key]);
+        var known = Array.prototype.some.call(sel.options, function(o) { return o.value === v; });
+        if (!known) {
+          var opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = (spec.number ? Number(v).toLocaleString() + ' tokens' : v) + ' (custom)';
+          sel.appendChild(opt);
+        }
+        sel.value = v;
       })
-      .catch(function(e) {
-        if (msg) { msg.textContent = 'Failed to save: ' + e.message; msg.style.color = '#c0392b'; }
-      });
+      .catch(function() { /* section already surfaces load errors */ });
+  });
+}
+
+function _wireLocalSelects(el) {
+  _LOCAL_SELECTS.forEach(function(spec) {
+    var sel = el(spec.id);
+    var msg = el(spec.msg);
+    if (!sel) return;
+    sel.addEventListener('change', function() {
+      var body = {};
+      body[spec.key] = spec.number ? parseInt(sel.value, 10) : sel.value;
+      fetch(spec.path, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      }).then(function(r) { return r.json(); })
+        .then(function(d) {
+          if (!msg) return;
+          if (d.ok === false) { msg.textContent = d.error || 'Could not save.'; msg.style.color = '#c0392b'; return; }
+          msg.style.color = '';
+          msg.textContent = 'Saved. ' + ((d.restarted && d.restarted.length)
+            ? d.restarted.join(', ') + ' will reload with the new setting on your next message.'
+            : 'Applies the next time a model loads.');
+        })
+        .catch(function(e) {
+          if (msg) { msg.textContent = 'Failed to save: ' + e.message; msg.style.color = '#c0392b'; }
+        });
+    });
   });
 }
 
 export function wireLlamaBinaryField(el) {
-  _wireLocalContext(el);
+  _wireLocalSelects(el);
   var binSave = el('set-localModelBinSave');
   var binInput = el('set-localModelBinInput');
   if (!binSave || !binInput) return;

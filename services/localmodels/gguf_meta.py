@@ -17,12 +17,21 @@ _STRING = 8
 _ARRAY = 9
 
 
-def read_architecture(path: str, max_kv: int = 64) -> Optional[str]:
-    """Return general.architecture from a GGUF file, or None when unreadable."""
+_FMT = {0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i", 6: "<f", 7: "<?",
+        10: "<Q", 11: "<q", 12: "<d"}
+
+
+def read_metadata(path: str, max_kv: int = 96) -> dict:
+    """general.architecture and <arch>.context_length from a GGUF header.
+
+    Returns {"architecture": str|None, "context_length": int|None}; both None
+    when the file is unreadable. Only the KV section is read.
+    """
+    out = {"architecture": None, "context_length": None}
     try:
         with open(path, "rb") as f:
             if f.read(4) != b"GGUF":
-                return None
+                return out
             struct.unpack("<I", f.read(4))          # version
             struct.unpack("<Q", f.read(8))          # n_tensors
             (n_kv,) = struct.unpack("<Q", f.read(8))
@@ -49,11 +58,22 @@ def read_architecture(path: str, max_kv: int = 64) -> Optional[str]:
                 key = read_str()
                 (t,) = struct.unpack("<I", f.read(4))
                 if key == "general.architecture" and t == _STRING:
-                    return read_str()
-                skip(t)
+                    out["architecture"] = read_str()
+                elif key.endswith(".context_length") and t in _FMT and t not in (6, 7, 12):
+                    (val,) = struct.unpack(_FMT[t], f.read(_SIZES[t]))
+                    out["context_length"] = int(val) if val > 0 else None
+                else:
+                    skip(t)
+                if out["architecture"] and out["context_length"]:
+                    break
     except Exception as e:
         logger.debug("GGUF header read failed for %s: %s", path, e)
-    return None
+    return out
+
+
+def read_architecture(path: str, max_kv: int = 64) -> Optional[str]:
+    """Return general.architecture from a GGUF file, or None when unreadable."""
+    return read_metadata(path, max_kv)["architecture"]
 
 
 # Architectures llama-server serves as pure embedding endpoints (not chat).
