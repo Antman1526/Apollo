@@ -43,18 +43,35 @@ param(
     [int]$ContextK = 16,
     [switch]$Json,
     [switch]$Download,
-    [string]$Dest = (Join-Path $env:USERPROFILE "Desktop\AI_Models")
+    [string]$Dest = ""
 )
 
 $ErrorActionPreference = "Stop"
 $GB = 1GB
+if (-not $Dest) {
+    # Apollo's default scan folder on Windows; $HOME on other systems (pwsh
+    # runs on Linux/macOS too, and USERPROFILE is unset there).
+    $homeDir = if ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
+    $Dest = Join-Path $homeDir "Desktop/AI_Models"
+}
 
 function Get-MachineMemory {
     $ramBytes = 0; $vramBytes = 0; $gpuName = ""
     try {
-        $cs = Get-CimInstance -ClassName Win32_ComputerSystem
+        $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop
         $ramBytes = [int64]$cs.TotalPhysicalMemory
     } catch { }
+    if ($ramBytes -eq 0) {
+        # Not Windows: /proc/meminfo (Linux) or sysctl (macOS).
+        try {
+            if (Test-Path /proc/meminfo) {
+                $kb = (Select-String -Path /proc/meminfo -Pattern "^MemTotal:\s+(\d+)").Matches[0].Groups[1].Value
+                $ramBytes = [int64]$kb * 1KB
+            } elseif (Get-Command sysctl -ErrorAction SilentlyContinue) {
+                $ramBytes = [int64](& sysctl -n hw.memsize 2>$null)
+            }
+        } catch { }
+    }
     # NVIDIA: nvidia-smi reports real VRAM. Win32_VideoController.AdapterRAM
     # is a 32-bit field and lies above 4 GB, so it is only the fallback.
     $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
@@ -70,7 +87,7 @@ function Get-MachineMemory {
     }
     if ($vramBytes -eq 0) {
         try {
-            $gpu = Get-CimInstance -ClassName Win32_VideoController | Sort-Object AdapterRAM -Descending | Select-Object -First 1
+            $gpu = Get-CimInstance -ClassName Win32_VideoController -ErrorAction Stop | Sort-Object AdapterRAM -Descending | Select-Object -First 1
             if ($gpu) { $gpuName = $gpu.Name; $vramBytes = [int64]$gpu.AdapterRAM }
         } catch { }
     }
