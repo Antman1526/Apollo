@@ -173,3 +173,41 @@ def set_local_kv_cache(value: str) -> str:
     settings["local_model_kv_cache"] = value
     save_settings(settings)
     return value
+
+
+def get_reasoning_budget() -> int:
+    """Thinking budget for llama.cpp chat models: -1 unlimited, 0 off, N tokens."""
+    try:
+        n = int(load_settings().get("local_model_reasoning_budget", -1))
+    except (TypeError, ValueError):
+        return -1
+    return n if n >= -1 else -1
+
+
+def set_reasoning_budget(n: int) -> int:
+    n = int(n)
+    if n < -1 or n > 1_000_000:
+        raise ValueError("reasoning budget must be -1 (unlimited), 0 (off) or up to 1,000,000 tokens")
+    settings = load_settings()
+    settings["local_model_reasoning_budget"] = n
+    save_settings(settings)
+    return n
+
+
+def get_idle_minutes() -> int:
+    """Minutes a local model may sit unused before it is unloaded; 0 = never."""
+    try:
+        n = int(load_settings().get("local_model_idle_minutes", 30))
+    except (TypeError, ValueError):
+        return 30
+    return max(0, n)
+
+
+def set_idle_minutes(n: int) -> int:
+    n = int(n)
+    if n < 0 or n > 10080:
+        raise ValueError("idle minutes must be 0 (never) to 10080")
+    settings = load_settings()
+    settings["local_model_idle_minutes"] = n
+    save_settings(settings)
+    return n

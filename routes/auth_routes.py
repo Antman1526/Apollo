@@ -7,7 +7,7 @@ import asyncio
 import logging
 import os
 
-from core.auth import AuthManager
+from core.auth import ADMIN_PRIVILEGES, AuthManager
 from src.rate_limiter import RateLimiter
 from src.observability import report_exception
 from src.settings_scrub import scrub_settings
@@ -185,6 +185,14 @@ def setup_auth_routes(auth_manager: AuthManager) -> APIRouter:
     async def auth_status(request: Request):
         token = request.cookies.get(SESSION_COOKIE)
         result = auth_manager.status(token)
+        if os.getenv("AUTH_ENABLED", "true").lower() == "false":
+            # Auth is off (the desktop launcher's default): the caller is the
+            # local operator, which every backend gate already treats as
+            # admin. Reporting is_admin=false here made the frontend hide the
+            # admin-only settings — Local Models included — from the app's
+            # only user. Not "authenticated": there is no account session.
+            result["is_admin"] = True
+            result["privileges"] = dict(ADMIN_PRIVILEGES)
         result["signup_enabled"] = auth_manager.signup_enabled
         # Include the caller's effective privileges so the frontend can
         # hide / dim UI controls the user isn't allowed to use. Admins get

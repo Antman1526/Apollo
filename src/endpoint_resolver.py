@@ -209,6 +209,39 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     return headers
 
 
+def _session_is_local(fallback_url: Optional[str], stg) -> bool:
+    """The helper only steps in for local sessions: a caller whose session
+    runs on the managed local endpoint, or — with no session given — a
+    default chat model that does. Someone chatting through a cloud API must
+    not have their summaries or short replies answered by a GGUF that
+    happens to be on disk."""
+    if fallback_url:
+        return fallback_url.startswith("local://")
+    ep_id = stg("default_endpoint_id")
+    if not ep_id:
+        return False
+    db = SessionLocal()
+    try:
+        ep = db.query(ModelEndpoint).filter(ModelEndpoint.id == ep_id).first()
+        return bool(ep and (ep.base_url or "").startswith("local://"))
+    finally:
+        db.close()
+
+
+def _helper_endpoint() -> Optional[Tuple[str, str, Dict]]:
+    """(url, model, headers) for the local helper model, or None."""
+    try:
+        from services.localmodels.helper import helper_name
+        from services.localmodels.registry import LOCAL_BASE_URL
+        name = helper_name()
+        if not name:
+            return None
+        return build_chat_url(normalize_base(LOCAL_BASE_URL)), name, {}
+    except Exception as error:
+        report_exception(logger, "helper_endpoint_resolution_failed", error, outcome="best_effort")
+        return None
+
+
 def resolve_endpoint(
     setting_prefix: str,
     fallback_url: Optional[str] = None,
@@ -247,6 +280,15 @@ def resolve_endpoint(
 
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
+
+    # Unset Utility / Fast Lane: the helper model — a small local model that
+    # runs beside the main one — takes these roles, so background work and
+    # quick answers neither wait for nor evict the model the user is using.
+    if (not ep_id and setting_prefix in ("utility", "light")
+            and _session_is_local(fallback_url, _stg)):
+        helper = _helper_endpoint()
+        if helper:
+            return helper
 
     # If the specific endpoint is not configured, but the caller provided a
     # valid fallback (e.g. the active session model), use that immediately.

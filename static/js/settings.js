@@ -739,8 +739,8 @@ async function initUtilityModel() {
   var msg = el('set-utilityChatMsg');
   var _endpoints = [];
   var fallbackWidget = null;
-  if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Same as chat';
-  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Same as chat';
+  if (epSel && epSel.options[0]) epSel.options[0].textContent = 'Helper model (automatic)';
+  if (modelSel && modelSel.options[0]) modelSel.options[0].textContent = 'Helper model (automatic)';
 
   try {
     _endpoints = await _fetchModelEndpoints();

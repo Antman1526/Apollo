@@ -934,7 +934,10 @@ def setup_chat_routes(
             if chat_mode == "chat" and not do_research:
                 try:
                     from services.model_router import route_chat
-                    _routed_light = route_chat(message or "", owner=_user)
+                    _routed_light = route_chat(
+                        message or "", owner=_user,
+                        session_url=sess.endpoint_url, session_model=sess.model,
+                    )
                 except Exception as error:
                     report_exception(
                         logger,

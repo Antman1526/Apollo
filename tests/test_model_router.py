@@ -40,7 +40,7 @@ def test_route_chat_routes_light_only(monkeypatch):
                         lambda k, d=None: True if k == "mixture_routing_enabled" else d)
     monkeypatch.setattr(
         "src.endpoint_resolver.resolve_endpoint",
-        lambda prefix, owner=None: ("http://localhost:1", "tiny-model", {"h": "1"}),
+        lambda prefix, owner=None, **kw: ("http://localhost:1", "tiny-model", {"h": "1"}),
     )
     assert route_chat("thanks!") == ("http://localhost:1", "tiny-model", {"h": "1"})
     assert route_chat("write me a python script please") is None  # heavy

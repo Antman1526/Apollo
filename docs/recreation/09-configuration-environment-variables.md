@@ -332,7 +332,20 @@ Two keys the task brief calls out by name are handled specially:
   default binary is used. See `ARCH_BINARY_SETTINGS` in
   `services/localmodels/config.py`.
 - `mlx_python_path` (raw key): see `APOLLO_MLX_PYTHON` above. Parser verdicts
-  for MLX models are cached in `<data>/mlx_parsers.json`.
+  for MLX models are cached in `<data>/mlx_parsers.json`; tool-mode verdicts
+  learned at runtime in `<data>/local_tool_caps.json`.
+- `helper_model` / `helper_model_auto` (`DEFAULT_SETTINGS`): a small local
+  model that runs in its own slot beside the main one and fills the unset
+  `utility` and `light` (Fast Lane) roles — compaction summaries, memory and
+  skill extraction, auto-naming, short chat replies. Auto picks the smallest
+  capable llama.cpp chat model (3.5–12 GB, ≥32K context, newest family
+  first). `mixture_routing_enabled` now defaults to true; with no light or
+  helper model it is a no-op. See `services/localmodels/helper.py`.
+- `local_model_reasoning_budget` (`-1` unlimited, `0` off, N tokens) → llama.cpp
+  `--reasoning-budget`; `local_model_idle_minutes` (default 30, `0` never) →
+  unused local models are unloaded; `local_model_kv_cache` (`q8_0` / `f16`).
+  A local model answering a request is never evicted mid-reply (the launch
+  waits up to `EVICT_WAIT_SECONDS`). MLX launches pass `--prompt-cache-size 4`.
 
 ### 3.1 Per-user setting overrides
 
