@@ -210,10 +210,28 @@ class LocalModelServer:
                 self._chat = proc
                 if m.backend != "mlx":
                     proc.n_ctx = _probe_n_ctx(proc.base_url) or self._serving_context(m)
-                caps = m.tools if m.backend == "mlx" else _probe_tool_calls(proc.base_url)
-                if caps is not None:
-                    self._tool_caps[m.path] = caps
+                # A verdict learned at runtime (set_tool_caps) outlives a
+                # relaunch; the launch-time guess only fills in a blank.
+                if m.path not in self._tool_caps:
+                    caps = m.tools if m.backend == "mlx" else _probe_tool_calls(proc.base_url)
+                    if caps is not None:
+                        self._tool_caps[m.path] = caps
             return proc.base_url
+
+    def set_tool_caps(self, ref: str, value: bool) -> None:
+        """Record what a model actually did with native tool schemas.
+
+        The launch-time verdict (template caps / mlx_lm parser) can be wrong
+        in practice: Qwen3-Coder-Next's mlx_lm parser accepts the template but
+        cannot parse what the model writes, so a tool round comes back with
+        finish_reason "tool_calls", no calls and no text. The agent loop
+        detects that and switches the model to prompt-mode tools here.
+        """
+        m = self._resolve(ref)
+        if m is None:
+            return
+        with self._lock:
+            self._tool_caps[m.path] = value
 
     def supports_tool_calls(self, ref: str) -> Optional[bool]:
         """Whether a launched model's template emits native tool calls.

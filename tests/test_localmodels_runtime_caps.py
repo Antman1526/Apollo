@@ -192,3 +192,44 @@ def test_token_limit_note_names_the_budget():
     assert "2048-token" in _token_limit_note(2048, True)
     assert "still thinking" in _token_limit_note(2048, True)
     assert "before writing" in _token_limit_note(512, False)
+
+
+# -- native tool round that returned nothing ---------------------------------
+
+def test_native_tools_returned_nothing_detection():
+    from src.agent_loop import _native_tools_returned_nothing as f
+    assert f("", [], "tool_calls") is True
+    assert f("<think>hm</think>", [], "tool_calls") is True
+    assert f("", [{"name": "python"}], "tool_calls") is False
+    assert f("here you go", [], "tool_calls") is False
+    assert f("", [], "stop") is False
+    assert f("", [], "length") is False
+
+
+def test_set_tool_caps_overrides_launch_verdict():
+    m = _model("Coder-Next")
+    srv = LocalModelServer(dirs_provider=lambda: [])
+    srv.set_catalog([m])
+    srv._tool_caps[m.path] = True
+    srv.set_tool_caps("Coder-Next", False)
+    assert srv.supports_tool_calls("Coder-Next") is False
+    srv.set_tool_caps("unknown-model", False)  # no-op, no error
+
+
+def test_runtime_tool_verdict_survives_a_relaunch():
+    class _Alive:
+        def poll(self):
+            return None
+
+    m = _model("Coder-Next")
+    m.backend, m.tools = "mlx", True
+    srv = LocalModelServer(dirs_provider=lambda: [])
+    srv.set_catalog([m])
+    srv._launch = lambda mm: _Proc(mm.id, mm.name, mm.kind, 9001, _Alive(),  # type: ignore[assignment]
+                                   "http://127.0.0.1:9001")
+    srv.ensure_running("Coder-Next")
+    assert srv.supports_tool_calls("Coder-Next") is True   # launch-time guess
+    srv.set_tool_caps("Coder-Next", False)                  # learned in a round
+    srv.stop_all()
+    srv.ensure_running("Coder-Next")
+    assert srv.supports_tool_calls("Coder-Next") is False  # not reset by the relaunch
