@@ -174,6 +174,21 @@ def test_launch_backs_off_on_memory_failure_only():
     assert tried == [(16384, "q8_0")]  # no pointless retries
 
 
+def test_healthy_log_lines_do_not_read_as_memory_failure():
+    from services.localmodels.server_manager import _looks_like_memory_failure
+    benign_tail = (
+        "llama_kv_cache_init: kv_size = 16384, type_k = 'q8_0'\n"
+        "ggml_backend_metal_buffer_type_alloc_buffer: allocated buffer, size = 512.00 MiB\n"
+        "GGML_ASSERT: ggml-metal.m:1234: unsupported op 'CONV_TRANSPOSE_1D'\n"
+    )
+    assert _looks_like_memory_failure(benign_tail) is False
+    for real in ("ggml_backend_metal_buffer_type_alloc_buffer: failed to allocate buffer of size 42 GB",
+                 "CUDA error: out of memory", "cudaMalloc failed: out of memory",
+                 "llama_init_from_model: failed to initialize the KV cache",
+                 "ggml_new_object: not enough memory in the context's memory pool"):
+        assert _looks_like_memory_failure(real) is True, real
+
+
 def test_auto_context_with_f16_has_a_single_attempt():
     srv = LocalModelServer(dirs_provider=lambda: [])
     tried = []

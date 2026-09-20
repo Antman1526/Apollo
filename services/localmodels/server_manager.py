@@ -580,10 +580,14 @@ def _wait_mlx_loaded(base_url: str, name: str, log_path: str, timeout: float) ->
     )
 
 
+# Only wording llama.cpp uses when an allocation fails. Bare "kv cache" or
+# "ggml_backend_*_buffer" also appear in every healthy startup log
+# (llama_kv_cache_init, "...alloc_buffer: allocated 512 MiB"), so matching
+# them would turn any unrelated crash into three pointless retries.
 _MEMORY_FAILURE_RE = re.compile(
     r"failed to allocate|out of memory|not enough memory|insufficient memory|"
-    r"unable to allocate|cudamalloc|alloc(ation)? failed|failed to create.*(context|buffer)|"
-    r"kv cache|ggml_backend_.*_buffer|no memory|memory limit",
+    r"unable to allocate|cudamalloc failed|cuda(malloc|_error).*memory|"
+    r"allocation failed|failed to (init(ialize)?|create|allocate) (the )?(kv cache|compute buffer|context)",
     re.IGNORECASE,
 )
 
