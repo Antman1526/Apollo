@@ -29,9 +29,15 @@ _HEAVY_MARKERS = re.compile(
     r"(?i)\b("
     r"code|write|implement|debug|fix|refactor|analy[sz]e|research|review|"
     r"plan|design|architect|prove|derive|calculate|compute|translate|"
-    r"summari[sz]e|compare|explain why|step[- ]by[- ]step|essay|report|"
+    r"summari[sz]e|compare|step[- ]by[- ]step|essay|report|"
     r"document|spreadsheet|regex|sql|script|function|error|traceback|"
-    r"stack trace"
+    r"stack trace|"
+    # Requests for an explanation or a considered answer go to the main
+    # model: "Explain in two sentences why the sky is blue" was routed
+    # to the helper because only the adjacent "explain why" counted.
+    r"explain|describe|define|tell me about|how (does|do|did|would|can|should)|"
+    r"what (is|are|was|were|does|do)|why (is|are|do|does|did)|difference|"
+    r"pros and cons|recommend|suggest|draft|outline|brainstorm|teach"
     r")\b"
 )
 
