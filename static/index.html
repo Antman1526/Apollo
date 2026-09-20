@@ -2019,10 +2019,22 @@
                 <option value="16384">16K tokens (default)</option>
                 <option value="32768">32K tokens</option>
                 <option value="65536">64K tokens</option>
-                <option value="131072">128K tokens — most memory</option>
+                <option value="131072">128K tokens</option>
+                <option value="262144">256K tokens</option>
+                <option value="524288">512K tokens</option>
+                <option value="1048576">1M tokens — most memory</option>
                 <option value="0">Auto — largest that fits in memory</option>
               </select>
-              <div id="set-localModelContextMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">How much conversation a local GGUF model can hold. Larger uses more memory; long chats are summarised to fit.</div>
+              <div id="set-localModelContextMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">How much conversation a local model can hold. Capped at each model's own limit; if a size doesn't fit in memory the model reloads with the largest that does. Long chats are summarised to fit.</div>
+            </div>
+            <!-- KV cache precision for llama.cpp models -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Context memory</div>
+              <select id="set-localModelKvCache" class="settings-select" style="width:100%;">
+                <option value="q8_0">8-bit (default) — half the memory per token</option>
+                <option value="f16">16-bit — full precision, twice the memory</option>
+              </select>
+              <div id="set-localModelKvCacheMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">Precision of the model's working memory (KV cache). 8-bit lets a bigger context fit; a model that can't run 8-bit falls back to 16-bit by itself.</div>
             </div>
             <!-- Pull from Hugging Face -->
             <div style="margin-bottom:12px;">

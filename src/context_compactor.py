@@ -16,6 +16,7 @@ from core.models import ChatMessage
 logger = logging.getLogger(__name__)
 
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
+COMPACT_CHUNK_TOKENS = 6000  # Max history per summary call (see maybe_compact)
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
 
@@ -252,6 +253,26 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     return result
 
 
+def _is_local(url: str) -> bool:
+    from src.model_context import _is_local_endpoint
+    return (url or "").startswith("local://") or _is_local_endpoint(url or "")
+
+
+def _chunk_lines(lines: List[str], max_tokens: int) -> List[str]:
+    """Group lines into chunks of at most ~max_tokens (a line never splits)."""
+    chunks, cur, cur_tokens = [], [], 0
+    for line in lines:
+        t = estimate_tokens([{"role": "user", "content": line}])
+        if cur and cur_tokens + t > max_tokens:
+            chunks.append("\n".join(cur))
+            cur, cur_tokens = [], 0
+        cur.append(line)
+        cur_tokens += t
+    if cur:
+        chunks.append("\n".join(cur))
+    return chunks
+
+
 async def maybe_compact(
     session,
     endpoint_url: str,
@@ -291,11 +312,12 @@ async def maybe_compact(
     older = convo_msgs[:split_point]
     recent = convo_msgs[split_point:]
 
-    # Build the text to summarize
-    convo_text = "\n".join(
-        f"{msg['role'].upper()}: {msg.get('content', '')[:2000]}"
-        for msg in older
-    )
+    # Build the text to summarize, in chunks small enough that each summary
+    # call surely fits the model and finishes: a local model given 60k tokens
+    # of history in one call took longer than the old 30s timeout, failed,
+    # and the older half was dropped with no summary at all.
+    convo_lines = [f"{msg['role'].upper()}: {str(msg.get('content', ''))[:2000]}" for msg in older]
+    chunks = _chunk_lines(convo_lines, COMPACT_CHUNK_TOKENS)
 
     # Count prior compactions from existing summary messages
     compaction_count = sum(
@@ -314,24 +336,35 @@ async def maybe_compact(
     ).replace(
         "{n}", str(compaction_count + 1)
     )
-    summary_messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": convo_text},
-    ]
-
+    # Local models are slow at long prompts; give them time rather than
+    # failing the whole compaction.
+    timeout = 180 if _is_local(compact_url) else 60
+    parts = []
     try:
-        summary = await llm_call_async(
-            compact_url,
-            compact_model,
-            summary_messages,
-            temperature=0.2,
-            max_tokens=SUMMARY_MAX_TOKENS,
-            headers=compact_headers,
-            timeout=30,
-        )
+        for i, chunk in enumerate(chunks):
+            summary_messages = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": chunk if len(chunks) == 1
+                 else f"[Part {i + 1} of {len(chunks)}]\n{chunk}"},
+            ]
+            parts.append(await llm_call_async(
+                compact_url,
+                compact_model,
+                summary_messages,
+                temperature=0.2,
+                max_tokens=SUMMARY_MAX_TOKENS,
+                headers=compact_headers,
+                timeout=timeout,
+            ))
     except Exception as e:
-        logger.error(f"Compaction summary failed: {e}")
-        return system_msgs + recent, context_length, False
+        # Keep the conversation intact: trim_for_context will fit it (dropping
+        # only what it must) rather than losing half the chat with no summary.
+        logger.error(f"Compaction summary failed after {len(parts)} of {len(chunks)} chunk(s): {e}")
+        return messages, context_length, False
+    summary = "\n\n".join(p.strip() for p in parts if p and p.strip())
+    if not summary:
+        logger.error("Compaction produced an empty summary; keeping the conversation as is")
+        return messages, context_length, False
 
     summary_msg = {
         "role": "system",

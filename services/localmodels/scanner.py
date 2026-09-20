@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 
 from services.localmodels import mlx
-from services.localmodels.gguf_meta import classify_architecture, read_architecture
+from services.localmodels.gguf_meta import classify_architecture, read_metadata
 
 # Quant regex ported from routes/cookbook_helpers.py (_cached_model_scan_script).
 _QUANT_RE = re.compile(
@@ -44,6 +44,10 @@ class LocalModel:
     tools: bool | None = field(default=None)
     # mlx_lm tool parser to force via tool_parser_type at launch (MLX only).
     mlx_parser: str | None = field(default=None)
+    # The model's own maximum context window, from the GGUF header
+    # (<arch>.context_length) or the MLX config (max_position_embeddings).
+    # None when the file doesn't say. A launch is never sized beyond it.
+    native_context: int | None = field(default=None)
 
 
 def _quant(name: str) -> str:
@@ -88,18 +92,19 @@ def _kind_from_filename(name: str) -> str:
     return "embedding" if _EMBED_HINT.search(name) else "chat"
 
 
-def _resolve_kind(path: str, name: str) -> tuple[str, str]:
-    """Return (kind, arch) for a GGUF file.
+def _resolve_kind(path: str, name: str) -> tuple[str, str, int | None]:
+    """Return (kind, arch, native_context) for a GGUF file.
 
     Reads the GGUF header for a reliable architecture tag; falls back to the
     filename heuristic when the header is unreadable (e.g. a zero-byte stub in
     tests, a freshly-downloaded partial file).
     """
-    arch = read_architecture(path) or ""
+    meta = read_metadata(path)
+    arch = meta["architecture"] or ""
     kind = classify_architecture(arch) if arch else None
     if kind is None:
         kind = _kind_from_filename(name)
-    return kind, arch
+    return kind, arch, meta["context_length"]
 
 
 def _model_id(path: str) -> str:
@@ -145,7 +150,7 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                 if mid in out:
                     continue
                 model_name = fn[:-5]  # strip ".gguf"
-                kind, arch = _resolve_kind(fp, model_name)
+                kind, arch, native_ctx = _resolve_kind(fp, model_name)
                 out[mid] = LocalModel(
                     id=mid,
                     name=model_name,
@@ -156,6 +161,7 @@ def scan_dirs(dirs: list[str]) -> list[LocalModel]:
                     directory=base,
                     arch=arch,
                     mmproj=_find_projector(root, files, model_name),
+                    native_context=native_ctx,
                 )
     mlx_models = [m for m in out.values() if m.backend == "mlx" and m.kind == "chat"]
     if mlx_models:
@@ -184,6 +190,7 @@ def _add_mlx(out: dict[str, LocalModel], root: str, base: str) -> None:
         directory=base,
         arch=arch,
         backend="mlx",
+        native_context=mlx.native_context(path),
     )
 
 

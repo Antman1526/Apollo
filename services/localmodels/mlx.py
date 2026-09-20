@@ -290,5 +290,15 @@ def dir_size(path: str) -> int:
     return total
 
 
+def native_context(path: str) -> Optional[int]:
+    """The model's own maximum context from config.json, or None."""
+    cfg = _read_json(os.path.join(path, "config.json"))
+    for holder in (cfg, cfg.get("text_config") or {}):
+        val = holder.get("max_position_embeddings") if isinstance(holder, dict) else None
+        if isinstance(val, int) and val > 0:
+            return val
+    return None
+
+
 def model_type(path: str) -> str:
     return str(_read_json(os.path.join(path, "config.json")).get("model_type") or "")

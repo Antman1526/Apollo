@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -16,7 +17,12 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from services.localmodels.scanner import LocalModel, scan_dirs
-from services.localmodels.config import get_arch_llama_server_path, get_llama_server_path, get_local_context
+from services.localmodels.config import (
+    get_arch_llama_server_path,
+    get_llama_server_path,
+    get_local_context,
+    get_local_kv_cache,
+)
 from services.localmodels.mlx import find_mlx_runtime
 from src.observability import report_exception
 
@@ -65,6 +71,8 @@ class _Proc:
     # Context window the server actually runs with (llama.cpp /props), which
     # is what prompt budgeting must respect. 0 = not known.
     n_ctx: int = 0
+    # KV-cache precision the server was launched with ("q8_0" / "f16").
+    kv_cache: str = ""
 
 
 def _free_port(host: str) -> int:
@@ -238,19 +246,26 @@ class LocalModelServer:
     def _serving_context(self, m: LocalModel) -> int:
         """Context window to launch llama-server with (0 = auto).
 
-        The configured window (Settings → AI → Local Models, else
-        APOLLO_LLAMA_CONTEXT, else 16384) bounds the KV cache, but never beyond
-        the model's own window. Auto (0) passes -c 0 and lets llama.cpp's
+        The configured window (Settings → AI → Local Models → Context size,
+        else APOLLO_LLAMA_CONTEXT, else 16384) bounds the KV cache, but never
+        beyond the model's own limit — read from its GGUF header, or the
+        known-models table when the header doesn't say. So "1M" means "as
+        much as this model allows". Auto (0) passes -c 0 and lets llama.cpp's
         --fit choose the largest window that fits in free memory; the real
         value is read back from /props after launch (see served_context).
         """
         cap = get_local_context()
         if cap == 0:
             return 0
-        cap = max(cap, self._context)
+        native = self._native_context(m)
+        return min(native, cap) if native else cap
+
+    def _native_context(self, m: LocalModel) -> Optional[int]:
+        if getattr(m, "native_context", None):
+            return m.native_context
         try:
             from src.model_context import _lookup_known
-            known = _lookup_known(m.name or m.id)
+            return _lookup_known(m.name or m.id)
         except Exception as error:
             report_exception(
                 logger,
@@ -259,21 +274,26 @@ class LocalModelServer:
                 outcome="best_effort",
                 context={"model_id": m.id},
             )
-            known = None
-        if known:
-            return max(self._context, min(known, cap))
-        return cap
+            return None
 
     def served_context(self, ref: str) -> Optional[int]:
         """Context window prompts for this model must fit in, or None.
 
         The running server's own n_ctx when it's up; otherwise the window it
-        will be launched with. None for MLX (mlx_lm has no fixed window), for
-        auto before the first launch, and for models that aren't ours.
+        will be launched with. None for auto before the first launch, for an
+        MLX model whose config doesn't say, and for models that aren't ours.
         """
         m = self._resolve(ref)
-        if m is None or m.backend == "mlx":
+        if m is None:
             return None
+        if m.backend == "mlx":
+            # mlx_lm has no fixed window: it takes what it's given. Budget
+            # against the model's own limit, or the configured size if lower.
+            native = getattr(m, "native_context", None)
+            if not native:
+                return None
+            cap = get_local_context()
+            return min(native, cap) if cap else native
         with self._lock:
             slot = self._chat
             if slot and slot.model_id == m.id and slot.proc.poll() is None and slot.n_ctx:
@@ -281,11 +301,46 @@ class LocalModelServer:
         return self._serving_context(m) or None
 
     def _launch(self, m: LocalModel) -> _Proc:
-        port = _free_port(self._host)
+        """Start the model, backing off on memory failures.
+
+        An explicit -c defeats llama.cpp's own --fit (it only sizes settings
+        that weren't passed), so a window that doesn't fit would just fail to
+        load. Retry with the same window in f16 KV cache, then let llama.cpp
+        pick the window (-c 0) — so a too-large setting degrades to "the
+        largest that fits" instead of a dead model. Only memory failures
+        retry; anything else (unknown architecture, bad path) raises at once.
+        """
         if m.backend == "mlx":
+            return self._launch_once(m, None)
+        ctx, kv = self._serving_context(m), get_local_kv_cache()
+        attempts: list[tuple[int, str]] = [(ctx, kv)]
+        if kv != "f16":
+            attempts.append((ctx, "f16"))
+        if ctx != 0:
+            attempts.append((0, kv))
+            if kv != "f16":
+                attempts.append((0, "f16"))
+        last_error: Optional[Exception] = None
+        for i, attempt in enumerate(attempts):
+            try:
+                return self._launch_once(m, attempt)
+            except Exception as error:
+                last_error = error
+                if i == len(attempts) - 1 or not _looks_like_memory_failure(str(error)):
+                    raise
+                nxt = attempts[i + 1]
+                logger.warning(
+                    "%s did not fit in memory with context=%s kv=%s; retrying with context=%s kv=%s",
+                    m.name, attempt[0] or "auto", attempt[1], nxt[0] or "auto", nxt[1],
+                )
+        raise last_error  # pragma: no cover - loop always returns or raises
+
+    def _launch_once(self, m: LocalModel, attempt: Optional[tuple[int, str]]) -> _Proc:
+        port = _free_port(self._host)
+        if attempt is None:
             cmd, cwd = self._mlx_command(m, port)
         else:
-            cmd, cwd = self._llama_command(m, port), None
+            cmd, cwd = self._llama_command(m, port, *attempt), None
         log_path = os.path.join(tempfile.gettempdir(), f"apollo-llama-{port}.log")
         logf = open(log_path, "w")
         logger.info("Starting local model server: %s", " ".join(cmd))
@@ -321,7 +376,8 @@ class LocalModelServer:
                     context={"model_id": m.id},
                 )
             raise
-        return _Proc(m.id, m.name, m.kind, port, proc, base_url, log_path)
+        return _Proc(m.id, m.name, m.kind, port, proc, base_url, log_path,
+                     kv_cache=attempt[1] if attempt else "")
 
     def _mlx_command(self, m: LocalModel, port: int) -> tuple[list[str], str]:
         """mlx_lm.server command plus the working directory to run it in.
@@ -358,7 +414,8 @@ class LocalModelServer:
                           "--port", str(port),
                           "--max-tokens", str(MLX_DEFAULT_MAX_TOKENS)], cwd
 
-    def _llama_command(self, m: LocalModel, port: int) -> list[str]:
+    def _llama_command(self, m: LocalModel, port: int, context: Optional[int] = None,
+                       kv_cache: Optional[str] = None) -> list[str]:
         binary = self.find_binary(m.arch)
         if not binary:
             configured = get_llama_server_path()
@@ -375,13 +432,20 @@ class LocalModelServer:
                 else "e.g. `brew install llama.cpp`, or build it via the Cookbook"
             )
             raise RuntimeError(f"llama-server not found. Install llama.cpp ({hint}).")
+        if context is None:
+            context = self._serving_context(m)
+        if kv_cache is None:
+            kv_cache = get_local_kv_cache()
         cmd = [
             binary, "--model", m.path,
             "--host", self._host, "--port", str(port),
-            "-c", str(self._serving_context(m)),
+            "-c", str(context),
         ]
         if m.kind == "embedding":
             cmd.append("--embedding")
+        elif kv_cache and kv_cache != "f16":
+            # Quantised KV cache: half the memory per token of context.
+            cmd += ["--cache-type-k", kv_cache, "--cache-type-v", kv_cache]
         # A vision model needs its projector or llama-server loads fine and then
         # rejects every image with "image input is not supported". Guard on the
         # file still existing: a catalog entry can outlive the file, and a bad
@@ -460,6 +524,7 @@ class LocalModelServer:
                     out[slot.model_id] = {
                         "name": slot.name, "kind": slot.kind, "port": slot.port,
                         "running": slot.proc.poll() is None, "base_url": slot.base_url,
+                        "n_ctx": slot.n_ctx, "kv_cache": slot.kv_cache,
                     }
             return out
 
@@ -513,6 +578,18 @@ def _wait_mlx_loaded(base_url: str, name: str, log_path: str, timeout: float) ->
         f"mlx_lm.server could not load the model ({status}); full log: "
         f"{log_path}\n{_tail(log_path)}"
     )
+
+
+_MEMORY_FAILURE_RE = re.compile(
+    r"failed to allocate|out of memory|not enough memory|insufficient memory|"
+    r"unable to allocate|cudamalloc|alloc(ation)? failed|failed to create.*(context|buffer)|"
+    r"kv cache|ggml_backend_.*_buffer|no memory|memory limit",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_memory_failure(text: str) -> bool:
+    return bool(_MEMORY_FAILURE_RE.search(text or ""))
 
 
 def _probe_n_ctx(base_url: str) -> Optional[int]:
