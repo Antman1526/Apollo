@@ -1437,6 +1437,16 @@ def _answer_from_reasoning(reasoning: str) -> str:
     return paragraphs[-1] if paragraphs else ""
 
 
+def _native_tools_returned_nothing(round_response: str, native_tool_calls: list,
+                                   finish_reason: str) -> bool:
+    """A native-tool round that ended in "tool_calls" but delivered neither a
+    call nor any text: the runtime swallowed a call it couldn't parse."""
+    if native_tool_calls or finish_reason != "tool_calls":
+        return False
+    visible = re.sub(r"<think>.*?</think>", "", round_response or "", flags=re.DOTALL | re.IGNORECASE)
+    return not visible.strip()
+
+
 def _round_is_stuck(sig: str, recent_sigs, real_text: str,
                     prompt_mode: bool = False) -> bool:
     """Whether a tool round made no progress (before `sig` is recorded).
@@ -1635,6 +1645,7 @@ async def stream_agent_loop(
         _is_api_model = False
     else:
         _is_api_model = any(h in endpoint_url for h in _API_HOSTS) or _model_supports_tools
+    _pre_prompt_messages = list(messages)  # for a rebuild if tool mode flips
     messages, mcp_schemas = _build_system_prompt(
         messages, model, active_document, mcp_mgr, disabled_tools,
         needs_admin=_needs_admin, relevant_tools=_relevant_tools,
@@ -1643,6 +1654,8 @@ async def stream_agent_loop(
         owner=owner,
         budget=_budget,
     )
+    _prompt_built_len = len(messages)
+    _native_retry_done = False
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
@@ -1968,6 +1981,33 @@ async def stream_agent_loop(
             # Intercept [DONE] — don't forward until all rounds finish
 
         tool_blocks, used_native = _resolve_tool_blocks(round_response, native_tool_calls, round_num)
+
+        # The runtime accepted our tool schemas but swallowed the model's
+        # call (mlx_lm parser mismatch, e.g. Qwen3-Coder-Next): the round
+        # ended in "tool_calls" with nothing in it. Switch this model to
+        # prompt-mode tools, rebuild the prompt with the tool instructions,
+        # and run the round again — once.
+        if (_is_api_model and not tool_blocks and not _native_retry_done
+                and endpoint_url.startswith("local://llama.cpp")
+                and _native_tools_returned_nothing(round_response, native_tool_calls, _round_finish)):
+            _native_retry_done = True
+            logger.warning(f"[agent] {model}: native tool round returned nothing; switching to prompt-mode tools")
+            try:
+                from services.localmodels.server_manager import get_server
+                get_server().set_tool_caps(model, False)
+            except Exception as _e:
+                logger.debug(f"tool caps update failed: {_e}")
+            _is_api_model = False
+            _extra = messages[_prompt_built_len:]
+            messages, mcp_schemas = _build_system_prompt(
+                _pre_prompt_messages, model, active_document, mcp_mgr, disabled_tools,
+                needs_admin=_needs_admin, relevant_tools=_relevant_tools,
+                mcp_disabled_map=_mcp_disabled_map, compact=False, owner=owner, budget=_budget,
+            )
+            _prompt_built_len = len(messages)
+            messages += _extra
+            yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+            continue
 
         # Force-answer round: we told the model to STOP calling tools and
         # answer. If it ignored that and emitted a (possibly DSML) tool
