@@ -60,3 +60,19 @@ def test_route_chat_never_raises(monkeypatch):
     monkeypatch.setattr("services.model_router.get_setting",
                         lambda k, d=None: (_ for _ in ()).throw(RuntimeError("boom")))
     assert route_chat("thanks!") is None
+
+
+@pytest.mark.parametrize("msg", [
+    "Explain in two sentences why the sky is blue.",
+    "What is the difference between a process and a thread?",
+    "How does garbage collection work in Java?",
+    "Tell me about the French Revolution",
+    "Can you recommend a good book on statistics?",
+])
+def test_questions_that_deserve_the_main_model_are_heavy(msg):
+    assert classify_message(msg) == "heavy"
+
+
+@pytest.mark.parametrize("msg", ["thanks!", "and at sunset?", "ok sounds good", "hi there", "yes please"])
+def test_chit_chat_stays_light(msg):
+    assert classify_message(msg) == "light"
