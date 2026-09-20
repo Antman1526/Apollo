@@ -300,3 +300,19 @@ def test_fast_lane_is_enabled_once_for_older_installs():
         saved["mixture_routing_enabled"] = False  # the user turns it off again
         assert helper.enable_fast_lane_once() is False  # not flipped back
         assert saved["mixture_routing_enabled"] is False
+
+
+def test_startup_enables_fast_lane_before_the_scan(monkeypatch):
+    """The scan can block indefinitely on a fresh install (macOS folder
+    permission prompt); the routing switch must not wait behind it."""
+    from services.localmodels import lifecycle
+    order = []
+    monkeypatch.setattr(helper, "enable_fast_lane_once", lambda: order.append("fast-lane") or True)
+
+    def failing_scan():
+        order.append("scan")
+        raise RuntimeError("blocked")
+
+    monkeypatch.setattr(lifecycle, "rescan", failing_scan)
+    lifecycle.startup_scan()
+    assert order == ["fast-lane", "scan"]
