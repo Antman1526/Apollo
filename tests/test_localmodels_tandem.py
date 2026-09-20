@@ -78,8 +78,9 @@ def test_helper_fills_utility_and_light_but_not_explicit_settings():
         # ...a cloud session keeps its own model, a GGUF on disk notwithstanding.
         assert endpoint_resolver.resolve_endpoint("utility", "https://api.openai.com/v1", "gpt-5", {})[1] == "gpt-5"
         assert endpoint_resolver.resolve_endpoint("light", "https://api.openai.com/v1", "gpt-5", {})[1] == "gpt-5"
-        # Other roles (task, research) are untouched by the helper.
-        assert endpoint_resolver.resolve_endpoint("task", "local://llama.cpp/chat/completions", "Swift-27B", {})[1] == "Swift-27B"
+        # "task" (auto-naming, memory extraction) goes to the helper too; research doesn't.
+        assert endpoint_resolver.resolve_endpoint("task", "local://llama.cpp/chat/completions", "Swift-27B", {})[1] == "Qwen3VL-8B"
+        assert endpoint_resolver.resolve_endpoint("research", "local://llama.cpp/chat/completions", "Swift-27B", {})[1] == "Swift-27B"
     # No session given: only when the default chat model is local.
     with patch.object(endpoint_resolver, "_helper_endpoint", return_value=("local://llama.cpp/chat/completions", "Qwen3VL-8B", {})), \
          patch.object(endpoint_resolver, "_session_is_local", return_value=True), \

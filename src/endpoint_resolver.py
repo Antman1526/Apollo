@@ -281,10 +281,12 @@ def resolve_endpoint(
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
 
-    # Unset Utility / Fast Lane: the helper model — a small local model that
-    # runs beside the main one — takes these roles, so background work and
-    # quick answers neither wait for nor evict the model the user is using.
-    if (not ep_id and setting_prefix in ("utility", "light")
+    # Unset Utility / Task / Fast Lane: the helper model — a small local model
+    # that runs beside the main one — takes these roles, so background work
+    # (auto-naming and memory extraction use "task"; compaction, cleanup and
+    # the web decider use "utility") and quick answers neither wait for nor
+    # evict the model the user is using.
+    if (not ep_id and setting_prefix in ("utility", "task", "light")
             and _session_is_local(fallback_url, _stg)):
         helper = _helper_endpoint()
         if helper:
