@@ -20,13 +20,16 @@ def rescan() -> list[LocalModel]:
 
 
 def startup_scan() -> None:
-    try:
-        rescan()
-    except Exception as e:
-        logger.warning("Local model startup scan failed: %s", e)
+    # Settings first: the scan can block for a long time on a fresh install
+    # (macOS holds a folder read until the user answers the permission
+    # prompt), and the routing switch must not wait on it.
     try:
         from services.localmodels.helper import enable_fast_lane_once
         if enable_fast_lane_once():
             logger.info("Fast Lane routing enabled (helper model answers short messages)")
     except Exception as e:
         logger.warning("Fast Lane migration failed: %s", e)
+    try:
+        rescan()
+    except Exception as e:
+        logger.warning("Local model startup scan failed: %s", e)

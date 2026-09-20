@@ -384,3 +384,108 @@ export function renderLocalModelDirs(el, dirs, statuses, onRemove) {
     container.appendChild(row);
   });
 }
+
+/** Local model rows (Settings → AI → Local Models). A model the runtime
+ * can't serve (video/audio/diffusion, or a type this mlx_lm doesn't know)
+ * is greyed out with the reason instead of a Start button that would fail. */
+export function renderLocalModelsList(el, models, refresh) {
+  var container = el('set-localModelsList');
+  if (!container) return;
+  container.innerHTML = '';
+  if (!models || models.length === 0) {
+    var empty = document.createElement('div');
+    empty.style.cssText = 'font-size:11px;opacity:0.45;';
+    empty.textContent = 'No models found. Add a directory and click Rescan.';
+    container.appendChild(empty);
+    return;
+  }
+  models.forEach(function(m) {
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid color-mix(in srgb,var(--fg) 8%,transparent);flex-wrap:wrap;';
+
+    var info = document.createElement('div');
+    info.style.cssText = 'flex:1;min-width:0;';
+
+    var nameSpan = document.createElement('span');
+    nameSpan.style.cssText = 'font-size:12px;font-weight:600;word-break:break-all;';
+    nameSpan.textContent = m.name || m.id;
+
+    var meta = document.createElement('span');
+    meta.style.cssText = 'font-size:11px;opacity:0.55;margin-left:6px;';
+    var parts = [];
+    if (m.quant) parts.push(m.quant);
+    if (m.kind && m.kind !== 'unsupported') parts.push(m.kind);
+    if (m.size_bytes) parts.push(_gb(m.size_bytes));
+    if (m.kind === 'unsupported') parts.push("can't be served" + (m.arch ? ' (' + m.arch + ')' : ''));
+    meta.textContent = parts.join(' · ');
+
+    info.appendChild(nameSpan);
+    info.appendChild(meta);
+    if (m.kind === 'unsupported') {
+      row.style.opacity = '0.5';
+      row.title = 'Not a chat or embedding model this runtime can load';
+      row.appendChild(info);
+      container.appendChild(row);
+      return;
+    }
+
+    if (m.running) {
+      var badge = document.createElement('span');
+      badge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:10px;background:color-mix(in srgb,#27ae60 20%,transparent);color:#27ae60;font-weight:700;flex-shrink:0;';
+      badge.textContent = 'Running';
+      row.appendChild(info);
+      row.appendChild(badge);
+    } else {
+      row.appendChild(info);
+    }
+
+    var actionBtn = document.createElement('button');
+    actionBtn.type = 'button';
+    actionBtn.className = 'admin-btn-sm';
+    actionBtn.style.cssText = 'flex-shrink:0;';
+    if (m.running) {
+      actionBtn.textContent = 'Stop';
+      actionBtn.addEventListener('click', function() {
+        actionBtn.disabled = true;
+        actionBtn.textContent = 'Stopping…';
+        fetch('/api/local-models/' + encodeURIComponent(m.id) + '/stop', {
+          method: 'POST',
+          credentials: 'same-origin'
+        }).then(function(r) { return r.json(); }).then(function() {
+          refresh();
+        }).catch(function(e) {
+          var errEl = el('set-localModelsErr');
+          if (errEl) errEl.textContent = 'Stop failed: ' + e.message;
+          actionBtn.disabled = false;
+          actionBtn.textContent = 'Stop';
+        });
+      });
+    } else {
+      actionBtn.textContent = 'Start';
+      actionBtn.addEventListener('click', function() {
+        actionBtn.disabled = true;
+        actionBtn.textContent = 'Starting…';
+        fetch('/api/local-models/' + encodeURIComponent(m.id) + '/start', {
+          method: 'POST',
+          credentials: 'same-origin'
+        }).then(function(r) { return r.json(); }).then(function(data) {
+          if (data && data.ok === false) {
+            var errEl = el('set-localModelsErr');
+            if (errEl) errEl.textContent = 'Start failed: ' + (data.error || 'unknown error');
+            actionBtn.disabled = false;
+            actionBtn.textContent = 'Start';
+          } else {
+            refresh();
+          }
+        }).catch(function(e) {
+          var errEl = el('set-localModelsErr');
+          if (errEl) errEl.textContent = 'Start failed: ' + e.message;
+          actionBtn.disabled = false;
+          actionBtn.textContent = 'Start';
+        });
+      });
+    }
+    row.appendChild(actionBtn);
+    container.appendChild(row);
+  });
+}

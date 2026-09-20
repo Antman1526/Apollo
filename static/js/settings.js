@@ -9,7 +9,7 @@ import { sortModelIds } from './modelSort.js';
 import { isAltGrEvent } from './platform.js';
 import { renderSystemStatusCardHTML } from './systemStatusCard.js';
 import { wireSystemStatusActions } from './systemStatusActions.js';
-import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling, renderLocalModelDirs } from './settingsAiExtras.js';
+import { refreshLlamaBinary, wireLlamaBinaryField, initLightModel, initModelHub, stopGgufPolling, renderLocalModelDirs, renderLocalModelsList } from './settingsAiExtras.js';
 import { initEcosystemHub } from './ecosystemHub.js';
 import { endpointLabel, selectableModels } from './settings/models.js';
 
@@ -289,99 +289,6 @@ function _fmtBytes(bytes) {
   return (bytes / 1e3).toFixed(0) + ' KB';
 }
 
-function _renderLocalModelsList(models) {
-  var container = el('set-localModelsList');
-  if (!container) return;
-  container.innerHTML = '';
-  if (!models || models.length === 0) {
-    var empty = document.createElement('div');
-    empty.style.cssText = 'font-size:11px;opacity:0.45;';
-    empty.textContent = 'No models found. Add a directory and click Rescan.';
-    container.appendChild(empty);
-    return;
-  }
-  models.forEach(function(m) {
-    var row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid color-mix(in srgb,var(--fg) 8%,transparent);flex-wrap:wrap;';
-
-    var info = document.createElement('div');
-    info.style.cssText = 'flex:1;min-width:0;';
-
-    var nameSpan = document.createElement('span');
-    nameSpan.style.cssText = 'font-size:12px;font-weight:600;word-break:break-all;';
-    nameSpan.textContent = esc(m.name || m.id);
-
-    var meta = document.createElement('span');
-    meta.style.cssText = 'font-size:11px;opacity:0.55;margin-left:6px;';
-    var parts = [];
-    if (m.quant) parts.push(esc(m.quant));
-    if (m.kind) parts.push(esc(m.kind));
-    if (m.size_bytes) parts.push(_fmtBytes(m.size_bytes));
-    meta.textContent = parts.join(' · ');
-
-    info.appendChild(nameSpan);
-    info.appendChild(meta);
-
-    if (m.running) {
-      var badge = document.createElement('span');
-      badge.style.cssText = 'font-size:10px;padding:2px 6px;border-radius:10px;background:color-mix(in srgb,#27ae60 20%,transparent);color:#27ae60;font-weight:700;flex-shrink:0;';
-      badge.textContent = 'Running';
-      row.appendChild(info);
-      row.appendChild(badge);
-    } else {
-      row.appendChild(info);
-    }
-
-    var actionBtn = document.createElement('button');
-    actionBtn.type = 'button';
-    actionBtn.className = 'admin-btn-sm';
-    actionBtn.style.cssText = 'flex-shrink:0;';
-    if (m.running) {
-      actionBtn.textContent = 'Stop';
-      actionBtn.addEventListener('click', function() {
-        actionBtn.disabled = true;
-        actionBtn.textContent = 'Stopping…';
-        fetch('/api/local-models/' + encodeURIComponent(m.id) + '/stop', {
-          method: 'POST',
-          credentials: 'same-origin'
-        }).then(function(r) { return r.json(); }).then(function() {
-          refreshLocalModels();
-        }).catch(function(e) {
-          var errEl = el('set-localModelsErr');
-          if (errEl) errEl.textContent = 'Stop failed: ' + e.message;
-          actionBtn.disabled = false;
-          actionBtn.textContent = 'Stop';
-        });
-      });
-    } else {
-      actionBtn.textContent = 'Start';
-      actionBtn.addEventListener('click', function() {
-        actionBtn.disabled = true;
-        actionBtn.textContent = 'Starting…';
-        fetch('/api/local-models/' + encodeURIComponent(m.id) + '/start', {
-          method: 'POST',
-          credentials: 'same-origin'
-        }).then(function(r) { return r.json(); }).then(function(data) {
-          if (data && data.ok === false) {
-            var errEl = el('set-localModelsErr');
-            if (errEl) errEl.textContent = 'Start failed: ' + (data.error || 'unknown error');
-            actionBtn.disabled = false;
-            actionBtn.textContent = 'Start';
-          } else {
-            refreshLocalModels();
-          }
-        }).catch(function(e) {
-          var errEl = el('set-localModelsErr');
-          if (errEl) errEl.textContent = 'Start failed: ' + e.message;
-          actionBtn.disabled = false;
-          actionBtn.textContent = 'Start';
-        });
-      });
-    }
-    row.appendChild(actionBtn);
-    container.appendChild(row);
-  });
-}
 
 function _putLocalModelDirs(dirs) {
   var errEl = el('set-localModelsErr');
@@ -413,7 +320,7 @@ export function refreshLocalModels() {
     .then(function(r) { return r.json(); })
     .then(function(data) {
       renderLocalModelDirs(el, data.dirs || [], data.dir_status || [], _putLocalModelDirs);
-      _renderLocalModelsList(data.models || []);
+      renderLocalModelsList(el, data.models || [], refreshLocalModels);
     })
     .catch(function(e) {
       if (errEl) errEl.textContent = 'Failed to load local models: ' + e.message;
