@@ -44,9 +44,19 @@ DEFAULT_SETTINGS = {
     # Mixture routing: answer short conversational chat messages with the
     # small "light" model below instead of the session's model (chat mode
     # only; the session model is the automatic fallback). Opt-in.
-    "mixture_routing_enabled": False,
+    "mixture_routing_enabled": True,
     "light_endpoint_id": "",
     "light_model": "",
+    # Helper model: a small local model that runs beside the main one and
+    # takes the utility role (compaction summaries, memory/skill extraction,
+    # auto-naming) and the Fast Lane above when those are unset. "" with
+    # helper_model_auto = pick the smallest capable local model.
+    "helper_model": "",
+    "helper_model_auto": True,
+    # Local llama.cpp launch knobs (services/localmodels/config.py):
+    # thinking budget in tokens (-1 unlimited, 0 off) and idle unload.
+    "local_model_reasoning_budget": -1,
+    "local_model_idle_minutes": 30,
     # Context budget: caps on memory injection into the prompt preface.
     # Pinned memories were previously unbounded — a large pinned set could
     # eat a small local model's context before the request started.

@@ -2036,6 +2036,37 @@
               </select>
               <div id="set-localModelKvCacheMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">Precision of the model's working memory (KV cache). 8-bit lets a bigger context fit; a model that can't run 8-bit falls back to 16-bit by itself.</div>
             </div>
+            <!-- Helper model -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Helper model</div>
+              <select id="set-localModelHelper" class="settings-select" style="width:100%;">
+                <option value="">Automatic — smallest capable model</option>
+              </select>
+              <div id="set-localModelHelperMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">A small model that runs beside your main one and handles quick chat replies, chat summaries, memory and naming, so the main model is never interrupted or swapped out.</div>
+            </div>
+            <!-- Thinking budget -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Thinking</div>
+              <select id="set-localModelReasoning" class="settings-select" style="width:100%;">
+                <option value="-1">Unlimited</option>
+                <option value="8192">Up to 8K tokens</option>
+                <option value="2048">Up to 2K tokens</option>
+                <option value="0">Off — answer directly</option>
+              </select>
+              <div id="set-localModelReasoningMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">How long a reasoning model may think before it answers (GGUF models only).</div>
+            </div>
+            <!-- Idle unload -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Unload idle models after</div>
+              <select id="set-localModelIdle" class="settings-select" style="width:100%;">
+                <option value="10">10 minutes</option>
+                <option value="30">30 minutes (default)</option>
+                <option value="60">1 hour</option>
+                <option value="240">4 hours</option>
+                <option value="0">Never</option>
+              </select>
+              <div id="set-localModelIdleMsg" style="font-size:11px;margin-top:4px;color:color-mix(in srgb, var(--fg) 45%, transparent);">Frees the memory of a model you haven't used for this long. It reloads on your next message.</div>
+            </div>
             <!-- Pull from Hugging Face -->
             <div style="margin-bottom:12px;">
               <div style="font-size:12px;font-weight:600;margin-bottom:6px;opacity:0.7;">Pull from Hugging Face</div>

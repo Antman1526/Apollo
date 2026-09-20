@@ -209,6 +209,20 @@ def build_headers(api_key: Optional[str], base: str) -> Dict[str, str]:
     return headers
 
 
+def _helper_endpoint() -> Optional[Tuple[str, str, Dict]]:
+    """(url, model, headers) for the local helper model, or None."""
+    try:
+        from services.localmodels.helper import helper_name
+        from services.localmodels.registry import LOCAL_BASE_URL
+        name = helper_name()
+        if not name:
+            return None
+        return build_chat_url(normalize_base(LOCAL_BASE_URL)), name, {}
+    except Exception as error:
+        report_exception(logger, "helper_endpoint_resolution_failed", error, outcome="best_effort")
+        return None
+
+
 def resolve_endpoint(
     setting_prefix: str,
     fallback_url: Optional[str] = None,
@@ -247,6 +261,14 @@ def resolve_endpoint(
 
     ep_id = _stg(f"{setting_prefix}_endpoint_id")
     model = _stg(f"{setting_prefix}_model")
+
+    # Unset Utility / Fast Lane: the helper model — a small local model that
+    # runs beside the main one — takes these roles, so background work and
+    # quick answers neither wait for nor evict the model the user is using.
+    if not ep_id and setting_prefix in ("utility", "light"):
+        helper = _helper_endpoint()
+        if helper:
+            return helper
 
     # If the specific endpoint is not configured, but the caller provided a
     # valid fallback (e.g. the active session model), use that immediately.

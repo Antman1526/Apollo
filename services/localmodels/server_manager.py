@@ -1,6 +1,7 @@
 """Launch and track local llama-server processes (single warm chat model)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -19,9 +20,11 @@ from typing import Callable, Optional
 from services.localmodels.scanner import LocalModel, scan_dirs
 from services.localmodels.config import (
     get_arch_llama_server_path,
+    get_idle_minutes,
     get_llama_server_path,
     get_local_context,
     get_local_kv_cache,
+    get_reasoning_budget,
 )
 from services.localmodels.mlx import find_mlx_runtime
 from src.observability import report_exception
@@ -57,6 +60,7 @@ _BIN_CANDIDATES = _bin_candidates()
 # is 512). Generation still stops at end-of-turn; this only bounds runaways.
 MLX_DEFAULT_MAX_TOKENS = 32768
 _FAILED_LAUNCH_TTL = 30.0  # seconds a failed launch is replayed, not retried
+EVICT_WAIT_SECONDS = 120.0  # how long a model may finish a reply before eviction
 
 
 @dataclass
@@ -99,10 +103,19 @@ class LocalModelServer:
         self._lock = threading.RLock()
         self._chat: Optional[_Proc] = None
         self._embed: Optional[_Proc] = None
+        # The helper model (services/localmodels/helper.py) gets its own slot
+        # so background work and quick answers never evict the main model.
+        self._helper: Optional[_Proc] = None
         self._catalog: dict[str, LocalModel] = {}
+        # In-flight requests per model id: a model that is answering is not
+        # evicted until it finishes (see lease / _wait_idle).
+        self._active: dict[str, int] = {}
+        self._last_used: dict[str, float] = {}
+        self._idle_thread: Optional[threading.Thread] = None
         # model path -> whether its chat template handles OpenAI tool calls,
         # as reported by llama-server's /props after a launch.
         self._tool_caps: dict[str, bool] = {}
+        self._load_tool_caps()
         # model id -> (monotonic time, error) of the last failed launch, so a
         # caller retrying right away (agent loop, then the LLM call) fails
         # fast instead of waiting out a multi-minute load a second time.
@@ -146,17 +159,97 @@ class LocalModelServer:
         with self._lock:
             self._catalog = {m.id: m for m in models}
 
+    def _slots(self) -> tuple:
+        return (self._chat, self._helper, self._embed)
+
+    def _is_helper(self, m: LocalModel) -> bool:
+        try:
+            from services.localmodels.helper import get_helper
+            h = get_helper(list(self._catalog.values()))
+            return bool(h and h.id == m.id)
+        except Exception as error:
+            report_exception(logger, "local_model_helper_lookup_failed", error,
+                             outcome="best_effort")
+            return False
+
     def stop(self, model_id: str) -> bool:
         """Stop a running model by id. Returns True if it was running.
 
         Lock-held so it can't race ensure_running's slot bookkeeping.
         """
         with self._lock:
-            for slot in (self._chat, self._embed):
+            for slot in self._slots():
                 if slot and slot.model_id == model_id:
                     self._stop_proc(slot)
                     return True
         return False
+
+    # -- in-flight tracking ------------------------------------------------
+    @contextlib.contextmanager
+    def lease(self, ref: str):
+        """Mark a request in flight on this model for its duration."""
+        m = self._resolve(ref)
+        key = m.id if m else ref
+        with self._lock:
+            self._active[key] = self._active.get(key, 0) + 1
+            self._last_used[key] = time.monotonic()
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._active[key] = max(0, self._active.get(key, 0) - 1)
+                self._last_used[key] = time.monotonic()
+
+    def _wait_idle(self, slot: "_Proc", timeout: float) -> None:
+        """Let a model finish what it's answering before it is evicted.
+
+        Called with the lock held; releases it while waiting so the request
+        in flight can finish and unregister. Gives up after `timeout`."""
+        deadline = time.monotonic() + timeout
+        while self._active.get(slot.model_id, 0) > 0 and time.monotonic() < deadline:
+            self._lock.release()
+            try:
+                time.sleep(0.25)
+            finally:
+                self._lock.acquire()
+        if self._active.get(slot.model_id, 0) > 0:
+            logger.warning("Evicting %s while %d request(s) still in flight (waited %.0fs)",
+                           slot.name, self._active.get(slot.model_id, 0), timeout)
+
+    # -- idle unload -------------------------------------------------------
+    def _start_idle_watch(self) -> None:
+        if self._idle_thread is not None:
+            return
+        self._idle_thread = threading.Thread(target=self._idle_loop, name="local-models-idle",
+                                             daemon=True)
+        self._idle_thread.start()
+
+    def _idle_loop(self) -> None:
+        while True:
+            time.sleep(60)
+            try:
+                self.unload_idle()
+            except Exception as error:
+                report_exception(logger, "local_model_idle_unload_failed", error,
+                                 outcome="best_effort")
+
+    def unload_idle(self, now: Optional[float] = None) -> list[str]:
+        """Stop models unused for longer than the configured idle time."""
+        minutes = get_idle_minutes()
+        if minutes <= 0:
+            return []
+        now = time.monotonic() if now is None else now
+        stopped = []
+        with self._lock:
+            for slot in self._slots():
+                if not slot or self._active.get(slot.model_id, 0) > 0:
+                    continue
+                last = self._last_used.get(slot.model_id, now)
+                if now - last >= minutes * 60:
+                    logger.info("Unloading %s: idle for %.0f min", slot.name, (now - last) / 60)
+                    self._stop_proc(slot)
+                    stopped.append(slot.name)
+        return stopped
 
     def _resolve(self, ref: str) -> Optional[LocalModel]:
         with self._lock:
@@ -181,11 +274,17 @@ class LocalModelServer:
                 "chat-capable model — llama-server cannot serve it"
             )
         with self._lock:
-            # Embedding GGUFs get an independent slot (served with --embedding)
-            # so they can run alongside a chat model. Today this is reachable
-            # only via an explicit start/select; RAG still defaults to
-            # fastembed, so the embedding slot has no implicit caller yet.
-            slot = self._embed if m.kind == "embedding" else self._chat
+            self._start_idle_watch()
+            self._last_used[m.id] = time.monotonic()
+            # Three slots: the main chat model, the helper (small, beside it),
+            # and an embedding model (served with --embedding).
+            if m.kind == "embedding":
+                slot_name = "_embed"
+            elif self._is_helper(m):
+                slot_name = "_helper"
+            else:
+                slot_name = "_chat"
+            slot = getattr(self, slot_name)
             if slot and slot.model_id == m.id and slot.proc.poll() is None:
                 if (m.kind != "embedding" and m.backend != "mlx"
                         and m.path not in self._tool_caps):
@@ -197,6 +296,7 @@ class LocalModelServer:
             if failed and time.monotonic() - failed[0] < _FAILED_LAUNCH_TTL:
                 raise failed[1]
             if slot:
+                self._wait_idle(slot, timeout=EVICT_WAIT_SECONDS)
                 self._stop_proc(slot)
             try:
                 proc = self._launch(m)
@@ -204,10 +304,8 @@ class LocalModelServer:
                 self._failed[m.id] = (time.monotonic(), error)
                 raise
             self._failed.pop(m.id, None)
-            if m.kind == "embedding":
-                self._embed = proc
-            else:
-                self._chat = proc
+            setattr(self, slot_name, proc)
+            if m.kind != "embedding":
                 if m.backend != "mlx":
                     proc.n_ctx = _probe_n_ctx(proc.base_url) or self._serving_context(m)
                 # A verdict learned at runtime (set_tool_caps) outlives a
@@ -217,6 +315,30 @@ class LocalModelServer:
                     if caps is not None:
                         self._tool_caps[m.path] = caps
             return proc.base_url
+
+    def _tool_caps_path(self) -> str:
+        from src.constants import DATA_DIR
+        return os.path.join(DATA_DIR, "local_tool_caps.json")
+
+    def _load_tool_caps(self) -> None:
+        """Verdicts learned at runtime, kept across app restarts."""
+        try:
+            with open(self._tool_caps_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                self._tool_caps.update({k: bool(v) for k, v in data.items() if isinstance(v, bool)})
+        except (OSError, ValueError):
+            pass
+
+    def _save_tool_caps(self) -> None:
+        try:
+            path = self._tool_caps_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path + ".tmp", "w", encoding="utf-8") as f:
+                json.dump({k: v for k, v in self._tool_caps.items() if os.path.exists(k)}, f)
+            os.replace(path + ".tmp", path)
+        except OSError as error:
+            logger.debug("tool caps not saved: %s", error)
 
     def set_tool_caps(self, ref: str, value: bool) -> None:
         """Record what a model actually did with native tool schemas.
@@ -232,6 +354,7 @@ class LocalModelServer:
             return
         with self._lock:
             self._tool_caps[m.path] = value
+        self._save_tool_caps()
 
     def supports_tool_calls(self, ref: str) -> Optional[bool]:
         """Whether a launched model's template emits native tool calls.
@@ -313,9 +436,9 @@ class LocalModelServer:
             cap = get_local_context()
             return min(native, cap) if cap else native
         with self._lock:
-            slot = self._chat
-            if slot and slot.model_id == m.id and slot.proc.poll() is None and slot.n_ctx:
-                return slot.n_ctx
+            for slot in (self._chat, self._helper):
+                if slot and slot.model_id == m.id and slot.proc.poll() is None and slot.n_ctx:
+                    return slot.n_ctx
         return self._serving_context(m) or None
 
     def _launch(self, m: LocalModel) -> _Proc:
@@ -428,9 +551,13 @@ class LocalModelServer:
         # models spend it all thinking). llama-server treats that as
         # unlimited; mlx_lm.server falls back to 512, which cut Qwen-family
         # MLX models off mid-thought with an empty reply. Match llama.cpp.
+        # --prompt-cache-size: keep the KV state of recent conversations so a
+        # follow-up turn only processes the new tokens (llama.cpp does this
+        # by default; mlx_lm reprocesses the whole chat without it).
         return runtime + ["--model", m.name, "--host", self._host,
                           "--port", str(port),
-                          "--max-tokens", str(MLX_DEFAULT_MAX_TOKENS)], cwd
+                          "--max-tokens", str(MLX_DEFAULT_MAX_TOKENS),
+                          "--prompt-cache-size", "4"], cwd
 
     def _llama_command(self, m: LocalModel, port: int, context: Optional[int] = None,
                        kv_cache: Optional[str] = None) -> list[str]:
@@ -464,6 +591,10 @@ class LocalModelServer:
         elif kv_cache and kv_cache != "f16":
             # Quantised KV cache: half the memory per token of context.
             cmd += ["--cache-type-k", kv_cache, "--cache-type-v", kv_cache]
+        budget = get_reasoning_budget()
+        if m.kind != "embedding" and budget != -1:
+            # Cap thinking: Qwen3.6-27B spent 8 minutes reasoning about "PONG".
+            cmd += ["--reasoning-budget", str(budget)]
         # A vision model needs its projector or llama-server loads fine and then
         # rejects every image with "image input is not supported". Guard on the
         # file still existing: a catalog entry can outlive the file, and a bad
@@ -525,24 +656,28 @@ class LocalModelServer:
                 )
         if slot is self._chat:
             self._chat = None
+        if slot is self._helper:
+            self._helper = None
         if slot is self._embed:
             self._embed = None
 
     def stop_all(self) -> None:
         with self._lock:
-            for slot in (self._chat, self._embed):
+            for slot in self._slots():
                 if slot:
                     self._stop_proc(slot)
 
     def status(self) -> dict:
         with self._lock:
             out = {}
-            for slot in (self._chat, self._embed):
+            for slot in self._slots():
                 if slot:
                     out[slot.model_id] = {
                         "name": slot.name, "kind": slot.kind, "port": slot.port,
                         "running": slot.proc.poll() is None, "base_url": slot.base_url,
                         "n_ctx": slot.n_ctx, "kv_cache": slot.kv_cache,
+                        "role": "helper" if slot is self._helper else slot.kind,
+                        "in_flight": self._active.get(slot.model_id, 0),
                     }
             return out
 

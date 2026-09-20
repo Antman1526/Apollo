@@ -6,6 +6,7 @@ Summarizes older messages via the same LLM, preserving key context.
 """
 
 import logging
+import time
 from typing import Any, Dict, List, Optional
 
 from src.model_context import get_context_length, estimate_tokens
@@ -258,6 +259,21 @@ def _is_local(url: str) -> bool:
     return (url or "").startswith("local://") or _is_local_endpoint(url or "")
 
 
+COMPACT_FAILURES_BEFORE_BACKOFF = 2
+COMPACT_BACKOFF_SECONDS = 600.0
+
+
+def _note_compaction_failure(session) -> None:
+    if session is None:
+        return
+    n = (getattr(session, "_compact_failures", 0) or 0) + 1
+    session._compact_failures = n
+    if n >= COMPACT_FAILURES_BEFORE_BACKOFF:
+        session._compact_skip_until = time.monotonic() + COMPACT_BACKOFF_SECONDS
+        logger.warning("Compaction failed %d times in a row; not retrying for %.0f min",
+                       n, COMPACT_BACKOFF_SECONDS / 60)
+
+
 def _chunk_lines(lines: List[str], max_tokens: int) -> List[str]:
     """Group lines into chunks of at most ~max_tokens (a line never splits)."""
     chunks, cur, cur_tokens = [], [], 0
@@ -306,6 +322,14 @@ async def maybe_compact(
 
     if len(convo_msgs) < 4:
         return messages, context_length, False
+
+    # Backoff: a model that keeps failing to summarise (too slow, refuses)
+    # would otherwise be asked again on every turn. After two consecutive
+    # failures, skip compaction for a while and let trim_for_context fit.
+    if session is not None:
+        until = getattr(session, "_compact_skip_until", 0) or 0
+        if until and time.monotonic() < until:
+            return messages, context_length, False
 
     # Split conversation: summarize older half, keep recent half
     split_point = len(convo_msgs) // 2
@@ -360,11 +384,16 @@ async def maybe_compact(
         # Keep the conversation intact: trim_for_context will fit it (dropping
         # only what it must) rather than losing half the chat with no summary.
         logger.error(f"Compaction summary failed after {len(parts)} of {len(chunks)} chunk(s): {e}")
+        _note_compaction_failure(session)
         return messages, context_length, False
     summary = "\n\n".join(p.strip() for p in parts if p and p.strip())
     if not summary:
         logger.error("Compaction produced an empty summary; keeping the conversation as is")
+        _note_compaction_failure(session)
         return messages, context_length, False
+    if session is not None:
+        session._compact_failures = 0
+        session._compact_skip_until = 0
 
     summary_msg = {
         "role": "system",

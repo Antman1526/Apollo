@@ -20,12 +20,16 @@ from services.localmodels.scanner import scan_dirs, discover_piper_voices
 from services.localmodels.config import (
     get_llama_server_path,
     get_local_context,
+    get_idle_minutes,
     get_local_kv_cache,
     get_local_model_dirs,
+    get_reasoning_budget,
     set_llama_server_path,
     set_local_context,
+    set_idle_minutes,
     set_local_kv_cache,
     set_local_model_dirs,
+    set_reasoning_budget,
 )
 from services.localmodels.server_manager import get_server
 from src.observability import report_exception
@@ -47,6 +51,14 @@ class ContextBody(BaseModel):
 
 class KvCacheBody(BaseModel):
     kv_cache: str
+
+
+class IntBody(BaseModel):
+    value: int
+
+
+class HelperBody(BaseModel):
+    helper_model: str  # "" = automatic
 
 
 def _restart_chat_models(server) -> list[str]:
@@ -181,6 +193,70 @@ def setup_localmodels_routes() -> APIRouter:
         except ValueError as error:
             return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
         return {"ok": True, "kv_cache": value, "restarted": _restart_chat_models(get_server())}
+
+    @router.get("/reasoning")
+    def get_reasoning(request: Request):
+        """Thinking budget for llama.cpp chat models (-1 unlimited, 0 off, N tokens)."""
+        require_admin(request)
+        return {"value": get_reasoning_budget()}
+
+    @router.put("/reasoning")
+    def put_reasoning(request: Request, body: IntBody):
+        require_admin(request)
+        try:
+            value = set_reasoning_budget(body.value)
+        except ValueError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+        return {"ok": True, "value": value, "restarted": _restart_chat_models(get_server())}
+
+    @router.get("/idle")
+    def get_idle(request: Request):
+        """Minutes before an unused local model is unloaded (0 = never)."""
+        require_admin(request)
+        return {"value": get_idle_minutes()}
+
+    @router.put("/idle")
+    def put_idle(request: Request, body: IntBody):
+        require_admin(request)
+        try:
+            value = set_idle_minutes(body.value)
+        except ValueError as error:
+            return JSONResponse({"ok": False, "error": str(error)}, status_code=400)
+        return {"ok": True, "value": value, "restarted": []}
+
+    @router.get("/helper")
+    def get_helper_route(request: Request):
+        """The helper model: configured name ("" = auto), what auto picks, and candidates."""
+        require_admin(request)
+        from services.localmodels.helper import get_helper, pick_helper
+        from src.settings import load_settings
+        catalog = get_server().catalog()
+        current = get_helper(catalog)
+        auto = pick_helper(catalog)
+        return {
+            "helper_model": (load_settings().get("helper_model") or "").strip(),
+            "effective": current.name if current else "",
+            "auto_pick": auto.name if auto else "",
+            "options": sorted((m.name for m in catalog if m.kind == "chat"), key=str.lower),
+        }
+
+    @router.put("/helper")
+    def put_helper(request: Request, body: HelperBody):
+        require_admin(request)
+        from src.settings import load_settings, save_settings
+        name = (body.helper_model or "").strip()
+        if name and name not in {m.name for m in get_server().catalog() if m.kind == "chat"}:
+            return JSONResponse({"ok": False, "error": f"unknown local chat model: {name}"}, status_code=400)
+        settings = load_settings()
+        settings["helper_model"] = name
+        settings["helper_model_auto"] = True
+        save_settings(settings)
+        # The old helper may be running in the helper slot; drop it so the
+        # new one takes that slot on its next use.
+        server = get_server()
+        restarted = [info["name"] for mid, info in server.status().items()
+                     if info.get("role") == "helper" and server.stop(mid)]
+        return {"ok": True, "helper_model": name, "restarted": restarted}
 
     @router.post("/{model_id}/start")
     def start(request: Request, model_id: str):

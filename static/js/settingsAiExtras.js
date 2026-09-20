@@ -37,7 +37,12 @@ export function refreshLlamaBinary(el) {
 // chat model so it applies to the next message.
 var _LOCAL_SELECTS = [
   { id: 'set-localModelContext', msg: 'set-localModelContextMsg', path: '/api/local-models/context', key: 'context', number: true },
-  { id: 'set-localModelKvCache', msg: 'set-localModelKvCacheMsg', path: '/api/local-models/kv-cache', key: 'kv_cache', number: false }
+  { id: 'set-localModelKvCache', msg: 'set-localModelKvCacheMsg', path: '/api/local-models/kv-cache', key: 'kv_cache', number: false },
+  { id: 'set-localModelReasoning', msg: 'set-localModelReasoningMsg', path: '/api/local-models/reasoning', key: 'value', number: true },
+  { id: 'set-localModelIdle', msg: 'set-localModelIdleMsg', path: '/api/local-models/idle', key: 'value', number: true },
+  // Helper: the server also returns `options` (local chat models) and what
+  // automatic currently picks, shown on the "Automatic" entry.
+  { id: 'set-localModelHelper', msg: 'set-localModelHelperMsg', path: '/api/local-models/helper', key: 'helper_model', number: false }
 ];
 
 function _refreshLocalSelects(el) {
@@ -48,6 +53,15 @@ function _refreshLocalSelects(el) {
       .then(function(r) { return r.json(); })
       .then(function(d) {
         var v = String(d[spec.key]);
+        if (d.options) {
+          while (sel.options.length > 1) sel.remove(1);
+          d.options.forEach(function(name) {
+            var o = document.createElement('option');
+            o.value = name; o.textContent = name;
+            sel.appendChild(o);
+          });
+          if (sel.options[0]) sel.options[0].textContent = 'Automatic' + (d.auto_pick ? ' — ' + d.auto_pick : ' — none suitable');
+        }
         var known = Array.prototype.some.call(sel.options, function(o) { return o.value === v; });
         if (!known) {
           var opt = document.createElement('option');

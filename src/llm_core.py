@@ -2,6 +2,7 @@
 import httpx
 import asyncio
 import time
+import contextlib
 import json
 import uuid
 import logging
@@ -329,6 +330,18 @@ def materialize_local_url(url: str, model: str) -> str:
     from services.localmodels.server_manager import get_server
     base = get_server().ensure_running(model)
     return base.rstrip("/") + "/v1/chat/completions"
+
+
+def _local_lease(url: str, model: str):
+    """Context manager marking a request in flight on an Apollo-managed local
+    model, so it is not evicted mid-reply. No-op for other endpoints."""
+    if isinstance(url, str) and url.startswith("local://llama.cpp"):
+        try:
+            from services.localmodels.server_manager import get_server
+            return get_server().lease(model)
+        except Exception as error:
+            report_exception(logger, "local_lease_failed", error, outcome="best_effort")
+    return contextlib.nullcontext()
 
 
 def _detect_provider(url: str) -> str:
@@ -833,6 +846,7 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None, 
              timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
     """Synchronous LLM call with optional prompt type enhancement."""
+    _lease = _local_lease(url, model)
     url = materialize_local_url(url, model)
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
@@ -893,7 +907,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             payload[tok_key] = max_tokens
     try:
         note_model_activity(target_url, model)
-        r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
+        with _lease:
+            r = httpx.post(target_url, headers=h, json=payload, timeout=timeout)
     except Exception as e:
         raise HTTPException(502, f"POST {target_url} failed: {e}")
     if not r.is_success:
@@ -966,6 +981,7 @@ async def llm_call_async(
     """Asynchronous LLM call using httpx with connection pooling, timeout, retry logic, and performance logging."""
     # Offload to a thread: for a local:// model this can block up to ~3 min on
     # first load (launch + health), and we must not stall the event loop.
+    _lease = _local_lease(url, model)
     url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
@@ -1027,7 +1043,8 @@ async def llm_call_async(
         try:
             note_model_activity(target_url, model)
             client = _get_http_client()
-            r = await client.post(target_url, headers=h, json=payload, timeout=call_timeout)
+            with _lease:
+                r = await client.post(target_url, headers=h, json=payload, timeout=call_timeout)
             duration = time.time() - start
             if not r.is_success:
                 friendly = _format_upstream_error(r.status_code, r.text, target_url)
@@ -1077,6 +1094,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     """
     # Offload to a thread: launching a local:// model can block up to ~3 min
     # on first load; never stall the event loop on it.
+    _lease = _local_lease(url, model)
     url = await asyncio.to_thread(materialize_local_url, url, model)
     provider = _detect_provider(url)
     messages_copy = _sanitize_llm_messages(messages)
@@ -1327,6 +1345,7 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
         calls = [_tc_acc[i] for i in sorted(_tc_acc)]
         return f'data: {json.dumps({"type": "tool_calls", "calls": calls})}\n\n'
 
+    _lease.__enter__()  # released in the finally at the end of this try
     try:
         client = _get_http_client()
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
@@ -1489,6 +1508,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
     except Exception as error:
         report_exception(logger, "llm_stream_failed", error, outcome="critical")
         yield f'event: error\ndata: {json.dumps({"error": "Provider stream failed", "status": 502})}\n\n'
+    finally:
+        _lease.__exit__(None, None, None)
 
 
 def _summarize_stream_error(err_chunk: Optional[str]) -> str:
