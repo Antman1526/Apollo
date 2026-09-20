@@ -151,6 +151,24 @@ password** (save it), and starts the server on http://127.0.0.1:7000.
 - If a model won't start, the error message now says exactly whether the
   binary path is wrong or llama.cpp isn't installed.
 
+## 5. Find models that fit this PC (PowerShell)
+
+`scripts\hf-fit.ps1` reads the machine's RAM and GPU memory, searches
+Hugging Face for GGUF repositories and says which quantised files fit — on
+the GPU, in RAM with partial offload, or not at all — for the context window
+you plan to use. It works with Apollo closed.
+
+```powershell
+.\scripts\hf-fit.ps1                                  # top "qwen3" repos, 16K context
+.\scripts\hf-fit.ps1 -Search "gemma 4" -ContextK 32   # bigger context, more KV memory
+.\scripts\hf-fit.ps1 -Search unsloth/Qwen3.5-9B-GGUF -Download   # best fit -> Desktop\AI_Models
+```
+
+`-Json` prints machine-readable rows; `-Dest` changes the download folder
+(`huggingface-cli` is used when installed, otherwise the command is
+printed). After a download, click **Rescan** in Settings → AI → Local
+Models. The in-app Cookbook does the same ranking against a curated catalog.
+
 ## Where the Windows support lives in the code
 
 - `services/localmodels/config.py` — Windows-aware default scan dirs;
